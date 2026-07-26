@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>DiscForge.Core.Tests</AssemblyName>
+    <RootNamespace>DiscForge.Core.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pull in the test sources, but never the generated files under obj/ or bin/
+         (AssemblyInfo.cs, .AssemblyAttributes.cs) — those duplicate the attributes
+         this project already auto-generates and break the build (CS0579). -->
+    <Compile Include="..\DiscForge.Core.Tests\**\*.cs"
+             Exclude="..\DiscForge.Core.Tests\obj\**\*.cs;..\DiscForge.Core.Tests\bin\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DiscForge.Core\DiscForge.Core.csproj" />
+  </ItemGroup>
+
+</Project>

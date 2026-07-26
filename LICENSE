@@ -1,0 +1,107 @@
+DiscForge — Licence
+=====================
+
+Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
+
+This software is proprietary. It is NOT open source, and no permission is
+granted by its publication or by your possession of a copy.
+
+
+1. Grant
+--------
+
+No licence is granted to you except by a separate written agreement, or by a
+licence key or purchase issued by the copyright holder.
+
+Where such a licence has been granted, you may install and use the software on
+the terms of that agreement, and for no other purpose.
+
+
+2. Restrictions
+---------------
+
+Without the prior written permission of the copyright holder, you may not:
+
+  (a) copy, publish, distribute, sell, sub-licence, rent or lend the software,
+      in source or binary form;
+
+  (b) create derivative works, fork it, or incorporate any part of it into
+      another work;
+
+  (c) reverse engineer, decompile or disassemble the software, except to the
+      extent that such activity is expressly permitted by applicable law
+      notwithstanding this restriction (in the United Kingdom, see sections
+      50B and 50BA of the Copyright, Designs and Patents Act 1988 concerning
+      decompilation for interoperability and observation of functioning);
+
+  (d) remove or alter any copyright, licence or attribution notice.
+
+Viewing the source, where the copyright holder has made it visible, does not
+grant any of the rights above. Source-visible is not the same as open source.
+
+
+3. Provenance
+-------------
+
+This software is a clean-room implementation. Its knowledge of disc and image
+formats derives solely from public documentation and from the observed
+behaviour of hardware and of files supplied by the copyright holder. No
+third-party binary has been disassembled, decompiled or otherwise reverse
+engineered in its creation. See the `docs/` directory, which records the
+derivation of each format.
+
+Product names referenced in the documentation are used only to identify the
+formats and behaviours described. They are the trade marks of their respective
+owners, and no affiliation with or endorsement by those owners is claimed or
+implied.
+
+
+4. Copy protection
+------------------
+
+This software does not circumvent, and will not be extended to circumvent, any
+effective technological measure protecting a copyright work. It reads
+unencrypted media only. This is a deliberate and permanent limitation.
+
+
+5. Warranty
+-----------
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+The software writes to optical media and reads from optical drives. Recording
+is inherently destructive of the media written to. The copyright holder accepts
+no liability for lost or damaged media, lost data, or any other loss arising
+from its use.
+
+Nothing in this licence limits or excludes any liability that cannot lawfully
+be limited or excluded, including liability for death or personal injury caused
+by negligence, or for fraud. Where the software is supplied to a consumer, this
+licence does not affect that consumer's statutory rights, which in the United
+Kingdom include those under the Consumer Rights Act 2015.
+
+
+6. Liability
+------------
+
+To the maximum extent permitted by law, and subject to section 5, the copyright
+holder's total liability arising out of or in connection with the software
+shall not exceed the amount paid for the licence.
+
+
+7. Governing law
+----------------
+
+This licence is governed by the law of England and Wales, and the courts of
+England and Wales shall have exclusive jurisdiction, save that a consumer may
+bring proceedings in their own place of residence where the law requires.
+
+
+8. Third-party components
+-------------------------
+
+This software targets the .NET platform and uses Windows APIs (IMAPI2, SPTI)
+supplied with the operating system. It bundles no third-party code. Any
+component distributed alongside it remains subject to its own licence.

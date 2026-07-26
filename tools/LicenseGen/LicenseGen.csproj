@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DiscForge.LicenseGen</RootNamespace>
+    <AssemblyName>DiscForgeLicenseGen</AssemblyName>
+    <Product>DiscForge License Generator</Product>
+    <Company>MaTRIX TeAm</Company>
+    <Version>1.0.0</Version>
+    <!-- Standalone vendor tool. NOT part of the shipped product — never distribute it. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DiscForge.Core\DiscForge.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>DiscForge.Devices</RootNamespace>
+    <Description>Optical drive access: SPTI raw MMC pass-through and IMAPI2 burning. User-mode only, no kernel drivers.</Description>
+    <Version>0.2.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Copyright>Copyright (c) 2026 MaTRIX TeAm. All rights reserved.</Copyright>
+    <Company>DiscForge</Company>
+    <Product>DiscForge</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DiscForge.Core\DiscForge.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows artifacts (app + CLI)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish app (single-file, self-contained)
+        run: >
+          dotnet publish src/DiscForge.App/DiscForge.App.csproj
+          -c Release -r win-x64 --self-contained
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -o publish/app
+
+      - name: Publish CLI (single-file, self-contained)
+        run: >
+          dotnet publish src/DiscForge.Cli/DiscForge.Cli.csproj
+          -c Release -r win-x64 --self-contained
+          -p:PublishSingleFile=true
+          -o publish/cli-win
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ref = "${{ github.ref_name }}"
+          Compress-Archive -Path publish/app/*   -DestinationPath "DiscForge-$ref-win-x64.zip"
+          Compress-Archive -Path publish/cli-win/* -DestinationPath "dforge-$ref-win-x64.zip"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            DiscForge-*-win-x64.zip
+            dforge-*-win-x64.zip
+
+  linux-cli:
+    name: Linux CLI artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # The CLI is cross-platform (Core only) — ship a Linux build too.
+      - name: Publish CLI (single-file, self-contained)
+        run: >
+          dotnet publish src/DiscForge.Cli/DiscForge.Cli.csproj
+          -c Release -r linux-x64 --self-contained
+          -p:PublishSingleFile=true
+          -o publish/cli-linux
+
+      - name: Package
+        run: |
+          ref="${{ github.ref_name }}"
+          tar -czf "dforge-$ref-linux-x64.tar.gz" -C publish/cli-linux .
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dforge-*-linux-x64.tar.gz

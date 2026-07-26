@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>DiscForge.Core</RootNamespace>
+    <AssemblyTitle>DiscForge Core</AssemblyTitle>
+    <Description>Optical disc image formats: CDI, ISO, BIN/CUE. Pure managed code.</Description>
+    <Version>0.3.0</Version>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Copyright>Copyright (c) 2026 MaTRIX TeAm. All rights reserved.</Copyright>
+    <Company>DiscForge</Company>
+    <Product>DiscForge</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DiscForge.Core.Tests" />
+  </ItemGroup>
+
+</Project>
