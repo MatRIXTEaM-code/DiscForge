@@ -1,10 +1,10 @@
-<!-- GENERATED FILE — regenerate with:  scripts/gen_cli_doc.ps1  (captures `dforge` help) -->
+<!-- GENERATED FILE - regenerate with:  scripts\gen_cli_doc.ps1  (captures 'dforge' help) -->
 
-# DiscForge — `dforge` command reference
+# DiscForge - `dforge` command reference
 
 `dforge` is the cross-platform command-line tool (Core builds and runs anywhere .NET 8
 does). It exposes the same Core engine as the GUI. This reference is generated verbatim
-from the tool's own `--help` output, so it never drifts: **90 commands**.
+from the tool's own help output, so it never drifts: **93 commands**.
 
 Run `dforge` with no arguments to print this list, or `dforge <command>` with no further
 arguments to see that command's usage.
@@ -154,5 +154,10 @@ arguments to see that command's usage.
   seq-info <file.seq>     Read a PlayStation SEQ sequence: ppqn, tempo, event count
   str-demux <in.str> <out-dir>  Split a PSX .str into MDEC bitstreams + audio note
                           --sector-size 2352|2048 (default 2352)
+  vob-demux <in.vob|.mpg> <out-dir>  Split an unencrypted MPEG program stream (VOB/MPG)
+                          into elementary video/audio/subpicture streams (no CSS decrypt)
+  vcd-control <out-dir> [--album N] [--svcd] [--entry T:M:S:F ...]  Write INFO.VCD/ENTRIES.VCD
+  dvd-ifo <dump|build> …  Dump a DVD's structure to editable JSON, or rebuild IFOs from it
   burn                  (Phase 4) You know what this does
+
 ```

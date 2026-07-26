@@ -181,6 +181,10 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  seq-info <file.seq>     Read a PlayStation SEQ sequence: ppqn, tempo, event count");
     Console.WriteLine("  str-demux <in.str> <out-dir>  Split a PSX .str into MDEC bitstreams + audio note");
     Console.WriteLine("                          --sector-size 2352|2048 (default 2352)");
+    Console.WriteLine("  vob-demux <in.vob|.mpg> <out-dir>  Split an unencrypted MPEG program stream (VOB/MPG)");
+    Console.WriteLine("                          into elementary video/audio/subpicture streams (no CSS decrypt)");
+    Console.WriteLine("  vcd-control <out-dir> [--album N] [--svcd] [--entry T:M:S:F ...]  Write INFO.VCD/ENTRIES.VCD");
+    Console.WriteLine("  dvd-ifo <dump|build> …  Dump a DVD's structure to editable JSON, or rebuild IFOs from it");
     Console.WriteLine("  burn                  (Phase 4) You know what this does");
     return 0;
 }
