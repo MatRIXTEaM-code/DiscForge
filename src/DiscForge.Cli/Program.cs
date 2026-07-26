@@ -254,6 +254,9 @@ return args[0].ToLowerInvariant() switch
     "vab-info" => VabInfoCmd(args),
     "seq-info" => SeqInfoCmd(args),
     "str-demux" => StrDemuxCmd(args),
+    "vob-demux" => VobDemuxCmd(args),
+    "vcd-control" => VcdControlCmd(args),
+    "dvd-ifo" => DvdIfoCmd(args),
     "tmd-info" => TmdInfo(args),
     "tmd2dxf" => Tmd2Dxf(args),
     "tod-info" => TodInfo(args),
@@ -4032,6 +4035,122 @@ static int StrDemuxCmd(string[] args)
         Console.WriteLine("  MDEC pixel decode is deferred (docs/PSX_MEDIA.md) — bitstreams written, not images.");
         return 0;
     }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int VobDemuxCmd(string[] args)
+{
+    if (args.Length < 3)
+        return Fail("usage: dforge vob-demux <in.vob|in.mpg> <out-dir>\n" +
+                    "  Splits an UNENCRYPTED MPEG program stream (VOB/MPG) into elementary\n" +
+                    "  video/audio/subpicture streams. Does not decrypt CSS-scrambled VOBs.");
+    if (!File.Exists(args[1])) return Fail($"File not found: {args[1]}");
+    try
+    {
+        Directory.CreateDirectory(args[2]);
+        DiscForge.Core.Mpeg.MpegPsDemuxResult r;
+        using (var f = File.OpenRead(args[1]))
+            r = DiscForge.Core.Mpeg.MpegProgramStream.Demux(f);
+
+        int written = 0;
+        foreach (var st in r.Streams)
+        {
+            if (st.Data.Length == 0) continue;
+            string name = Path.Combine(args[2], st.SuggestedName());
+            File.WriteAllBytes(name, st.Data);
+            written++;
+            string sub = st.SubStreamId >= 0 ? $"/0x{st.SubStreamId:X2}" : "";
+            Console.WriteLine($"  {st.Kind,-9} id 0x{st.StreamId:X2}{sub}  {st.Data.Length,12:N0} bytes  -> {Path.GetFileName(name)}");
+        }
+        Console.WriteLine($"Demuxed {r.PackCount:N0} pack(s), {r.PesPacketCount:N0} PES packet(s), " +
+                          $"{written} stream(s) ({(r.SawMpeg2 ? "MPEG-2" : "MPEG-1")}).");
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int VcdControlCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge vcd-control <out-dir> [--album NAME] [--svcd] [--entry T:M:S:F ...]\n" +
+                    "  Writes INFO.VCD and ENTRIES.VCD (the VCD control sectors) into <out-dir>/VCD/.\n" +
+                    "  Each --entry is a play point track:minute:second:frame (e.g. --entry 1:0:2:0).");
+    string outDir = args[1];
+    string album = "";
+    bool svcd = false;
+    var entries = new List<DiscForge.Core.VideoCd.VideoCdEntry>();
+    for (int i = 2; i < args.Length; i++)
+    {
+        if (args[i] == "--album" && i + 1 < args.Length) album = args[++i];
+        else if (args[i] == "--svcd") svcd = true;
+        else if (args[i] == "--entry" && i + 1 < args.Length)
+        {
+            var p = args[++i].Split(':');
+            if (p.Length != 4 || !int.TryParse(p[0], out int tr) || !int.TryParse(p[1], out int mm)
+                || !int.TryParse(p[2], out int ss) || !int.TryParse(p[3], out int ff))
+                return Fail($"Bad --entry '{args[i]}' (expected track:minute:second:frame).");
+            entries.Add(new DiscForge.Core.VideoCd.VideoCdEntry { TrackNumber = tr, Minute = mm, Second = ss, Frame = ff });
+        }
+    }
+    if (entries.Count == 0)
+        entries.Add(new DiscForge.Core.VideoCd.VideoCdEntry { TrackNumber = 1, Minute = 0, Second = 2, Frame = 0 });
+    try
+    {
+        var info = DiscForge.Core.VideoCd.VideoCdControl.BuildInfo(
+            new DiscForge.Core.VideoCd.VideoCdInfoPlan { AlbumId = album, SuperVcd = svcd });
+        var ents = DiscForge.Core.VideoCd.VideoCdControl.BuildEntries(entries, superVcd: svcd);
+        string vcdDir = Path.Combine(outDir, "VCD");
+        Directory.CreateDirectory(vcdDir);
+        File.WriteAllBytes(Path.Combine(vcdDir, "INFO.VCD"), info);
+        File.WriteAllBytes(Path.Combine(vcdDir, "ENTRIES.VCD"), ents);
+        Console.WriteLine($"Wrote VCD/INFO.VCD and VCD/ENTRIES.VCD ({entries.Count} entr{(entries.Count == 1 ? "y" : "ies")}) to {outDir}.");
+        Console.WriteLine("  These are the control sectors. A full player-verified VCD image (MPEG track in");
+        Console.WriteLine("  Mode 2/Form 2 + ISO tree) needs a reference VCD to validate against.");
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int DvdIfoCmd(string[] args)
+{
+    if (args.Length < 4)
+        return Fail("usage:\n" +
+                    "  dforge dvd-ifo dump  <VIDEO_TS folder> <out.json>   Dump the DVD structure to editable JSON\n" +
+                    "  dforge dvd-ifo build <plan.json> <out folder>       Rebuild VIDEO_TS.IFO/VTS_nn_0.IFO from JSON\n" +
+                    "  IFO files are unencrypted; this never touches scrambled video.");
+    try
+    {
+        if (args[1] == "dump")
+        {
+            if (!Directory.Exists(args[2])) return Fail($"Not a folder: {args[2]}");
+            var src = new DiscForge.Core.DvdVideo.VideoTsSources.Folder(args[2]);
+            var dvd = DiscForge.Core.DvdVideo.IfoReader.Read(src);
+            var dto = DiscForge.Core.DvdVideo.IfoPlanJson.FromStructure(dvd);
+            string json = DiscForge.Core.DvdVideo.IfoPlanJson.ToJson(dto);
+            File.WriteAllText(args[3], json);
+            Console.WriteLine($"Wrote editable DVD structure to {args[3]} " +
+                              $"({dto.TitleSets.Count} title set(s)). Edit it, then: dforge dvd-ifo build {args[3]} <out>");
+            return 0;
+        }
+        if (args[1] == "build")
+        {
+            if (!File.Exists(args[2])) return Fail($"File not found: {args[2]}");
+            var dto = DiscForge.Core.DvdVideo.IfoPlanJson.FromJson(File.ReadAllText(args[2]));
+            var plan = DiscForge.Core.DvdVideo.IfoPlanJson.ToPlan(dto);
+            var files = DiscForge.Core.DvdVideo.IfoWriter.Write(plan);
+            string videoTs = Path.Combine(args[3], "VIDEO_TS");
+            Directory.CreateDirectory(videoTs);
+            foreach (var (name, bytes) in files)
+            {
+                File.WriteAllBytes(Path.Combine(videoTs, name), bytes);
+                File.WriteAllBytes(Path.Combine(videoTs, Path.ChangeExtension(name, ".BUP")), bytes);
+            }
+            Console.WriteLine($"Rebuilt {files.Count} IFO file(s) (+ .BUP) to {videoTs} from {args[2]}.");
+            return 0;
+        }
+        return Fail($"Unknown dvd-ifo sub-command '{args[1]}' (expected dump or build).");
+    }
+    catch (DiscForge.Core.DvdVideo.IfoFormatException ex) { return Fail(ex.Message); }
     catch (Exception ex) { return Fail(ex.Message); }
 }
 

@@ -3,6 +3,7 @@
 // See LICENSE at the root of this repository.
 
 using System.Runtime.Versioning;
+using DiscForge.Core.Mmc;
 using DiscForge.Devices.Spti;
 
 namespace DiscForge.Devices;
@@ -75,12 +76,8 @@ public static class DriveSpeed
     /// close and reopen the drive just to change speed.</summary>
     public static bool TrySetReadSpeed(SptiDevice dev, ushort kilobytesPerSecond)
     {
-        var cdb = new byte[12];
-        cdb[0] = 0xBB;
-        cdb[2] = (byte)(kilobytesPerSecond >> 8);
-        cdb[3] = (byte)kilobytesPerSecond;
-        cdb[4] = 0xFF;              // leave write speed alone
-        cdb[5] = 0xFF;
+        // One source of truth for the CDB — the unit-tested builder in Core.
+        var cdb = SetCdSpeed.BuildCdb(kilobytesPerSecond, SetCdSpeed.Max);
 
         try
         {
