@@ -1,4 +1,4 @@
-# The MDI shell (v1.10.0) — full DiscJuggler idiom
+# The MDI shell (v1.11.0) — full DiscJuggler idiom
 
 DiscForge's front end is now a DiscJuggler-style MDI application: one main
 frame with a menu bar, a toolbar, and task windows opening as child windows
