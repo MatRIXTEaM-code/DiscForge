@@ -113,7 +113,11 @@ public class LicenseTests
         Assert.NotEqual(a, MachineId.FromRaw("other-guid"));
         Assert.DoesNotContain("some-machine-guid", a);     // not reversible
         Assert.Equal(19, a.Length);                         // XXXX-XXXX-XXXX-XXXX
-        Assert.True(System.Text.RegularExpressions.Regex.IsMatch(a, "^[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$"));
+        // Boolean computed first so the xUnit analyzer doesn't flag this as xUnit2008
+        // (it suggests Assert.Matches, which our custom Harness doesn't implement).
+        bool wellFormed = System.Text.RegularExpressions.Regex.IsMatch(
+            a, "^[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$");
+        Assert.True(wellFormed);
     }
 
     [Fact]
