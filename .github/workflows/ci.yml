@@ -1,5 +1,10 @@
 name: CI
 
+# Fast cross-platform sanity check on every push/PR: builds and tests the
+# net8.0 Core (the platform-independent half) on Linux, which is quick and
+# cheap. The full Windows build + installer lives in build.yml; the tagged
+# release downloads live in release.yml.
+
 on:
   push:
     branches: [ main, master ]
@@ -19,8 +24,8 @@ jobs:
           dotnet-version: '8.0.x'
 
       # Core and its tests are net8.0 (cross-platform). The Devices/App projects
-      # target net8.0-windows and are covered by the Windows job below, so on
-      # Linux we build and test only the Core test project.
+      # target net8.0-windows and are covered by the Windows build in build.yml,
+      # so on Linux we build and test only the Core test project.
       - name: Restore
         run: dotnet restore tests/DiscForge.Core.Tests/DiscForge.Core.Tests.csproj
 
@@ -40,25 +45,3 @@ jobs:
         with:
           name: test-results-linux
           path: ./test-results/*.trx
-
-  build-windows:
-    name: Build solution + test (Windows)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-
-      # Windows can build every project, including Devices (SPTI/IMAPI2) and the
-      # WinForms App — this is what verifies those compile.
-      - name: Restore
-        run: dotnet restore DiscForge.sln
-
-      - name: Build solution
-        run: dotnet build DiscForge.sln -c Release --no-restore
-
-      - name: Test
-        run: dotnet test DiscForge.sln -c Release --no-build

@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   windows:
-    name: Windows artifacts (app + CLI)
+    name: Windows artifacts (installer + app + CLI)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +19,25 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+
+      # --- Installer: the primary download for most users. Run this FIRST,
+      #     because publish.ps1 clears and repopulates the publish/ folder that
+      #     the Inno Setup script packages; the single-file zips below go into
+      #     separate publish/ subfolders and are unaffected. ---
+      - name: Publish self-contained build (installer payload)
+        shell: pwsh
+        run: .\installer\publish.ps1
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Compile the installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found at $iscc" }
+          & $iscc installer\DiscForge.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer compile failed." }
 
       - name: Publish app (single-file, self-contained)
         run: >
@@ -45,6 +64,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            installer/Output/*.exe
             DiscForge-*-win-x64.zip
             dforge-*-win-x64.zip
 
