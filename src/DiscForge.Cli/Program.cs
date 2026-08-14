@@ -6,6 +6,7 @@ using DiscForge.Core.Audio;
 using DiscForge.Core.BluRay;
 using DiscForge.Core.Cdi;
 using DiscForge.Core.Convert;
+using DiscForge.Core.Dumping;
 using DiscForge.Core.Create;
 using DiscForge.Core.Iso;
 using DiscForge.Core.Cue;
@@ -121,7 +122,10 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("                          96-byte/sector sub-channel sidecar");
     Console.WriteLine("  view-sector <img> <addr> [--count N] [--descramble]  Annotated hex view of");
     Console.WriteLine("                          sectors. addr: LBA, mm:ss:ff, or +fileindex");
-    Console.WriteLine("  extract-sectors <img> <out> --start <addr> --count N  Pull a sector range");
+    Console.WriteLine("  extract-sectors <img|drive:> <out>  Pull a sector range from an image (--start/--count)");
+    Console.WriteLine("                          or LIVE from a drive, CDRWIN-style: --start/--end/--count,");
+    Console.WriteLine("                          --track n[,n…] or --disc; --as raw|mode1|form1|form2|2336|audio;");
+    Console.WriteLine("                          --recover abort|ignore|replace, --retries N, --no-c2, --sub, --jitter");
     Console.WriteLine("                          --as stored|user|raw2352, --byteswap for audio");
     Console.WriteLine("  inspect-raw <img>       Analyse a raw image: TOC, Q health, CD-TEXT, MCN/ISRC,");
     Console.WriteLine("                          scrambling, EDC/ECC. --deep checks every sector.");
@@ -2524,9 +2528,16 @@ static int ViewSector(string[] args)
 
 static int ExtractSectors(string[] args)
 {
+    if (args.Length >= 2 && args[1].Length <= 2 && args[1].Length >= 1
+        && char.IsAsciiLetter(args[1][0]) && (args[1].Length == 1 || args[1][1] == ':'))
+        return ExtractSectorsDrive(args);
+
     if (args.Length < 3)
         return Fail("usage: dforge extract-sectors <image> <out> --start <addr> --count N " +
-                    "[--as stored|user|raw2352] [--byteswap]");
+                    "[--as stored|user|raw2352] [--byteswap]\n" +
+                    "       dforge extract-sectors <drive:> <out> (--start <addr> (--count N | --end <addr>) | --track n[,n…] | --disc)\n" +
+                    "           [--as raw|mode1|form1|form2|2336|audio] [--recover abort|ignore|replace]\n" +
+                    "           [--retries N] [--no-c2] [--sub] [--jitter] [--json]");
     if (!File.Exists(args[1])) return Fail($"'{args[1]}' not found.");
 
     string? startArg = null;
@@ -2627,6 +2638,238 @@ static int ExtractSectors(string[] args)
         if (copy[15] is 1 or 2 && (copy[15] != 1 || EdcEcc.VerifyMode1(copy).EdcOk)) return copy;
         return s;
     }
+}
+
+// The CDRWIN-style live-drive extractor: "Extract Disc/Tracks/Sectors to Image File"
+// as one native command — extract mode (disc / tracks / sector range), datatype,
+// error recovery (abort/ignore/replace), read retries, C2 gating, subcode capture,
+// audio jitter consensus. Every unproven sector lands in a .badsectors.json sidecar.
+static int ExtractSectorsDrive(string[] args)
+{
+    const string usage =
+        "usage: dforge extract-sectors <drive:> <out> (--start <addr> (--count N | --end <addr>) | --track n[,n…] | --disc)\n" +
+        "  [--as raw|mode1|form1|form2|2336|audio]   datatype written per sector (default raw = 2352)\n" +
+        "  [--recover abort|ignore|replace]          what to do with an unrecoverable sector (default abort)\n" +
+        "  [--retries N]                             extra read attempts per sector (default 2)\n" +
+        "  [--no-c2]                                 don't treat C2-flagged bytes as read failures\n" +
+        "  [--sub]                                   capture formatted Q to <out>.sub and analyse CRCs\n" +
+        "  [--jitter]                                audio consensus: accept only two matching reads\n" +
+        "  [--json]\n" +
+        "  <addr> is an LBA, +sector, or MSF mm:ss:ff. Ranges are inclusive.";
+    if (args.Length < 3) return Fail(usage);
+
+#if WINDOWS
+    char letter = char.ToUpperInvariant(args[1][0]);
+    string outPath = args[2];
+    bool json = args.Contains("--json");
+
+    string? startArg = null, endArg = null, trackArg = null;
+    long count = -1;
+    bool wholeDisc = args.Contains("--disc");
+    string asArg = "raw", recoverArg = "abort";
+    int retries = 2;
+    bool useC2 = !args.Contains("--no-c2");
+    bool sub = args.Contains("--sub");
+    bool jitter = args.Contains("--jitter");
+    for (int i = 3; i < args.Length; i++)
+    {
+        if (args[i] == "--start" && i + 1 < args.Length) startArg = args[++i];
+        else if (args[i] == "--end" && i + 1 < args.Length) endArg = args[++i];
+        else if (args[i] == "--count" && i + 1 < args.Length) count = long.Parse(args[++i]);
+        else if (args[i] == "--track" && i + 1 < args.Length) trackArg = args[++i];
+        else if (args[i] == "--as" && i + 1 < args.Length) asArg = args[++i].ToLowerInvariant();
+        else if (args[i] == "--recover" && i + 1 < args.Length) recoverArg = args[++i].ToLowerInvariant();
+        else if (args[i] == "--retries" && i + 1 < args.Length) retries = int.Parse(args[++i]);
+    }
+
+    ExtractDataType? dataType = asArg switch
+    {
+        "raw" => ExtractDataType.Raw2352,
+        "mode1" => ExtractDataType.Mode1_2048,
+        "form1" => ExtractDataType.Mode2Form1_2048,
+        "form2" => ExtractDataType.Mode2Form2_2324,
+        "2336" => ExtractDataType.Mode2Mixed_2336,
+        "audio" => ExtractDataType.Audio2352,
+        _ => null,
+    };
+    if (dataType is null) return Fail($"Unknown --as '{asArg}'. Use raw, mode1, form1, form2, 2336 or audio.");
+    ExtractErrorRecovery? recovery = recoverArg switch
+    {
+        "abort" => ExtractErrorRecovery.Abort,
+        "ignore" => ExtractErrorRecovery.Ignore,
+        "replace" => ExtractErrorRecovery.Replace,
+        _ => null,
+    };
+    if (recovery is null) return Fail($"Unknown --recover '{recoverArg}'. Use abort, ignore or replace.");
+    if (retries < 0) return Fail("--retries cannot be negative.");
+
+    int modes = (startArg is not null ? 1 : 0) + (trackArg is not null ? 1 : 0) + (wholeDisc ? 1 : 0);
+    if (modes != 1)
+        return Fail("Choose exactly one extract mode: --start … (sector range), --track n[,n…], or --disc.");
+
+    try
+    {
+        using var reader = new DiscForge.Devices.Reading.DriveExtractionReader(
+            letter, audioHint: dataType == ExtractDataType.Audio2352);
+        var toc = reader.Toc;
+
+        // Resolve the extract mode into (label, start, end, audioHint, outPath) spans.
+        var spans = new List<(string Label, long Start, long End, bool Audio, string Out)>();
+        if (wholeDisc)
+        {
+            spans.Add(("disc", 0, reader.TotalSectors - 1, toc.Tracks.Count > 0 && toc.Tracks[0].IsAudio, outPath));
+        }
+        else if (trackArg is not null)
+        {
+            var wanted = trackArg.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                                 .Select(int.Parse).ToList();
+            foreach (int n in wanted)
+            {
+                var t = toc.Tracks.FirstOrDefault(x => x.Number == n);
+                if (t is null) return Fail($"Track {n} is not on this disc (tracks {toc.FirstTrack}..{toc.LastTrack}).");
+                string path = wanted.Count == 1 ? outPath : InsertSuffix(outPath, $".t{n:D2}");
+                spans.Add(($"track {n}", t.StartLba, t.StartLba + t.LengthSectors - 1, t.IsAudio, path));
+            }
+        }
+        else
+        {
+            long start = ResolveAddr(startArg!);
+            long end;
+            if (endArg is not null && count > 0) return Fail("Give --count or --end, not both.");
+            if (endArg is not null) end = ResolveAddr(endArg);
+            else if (count > 0) end = start + count - 1;
+            else return Fail("A sector range needs --count N or --end <addr>.");
+            spans.Add(($"sectors {start}..{end}", start, end, dataType == ExtractDataType.Audio2352, outPath));
+        }
+
+        var options = new ExtractionOptions
+        {
+            DataType = dataType.Value,
+            ErrorRecovery = recovery.Value,
+            ReadRetries = retries,
+            UseC2 = useC2,
+            CaptureSubcode = sub,
+            JitterConsensus = jitter,
+        };
+
+        var reports = new List<object>();
+        bool anyBad = false, aborted = false;
+        foreach (var span in spans)
+        {
+            reader.SetAudioHint(span.Audio || dataType == ExtractDataType.Audio2352);
+            ExtractionResult result = null!;
+            try
+            {
+                WriteFileAtomically(span.Out, os =>
+                {
+                    Stream? subOs = null;
+                    try
+                    {
+                        if (sub) subOs = File.Create(span.Out + ".sub.part");
+                        result = SectorExtraction.Extract(reader, span.Start, span.End, options, os, subOs,
+                            json ? null : new Action<long, long>((done, total) =>
+                            {
+                                if (done % 512 == 0 || done == total)
+                                    Console.Write($"\r{span.Label}: {done:N0}/{total:N0} sectors…");
+                            }));
+                    }
+                    finally { subOs?.Dispose(); }
+                    if (result.AbortedAtLba is not null)
+                        throw new IOException(
+                            $"aborted at LBA {result.AbortedAtLba:N0}: {result.AbortReason}");
+                });
+            }
+            catch (IOException) when (result?.AbortedAtLba is not null)
+            {
+                try { File.Delete(span.Out + ".sub.part"); } catch { /* best-effort */ }
+                if (!json)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine($"ABORTED at LBA {result.AbortedAtLba:N0}: {result.AbortReason}");
+                    Console.WriteLine($"No output written. Re-run with --recover ignore|replace to extract " +
+                                      $"around the bad sector (the hole will be recorded in a sidecar).");
+                }
+                aborted = true;
+                reports.Add(SpanReport(span.Label, span.Out, result, options));
+                break;
+            }
+            if (!json) Console.WriteLine();
+
+            if (sub)
+                File.Move(span.Out + ".sub.part", span.Out + ".sub", overwrite: true);
+
+            var map = result.BadSectors with { Image = Path.GetFileName(span.Out) };
+            if (!map.Clean)
+            {
+                map.Save(DiscForge.Core.Preservation.BadSectorMap.SidecarPath(span.Out));
+                anyBad = true;
+            }
+
+            if (!json)
+            {
+                Console.WriteLine($"{span.Label}: {result.SectorsWritten:N0} sector(s), {result.BytesWritten:N0} bytes → {span.Out}  [{result.Grade}]");
+                if (result.Recovered > 0) Console.WriteLine($"  recovered:  {result.Recovered:N0} sector(s) needed retries and were proven");
+                if (result.IgnoredBad > 0) Console.WriteLine($"  ignored:    {result.IgnoredBad:N0} unproven sector(s) written as-read — see sidecar");
+                if (result.Replaced > 0) Console.WriteLine($"  replaced:   {result.Replaced:N0} sector(s) written as dummies — see sidecar");
+                if (sub) Console.WriteLine($"  subcode:    {result.QFramesChecked:N0} Q frames, {result.QCrcErrors:N0} CRC error(s) → {span.Out}.sub");
+                if (!map.Clean) Console.WriteLine($"  bad map:    {DiscForge.Core.Preservation.BadSectorMap.SidecarPath(span.Out)}");
+            }
+            reports.Add(SpanReport(span.Label, span.Out, result, options));
+        }
+
+        if (json)
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+            {
+                drive = $"{letter}:",
+                datatype = asArg,
+                recovery = recoverArg,
+                retries,
+                c2 = useC2,
+                jitter,
+                aborted,
+                spans = reports,
+            }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+
+        return aborted ? 1 : anyBad ? 2 : 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+
+    static object SpanReport(string label, string outPath, ExtractionResult r, ExtractionOptions o) => new
+    {
+        span = label,
+        output = outPath,
+        grade = r.Grade,
+        sectorsRequested = r.SectorsRequested,
+        sectorsWritten = r.SectorsWritten,
+        bytesWritten = r.BytesWritten,
+        recovered = r.Recovered,
+        ignored = r.IgnoredBad,
+        replaced = r.Replaced,
+        abortedAtLba = r.AbortedAtLba,
+        abortReason = r.AbortReason,
+        qFramesChecked = o.CaptureSubcode ? r.QFramesChecked : (int?)null,
+        qCrcErrors = o.CaptureSubcode ? r.QCrcErrors : (int?)null,
+        badSectors = r.BadSectors.UnreadableLba,
+    };
+
+    static long ResolveAddr(string addr)
+    {
+        addr = addr.Trim();
+        if (addr.StartsWith('+')) return long.Parse(addr[1..]);
+        if (addr.Contains(':')) return Msf.Parse(addr).ToSectors() - 150;
+        return long.Parse(addr);
+    }
+
+    static string InsertSuffix(string path, string suffix)
+    {
+        string dir = Path.GetDirectoryName(path) ?? "";
+        string name = Path.GetFileNameWithoutExtension(path);
+        string ext = Path.GetExtension(path);
+        return Path.Combine(dir, name + suffix + ext);
+    }
+#else
+    return Fail("Live-drive extraction uses the Windows SPTI stack; run it on Windows with the drive attached.\n" + usage);
+#endif
 }
 
 static int InspectRaw(string[] args)
