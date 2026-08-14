@@ -65,7 +65,7 @@
   <div class="cards">
     <div class="card">
       <h3>DiscForge <span class="pill">this app</span></h3>
-      <div class="meta"><span class="tag act">active</span><span class="tag">.NET 8 · Win + Linux CLI</span><span class="tag">proprietary</span></div>
+      <div class="meta"><span class="tag act">active</span><span class="tag">.NET 8 · Win + Linux CLI</span><span class="tag act">GPL-3.0 · open source</span></div>
       Preservation-grade dumping <i>and</i> RAW-DAO burning in one toolkit, with a "provably correct or declined" ethos. 375 commands spanning imaging, conversion, filesystems, Redump workflow, audio, CHD, DVD/BD authoring and forensics. The analysis toolset runs natively on Linux too.
     </div>
     <div class="card">
@@ -138,8 +138,8 @@
         <td class="df c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td><td class="c p">◑</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td></tr>
       <tr><td class="cap">Filesystem reading — FAT, exFAT, NTFS, ext2/3/4, HFS</td>
         <td class="df c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td></tr>
-      <tr><td class="cap">Aaru interop — AaruFormat read <b>+ write</b> + CICM metadata sidecar</td>
-        <td class="df c p">◑</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td></tr>
+      <tr><td class="cap">Aaru interop — AaruFormat read (uncompressed/LZMA/FLAC, CRC-64-gated) + write + CICM sidecar</td>
+        <td class="df c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td></tr>
       <tr><td class="cap">Redump workflow — cue gen, DAT match/diff, submission packaging</td>
         <td class="df c y">●</td><td class="c p">◑</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c p">◑</td></tr>
       <tr><td class="cap">Audio ripping + AccurateRip</td>
@@ -151,7 +151,7 @@
       <tr><td class="cap">Forensics — entropy, fuzzy hashing, provenance, disc health/rot maps</td>
         <td class="df c y">●</td><td class="c p">◑</td><td class="c n">○</td><td class="c n">○</td><td class="c p">◑</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td></tr>
       <tr><td class="cap">Open source</td>
-        <td class="df c n">○</td><td class="c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td><td class="c y">●</td><td class="c p">◑</td></tr>
+        <td class="df c y">●</td><td class="c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td><td class="c y">●</td><td class="c p">◑</td></tr>
       <tr><td class="cap">Cross-platform (analysis/file toolset; hardware I/O is Windows-only)</td>
         <td class="df c p">◑</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td><td class="c y">●</td><td class="c n">○</td></tr>
       <tr><td class="cap">Actively maintained (2026)</td>
@@ -170,12 +170,23 @@
 
   <h2>Where competitors still lead (honest gaps)</h2>
   <ul>
-    <li><b>Aaru — raw filesystem/format breadth &amp; compressed AaruFormat.</b> Aaru reads ~60 filesystems (including tape and flux-level formats DiscForge doesn't touch) and decodes <i>compressed</i> AaruFormat (LZMA/FLAC). DiscForge now reads <i>and writes</i> uncompressed AaruFormat correctly and writes CICM metadata, but still <span class="p">declines</span> compressed AaruFormat — faithful LZMA/FLAC decode needs a real Aaru image as an oracle to validate against, which is the honest blocker on that last step.</li>
+    <li><b>Aaru — raw filesystem/format breadth.</b> Aaru reads ~60 filesystems (including the tape and flux-level formats DiscForge doesn't touch). On AaruFormat itself the gap has closed: DiscForge decodes uncompressed, LZMA <i>and</i> FLAC images (clean-room decoders validated against liblzma and a reference FLAC encoder, every block proven against its stored CRC-64) and writes uncompressed AaruFormat — remaining deltas are compressed <i>writing</i> and the rare LZMA-subchannel-transform variant, which is declined pending a real fixture.</li>
     <li><b>DiscImageCreator — submission trust &amp; drive matrix.</b> DIC is the accepted Redump submission standard with the widest tested-drive support and years of community-validated protection dumping. DiscForge's RAW path is proven on Plextor hardware but doesn't yet carry DIC's breadth of drive support or submission acceptance.</li>
     <li><b>IsoBuster — recovery UX.</b> DiscForge has the recovery <i>engines</i> (fs-recover, salvage-plan, recover-toc, bad-sectors, scratch-verdict, health/rot maps); IsoBuster's edge is two decades of GUI polish for pulling data off damaged/odd media.</li>
     <li><b>EAC / dBpoweramp — secure-ripping depth.</b> DiscForge exposes the building blocks (AccurateRip, read-offset/offset-detect, C2, read-stability); EAC's edge is deeper combined drive-offset/error-recovery heuristics and tight encoder integration.</li>
-    <li><b>Openness.</b> Aaru, DIC, cdrtools and CHDMAN are open source; DiscForge is proprietary — a licensing/business decision, not a technical gap.</li>
   </ul>
+
+  <h2>Update — v1.0.0 public release</h2>
+  <div class="sub" style="max-width:82ch">
+    DiscForge is now <b>open source (GPL-3.0-or-later)</b> at
+    <a href="https://github.com/MatRIXTEaM-code/DiscForge">github.com/MatRIXTEaM-code/DiscForge</a>,
+    with a tagged v1.0.0 release carrying a Windows installer, app/CLI zips and a Linux CLI tarball,
+    plus public CI running the full 2,400-test suite on every push. This removes what was previously
+    listed here as a strategic gap: "Openness" is no longer a difference — Aaru, DIC, cdrtools,
+    CHDMAN and DiscForge are all free software now. Since the last refresh, AaruFormat FLAC decode
+    also landed (upgrading Aaru interop to full), and fuzzy hashing became byte- and score-exact
+    against ssdeep 2.14.1, so signatures interchange with other forensics tools.
+  </div>
 
   <h2>Update — August 2026 session</h2>
   <div class="sub" style="max-width:82ch">
@@ -187,7 +198,7 @@
 
   <h2>Bottom line</h2>
   <div class="sub" style="max-width:80ch">
-    Against any <i>single</i> competitor, DiscForge matches or exceeds on nearly every axis that overlaps, and it uniquely combines verified preservation reading with verified RAW-DAO burning. The remaining honest gaps are specialisation gaps — Aaru's sheer filesystem/format breadth and compressed-AaruFormat decode, DIC's community-standard submission trust and drive matrix, chdman's maximally-compressed CHD codecs, and EAC's audio-ripping heuristic depth — plus the strategic choice of being proprietary and (for hardware I/O) Windows-only. Nothing in the field does what DiscForge does end-to-end; the closest, Aaru, still doesn't burn.
+    Against any <i>single</i> competitor, DiscForge matches or exceeds on nearly every axis that overlaps, and it uniquely combines verified preservation reading with verified RAW-DAO burning — now as free software (GPL-3.0-or-later) like its open-source peers. The remaining honest gaps are specialisation gaps — Aaru's sheer filesystem/format breadth, DIC's community-standard submission trust and drive matrix, chdman's maximally-compressed CHD codecs, and EAC's audio-ripping heuristic depth — plus hardware I/O being Windows-only until the SG_IO layer is hardware-validated. Nothing in the field does what DiscForge does end-to-end; the closest, Aaru, still doesn't burn.
   </div>
 
   <div class="foot">
