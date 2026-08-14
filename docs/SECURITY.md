@@ -1,91 +1,72 @@
-# DiscForge — protecting the software from copying & theft
+# DiscForge — the licence system, signing, and distribution notes
 
-An honest starting point: **a distributable .NET application cannot be made
-copy-proof.** Its IL decompiles cleanly (dnSpy, ILSpy), and WinForms cannot use
-Native AOT, so any client-side check can eventually be bypassed by someone
-determined. What the measures below do is *raise the cost*, *deter casual copying and
-sharing*, and give you a legitimate licensing and authenticity story. They are layers,
-not a lock.
+> **Historical note.** This document originally described how to protect a
+> proprietary DiscForge build from copying. DiscForge is now free software under
+> **GPL-3.0-or-later**, which changes the meaning of everything below: anyone may
+> copy, modify and redistribute the program, and the licence-key code is **no
+> longer a protection mechanism and does not pretend to be**. What remains
+> useful is kept here; obsolete advice has been removed.
+>
+> Looking for how to **report a security vulnerability**? That now lives in
+> [`SECURITY.md`](../SECURITY.md) at the repository root.
 
-## 1. Licensing (built in)
+## 1. The licence-key system under the GPL
 
-DiscForge has a public-key licence system. You hold an ECDSA (P-256) **private** key
-and sign each licence; the app embeds only the matching **public** key and verifies.
-Because the private key never ships, nobody can forge a valid key — an attacker can
-only patch the check out, which is what the obfuscation layer then makes harder.
+The ECDSA (P-256) licence infrastructure in `src/DiscForge.Core/Licensing/`
+still exists and still works — but under the GPL it cannot restrict anyone,
+because every recipient has the right to build and run the software without it.
+Its legitimate remaining uses:
 
-**One-time setup**
+- **Supporter / patron builds** — issue signed keys as a thank-you that unlocks
+  a supporter badge or About-box credit. Cosmetic, honest, GPL-compatible.
+- **Dual licensing** — if you (as sole copyright holder via the CLA) offer a
+  separately-licensed commercial edition, signed keys can identify entitled
+  customers of *that* edition. The GPL edition must remain fully functional.
+- **Authenticity of issued keys** — the cryptography is sound: nobody can forge
+  a key without `private.pem`. What changed is only what a key may gate.
+
+What is **not** legitimate: gating GPL-edition functionality behind a key, or
+presenting the key check as copy protection. Both would conflict with the
+freedoms the GPL grants and with the project's own NOTICE.
+
+Key management is unchanged:
 
 ```
 dforge license keygen private.pem public.txt
-```
-
-Keep `private.pem` secret (offline, backed up). Copy the printed public key into
-`LicenseConfig.PublicKeyBase64` in `src/DiscForge.Core/Licensing/License.cs`, replacing
-the placeholder, and rebuild. Until you do this, **every copy is "unlicensed"** — the
-safe default.
-
-**Issuing a licence to a customer**
-
-```
 dforge license issue --private private.pem --name "Acme Studio" --edition Pro
-dforge license issue --private private.pem --name "Acme Studio" --days 365           # time-limited
-dforge license issue --private private.pem --name "Acme" --machine 2879-A832-3A9B-5682 # machine-locked
+dforge license verify <key>
 ```
 
-The customer opens **About ▸ Activate…** (or the activation prompt at launch), pastes
-the key, and it is stored at `%APPDATA%\DiscForge\license.key`. For a machine-locked
-key, the customer reads their machine id from that same dialog and sends it to you.
+Keep `private.pem` offline and backed up if you use the system at all.
 
-**Enforcement** is deliberately soft (per your choice): an unlicensed copy still runs
-but shows an "UNLICENSED (evaluation)" title/banner and an Activate button. To make it
-stricter later, gate features on `LicenseGate.IsLicensed` (e.g. disable Record/Burn, or
-block past the activation dialog). Verify a key yourself with `dforge license verify`.
+## 2. Code signing (still recommended)
 
-## 2. Obfuscation (recommended, external tool)
-
-Obfuscation renames symbols, encrypts string constants and mangles control flow so a
-decompile yields far less. `installer\publish.ps1` has a hook for **ConfuserEx** (free):
-
-```
-.\installer\publish.ps1 -Obfuscate -ConfuserCli "C:\tools\ConfuserEx\Confuser.CLI.exe"
-```
-
-It obfuscates only DiscForge's own assemblies (`DiscForge.dll`, `DiscForge.Core.dll`,
-`DiscForge.Devices.dll`, `dforge.dll`) — never the .NET runtime DLLs. Download ConfuserEx
-separately; test the obfuscated build thoroughly (aggressive presets can break
-reflection). Commercial options with stronger protection and support: **Eazfuscator.NET**,
-**.NET Reactor** (also bundles its own licensing), **Dotfuscator**.
-
-## 3. Code signing (recommended, needs a certificate)
-
-Authenticode signing proves the binary is genuinely yours and lets Windows detect
-tampering; it also calms SmartScreen. It is *not* anti-copy. Buy a code-signing
-certificate (OV, or EV for immediate SmartScreen trust) and:
+Authenticode signing is unrelated to copy protection and remains fully
+worthwhile: it proves a release binary genuinely comes from you, lets Windows
+detect tampering, and calms SmartScreen for users. With a code-signing
+certificate (OV, or EV for immediate SmartScreen reputation):
 
 ```
 .\installer\publish.ps1 -Sign -CertThumbprint <your-cert-thumbprint>
 ```
 
-That signs both executables and DiscForge's own DLLs with a timestamp (so signatures
-survive the certificate's expiry). Run it *after* `-Obfuscate` if you use both.
+This signs the executables and DiscForge's own DLLs with a timestamp, so
+signatures outlive the certificate. Signing GPL software is normal practice —
+it authenticates *origin*, it does not restrict *use*.
 
-## 4. Legal (the enforceable layer)
+## 3. What was removed, and why
 
-The real protection is the proprietary `LICENSE`/EULA already in the repo — it grants no
-rights by mere possession, and use is only permitted under a licence you issue. Keep it
-shipped (the installer shows it, and `publish.ps1` copies it), keep the copyright headers
-in place, and register the copyright if your jurisdiction supports it. Technical measures
-deter; the licence is what you enforce.
+- **Obfuscation guidance** (ConfuserEx et al.) — obfuscating a GPL program's
+  own source-available assemblies serves no purpose and works against the
+  licence's spirit; the `publish.ps1 -Obfuscate` hook is considered deprecated.
+- **EULA/proprietary-licence advice** — superseded entirely by
+  [LICENSE](../LICENSE) (GPL-3.0-or-later) and [NOTICE](../NOTICE).
+- **"Raising the cost of copying"** — copying is now a granted right, not a
+  threat model.
 
-## What NOT to rely on
+## 4. The actual security posture
 
-- A hard "won't run without a key" block is no more secure than the soft check (both are
-  one patched branch away) and risks locking out paying users on a hiccup.
-- Home-grown crypto or a secret embedded in the client. The only secret that helps is the
-  **private signing key, which never ships** — that is exactly what the licence system uses.
-- Obfuscation alone. It slows analysis; it doesn't stop it.
-
-The pragmatic posture: ship licensed + obfuscated + signed, keep the EULA current, and
-treat cracking as a business/legal problem for the rare determined actor rather than a
-technical problem you can fully solve on the client.
+DiscForge's real security story is the integrity model: untrusted binary
+formats are parsed defensively, and every decode is proven against independent
+evidence or declined. Robustness findings in the parsers are security issues —
+report them privately per the root [`SECURITY.md`](../SECURITY.md).

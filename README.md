@@ -1,5 +1,10 @@
 # DiscForge
 
+[![CI](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/ci.yml/badge.svg)](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/ci.yml)
+[![Build](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/build.yml/badge.svg)](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/MatRIXTEaM-code/DiscForge)](https://github.com/MatRIXTEaM-code/DiscForge/releases/latest)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
+
 *A clean-room disc-imaging and retro-preservation toolkit for C# / .NET 8.*
 
 **Free software — GPL-3.0-or-later.** See [LICENSE](LICENSE) and [NOTICE](NOTICE).
