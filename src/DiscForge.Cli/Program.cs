@@ -353,6 +353,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  read-disc <drive> <out.iso> [--continue-on-error] [--retries N]  Image a data DVD/BD/data-CD to a flat ISO");
     Console.WriteLine("  writeinfo <drive>       Read-only: disc status + the drive's next-writable-address (for raw-DAO write setup)");
     Console.WriteLine("  drive-profile <drive>   Consolidated per-drive profile: read/write reach, write modes, read fidelity [--out profile.json]");
+    Console.WriteLine("  drive-db [text]         Bundled drive knowledge base: community-reference offsets, overread reach, C2 reputation (sourced)");
     Console.WriteLine("                          (Windows SPTI). Pair with `burn` to clone a personal, unencrypted disc. Refuses");
     Console.WriteLine("                          copy-protected discs (CSS/CPRM/AACS); for audio/mixed CDs rip in the GUI");
     Console.WriteLine("  raw-dump <drive> [--stream-read]  Drive/media diagnostic for the Hitachi-LG GDR-816x DVD-ROM family:");
@@ -708,6 +709,7 @@ return args[0].ToLowerInvariant() switch
     "burn-raw" => BurnRawCmd(args),
     "writeinfo" => WriteInfoCmd(args),
     "drive-profile" => DriveProfileCmd(args),
+    "drive-db" => DriveDbCmd(args),
     "disc-scan" => DiscScanCmd(args),
     "read-benchmark" => ReadBenchmarkCmd(args),
     "read-disc" => ReadDiscCmd(args),
@@ -11060,6 +11062,27 @@ static int DiscScanCmd(string[] args)
 #endif
 }
 
+// The bundled drive knowledge base — cross-platform, no drive needed. `drive-db` lists
+// the drives on record; `drive-db <text>` searches by vendor/model/name. Reference data
+// (offsets, overread reach, C2 reputation) with sources on every entry.
+static int DriveDbCmd(string[] args)
+{
+    var matches = args.Length >= 2
+        ? DiscForge.Core.Devices.DriveKnowledgeBase.Search(string.Join(' ', args[1..]))
+        : DiscForge.Core.Devices.DriveKnowledgeBase.All;
+    if (matches.Count == 0)
+        return Fail($"No knowledge-base entry matches '{string.Join(' ', args[1..])}'. " +
+                    "Run `dforge drive-db` for everything on record — an unknown drive is unknown, not unsuitable.");
+    Console.WriteLine($"Drive knowledge base — {matches.Count} of {DiscForge.Core.Devices.DriveKnowledgeBase.All.Count} entr{(matches.Count == 1 ? "y" : "ies")}. " +
+                      "All values are community reference data to CONFIRM live, not measurements.");
+    foreach (var r in matches)
+    {
+        Console.WriteLine();
+        Console.WriteLine(r.Render());
+    }
+    return 0;
+}
+
 static int DriveProfileCmd(string[] args)
 {
     if (args.Length < 2)
@@ -11101,6 +11124,22 @@ static int DriveProfileCmd(string[] args)
         var profile = DiscForge.Core.Devices.DriveProfile.FromCapabilities(caps, overread: overread);
         Console.WriteLine(profile.Render());
         if (probeDetail is not null) Console.WriteLine($"  overread probe: {probeDetail}");
+
+        // The bundled knowledge base: community-reference values for drives the
+        // preservation scene has already measured. Reference data, clearly labelled —
+        // it pre-fills what the live probes cannot determine; it never overrides them.
+        var reference = DiscForge.Core.Devices.DriveKnowledgeBase.Find(caps.Vendor, caps.Model);
+        Console.WriteLine();
+        if (reference is not null)
+        {
+            Console.WriteLine("Knowledge base (community reference — confirm live):");
+            Console.WriteLine(reference.Render());
+        }
+        else
+        {
+            Console.WriteLine("Knowledge base: no entry for this drive (unknown, not unsuitable). " +
+                              "`dforge drive-db` lists the drives on record.");
+        }
         if (outPath is not null)
         {
             File.WriteAllText(outPath, profile.Json());
