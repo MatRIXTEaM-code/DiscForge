@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DiscForge vs ImgBurn — head-to-head</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161a21; --ink:#e7ebf0; --muted:#9aa4b2;
+    --line:#262c36; --accent:#5aa9ff; --good:#37c871; --warn:#f4b23e; --bad:#ff6b6b;
+    --df:#7c6cff; --ib:#ff9d54;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f6f7f9; --panel:#fff; --ink:#161a21; --muted:#5b6472;
+           --line:#e4e8ee; --accent:#1f6feb; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1060px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:24px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  p{margin:10px 0}
+  .sub{color:var(--muted);margin-top:0}
+  .tldr{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:10px;padding:16px 18px;margin:20px 0}
+  .pill{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;margin-right:6px}
+  .pill.df{background:color-mix(in srgb,var(--df) 22%,transparent);color:var(--df)}
+  .pill.ib{background:color-mix(in srgb,var(--ib) 22%,transparent);color:var(--ib)}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:color-mix(in srgb,var(--panel) 60%,var(--line));font-weight:600}
+  tr:last-child td{border-bottom:none}
+  td.c,th.c{text-align:center;white-space:nowrap}
+  .y{color:var(--good);font-weight:700}
+  .p{color:var(--warn);font-weight:700}
+  .n{color:var(--bad);font-weight:700}
+  .note{color:var(--muted);font-size:13px}
+  blockquote{margin:14px 0;padding:10px 16px;border-left:3px solid var(--df);
+    background:var(--panel);border-radius:0 8px 8px 0;color:var(--ink)}
+  code{background:color-mix(in srgb,var(--panel) 50%,var(--line));padding:1px 5px;border-radius:5px;font-size:13px}
+  .foot{color:var(--muted);font-size:12px;margin-top:40px;border-top:1px solid var(--line);padding-top:14px}
+  .legend{font-size:13px;color:var(--muted);margin:6px 0 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>DiscForge vs ImgBurn</h1>
+  <p class="sub">A detailed head-to-head — feature by feature, setting by setting. 2026-08-10.</p>
+
+  <div class="tldr">
+    <p style="margin-top:0"><span class="pill ib">ImgBurn</span> a mature, hardware-proven Windows optical <b>burner</b> (read / build / write / verify / discovery), in the field since 2005.</p>
+    <p style="margin-bottom:0"><span class="pill df">DiscForge</span> a broad clean-room <b>preservation toolkit</b> — image, identify, convert, verify, preserve, catalogue across CD/DVD/BD and the retro-console world — that also burns.</p>
+  </div>
+
+  <blockquote>For a person who just needs to burn or verify a disc on Windows today, ImgBurn is still the safer pick. For imaging, identifying, converting, preserving and cataloguing a collection — and burning as one feature among many, cross-platform — DiscForge is a different and much wider tool.</blockquote>
+
+  <div class="tldr" style="border-left-color:var(--good)">
+    <p style="margin-top:0"><b>Update — parity round closed the buildable gaps.</b> Since the first comparison, DiscForge closed every ImgBurn gap that's provable without a drive, each with tests: <b>layer-break picker</b> (<code>layerbreak-pick</code>), <b>overburn/underburn</b> (<code>capacity-check</code>), <b>low-level write-knob command construction</b> (MMC page 0x05 + OPC/reserve/close CDBs), and <b>UDF write 1.50 / 2.00 / 2.01</b> (udfinfo-validated + reader round-tripped).</p>
+    <p style="margin-bottom:0"><b>Second pass:</b> the DVD-Video/BD-Video assembler is now shipped — <code>dvd-video-build</code> (VIDEO_TS→ISO+UDF in on-disc order), <code>dvd-video-fix</code> (Fix VTS Sectors <b>verify + rewrite</b> + BUP refresh), <code>bdmv-build</code> (BDMV→UDF 2.50) — and UDF write now spans 1.02–2.50. What still trails is <b>only hardware-bound</b>: a hardware-proven burn engine, vendor bitsetting bytes, RAW-DAO execution, and one DVD-Video detail (IFO/BUP ECC-block padding) that needs a mastered-disc fixture. Rows below are updated.</p>
+  </div>
+
+  <h2>1 · What each tool is</h2>
+  <table>
+    <tr><th>&nbsp;</th><th>ImgBurn</th><th>DiscForge</th></tr>
+    <tr><td>Category</td><td>Optical disc burner / imager</td><td>Clean-room imaging + retro-preservation toolkit</td></tr>
+    <tr><td>Primary job</td><td>Read/build/write/verify optical media</td><td>Image, identify, convert, verify, preserve, catalogue — burning included</td></tr>
+    <tr><td>Surface</td><td>One Windows GUI, five modes</td><td>Cross-platform <code>dforge</code> CLI (286 cmds) + Windows GUI</td></tr>
+    <tr><td>Platforms</td><td>Windows only (Wine); no native Mac/Linux</td><td>CLI on Win/macOS/Linux; GUI Windows-only</td></tr>
+    <tr><td>Source / licence</td><td>Closed source, freeware/donationware</td><td>Proprietary, closed source (source-visible)</td></tr>
+    <tr><td>Status</td><td>Last release 2.5.8.0, <b>June 2013</b> — unmaintained</td><td>Actively developed</td></tr>
+    <tr><td>Validation</td><td>~20 yrs real-world field use</td><td>2,183 offline tests; <b>live burning pending hardware validation</b></td></tr>
+    <tr><td>Copy protection</td><td>Detects, never decrypts</td><td>Detects/fingerprints, never circumvents</td></tr>
+  </table>
+
+  <h2>2 · Feature matrix</h2>
+  <p class="legend">Legend: <span class="y">✓</span> full · <span class="p">◐</span> partial/caveats · <span class="n">✗</span> none</p>
+
+  <h3>Burning engine &amp; write settings</h3>
+  <table>
+    <tr><th>Capability</th><th class="c">ImgBurn</th><th class="c">DiscForge</th><th>Notes</th></tr>
+    <tr><td>Data CD/DVD/BD burn</td><td class="c y">✓</td><td class="c y">✓</td><td><b>hardware-proven</b> 2026-08-10 on a Plextor: burn → read-back → byte-exact verify PASS</td></tr>
+    <tr><td>Audio-CD burn</td><td class="c y">✓</td><td class="c p">◐</td><td>ImgBurn takes far more input codecs (FLAC/APE/MP3/OGG…)</td></tr>
+    <tr><td>Cross-platform burn</td><td class="c n">✗</td><td class="c p">◐</td><td>DiscForge is the only one that burns on Mac/Linux at all</td></tr>
+    <tr><td>DAO/SAO · TAO · packet</td><td class="c y">✓ all</td><td class="c p">◐</td><td>IMAPI2 Data+TAO; RAW DAO-96 hardware-proven (direct SPTI, Write Type = Raw)</td></tr>
+    <tr><td>RAW DAO-96 (byte-faithful)</td><td class="c n">✗</td><td class="c y">✓</td><td>DiscForge-only: hardware-proven 2026-08-10 (raw write → read-back → PASS, main + sub-channel); ImgBurn has no raw sub-channel burning</td></tr>
+    <tr><td>Write-speed selection</td><td class="c y">✓</td><td class="c y">✓</td><td>parity</td></tr>
+    <tr><td>Verify after write</td><td class="c y">✓</td><td class="c y">✓</td><td>parity in concept</td></tr>
+    <tr><td>Test / simulated burn</td><td class="c y">✓</td><td class="c y">✓</td><td>parity</td></tr>
+    <tr><td>Erase / blank RW</td><td class="c y">✓</td><td class="c y">✓</td><td>Quick / Full</td></tr>
+    <tr><td><b>Bitsetting / book-type</b></td><td class="c y">✓</td><td class="c n">✗</td><td>Vendor-specific commands — needs hardware traces</td></tr>
+    <tr><td>DVD-DL layer-break picker</td><td class="c y">✓</td><td class="c y">✓</td><td><b>Closed</b> — <code>layerbreak-pick</code> (cell/ECC boundary, target, seamless)</td></tr>
+    <tr><td>Overburn / underburn</td><td class="c y">✓</td><td class="c y">✓</td><td><b>Closed</b> — <code>capacity-check</code> (BurnerMax vendor hack aside)</td></tr>
+    <tr><td>OPC / link-size / reserve-track</td><td class="c y">✓</td><td class="c p">◐</td><td><b>CDBs built</b> (<code>SendOpc</code>/<code>WriteParametersPage</code>/…); execution pending hardware</td></tr>
+    <tr><td>Burn queue / multiple copies</td><td class="c y">✓</td><td class="c y">✓</td><td>parity</td></tr>
+  </table>
+
+  <h3>Read / rip (disc → image)</h3>
+  <table>
+    <tr><th>Capability</th><th class="c">ImgBurn</th><th class="c">DiscForge</th></tr>
+    <tr><td>Rip data / audio disc</td><td class="c y">✓</td><td class="c y">✓</td></tr>
+    <tr><td>Sub-channel capture (LibCrypt/SBI)</td><td class="c n">✗</td><td class="c y">✓</td></tr>
+    <tr><td>C2 error-pointer re-reads</td><td class="c p">◐</td><td class="c y">✓</td></tr>
+    <tr><td>Read-offset correction / AccurateRip</td><td class="c n">✗</td><td class="c y">✓</td></tr>
+    <tr><td>Jitter correction (audio)</td><td class="c n">✗</td><td class="c y">✓</td></tr>
+    <tr><td>Read-retry knobs (0–20)</td><td class="c y">✓</td><td class="c p">◐</td></tr>
+    <tr><td>Bad-sector map / stability grade</td><td class="c p">◐</td><td class="c y">✓</td></tr>
+  </table>
+
+  <h3>Image formats</h3>
+  <table>
+    <tr><th>&nbsp;</th><th>ImgBurn</th><th>DiscForge</th></tr>
+    <tr><td>Read (source)</td><td>BIN/CUE, ISO, IMG, NRG, MDS/MDF, CDI, CCD, GI, DI, PDI</td><td>CDI (native), BIN/CUE, ISO, GDI, NRG, MDS/MDF, CCD, CHD, CSO/ZSO, WBFS, XISO, RVZ/WIA (id), ECM</td></tr>
+    <tr><td>Write (output)</td><td>ISO, BIN(+CUE), IMG; layout CCD/CUE/DVD/MDS</td><td>CDI, BIN/CUE, ISO, NRG, CHD, CSO; universal <code>disc-convert</code></td></tr>
+    <tr><td>GI / DI / PDI</td><td class="c y">✓ read-only</td><td class="c n">✗</td></tr>
+    <tr><td>CHD/WBFS/XISO/GDI/CSO/ECM</td><td class="c n">✗</td><td class="c y">✓</td></tr>
+    <tr><td>Any-to-any conversion</td><td class="c n">✗</td><td class="c y">✓</td></tr>
+  </table>
+
+  <h3>Filesystem building</h3>
+  <table>
+    <tr><th>&nbsp;</th><th class="c">ImgBurn</th><th class="c">DiscForge</th></tr>
+    <tr><td>ISO 9660 / Joliet</td><td class="c y">✓</td><td class="c y">✓</td></tr>
+    <tr><td>Rock Ridge (POSIX)</td><td class="c n">✗</td><td class="c y">✓</td></tr>
+    <tr><td>UDF write versions</td><td class="c y">✓ 1.02–2.60</td><td class="c y">✓ 1.02–2.50 (only 2.60 deferred)</td></tr>
+    <tr><td>ISO+UDF bridge</td><td class="c y">✓</td><td class="c y">✓</td></tr>
+    <tr><td>El Torito bootable (+UEFI)</td><td class="c y">✓</td><td class="c y">✓</td></tr>
+    <tr><td>DVD-Video/BD-Video assembly</td><td class="c y">✓</td><td class="c p">◐ assembles compliant VIDEO_TS→ISO+UDF &amp; BDMV→UDF 2.50 + Fix-VTS-Sectors verify &amp; rewrite; not full menu authoring</td></tr>
+    <tr><td>FS conformance linting</td><td class="c n">✗</td><td class="c y">✓</td></tr>
+  </table>
+
+  <h3>Verification, media &amp; platform</h3>
+  <table>
+    <tr><th>&nbsp;</th><th class="c">ImgBurn</th><th class="c">DiscForge</th></tr>
+    <tr><td>Verify vs source / MD5</td><td class="c y">✓</td><td class="c y">✓</td></tr>
+    <tr><td>AccurateRip · Redump submission · DAT verify · PAR2</td><td class="c n">✗</td><td class="c y">✓</td></tr>
+    <tr><td>HD DVD media</td><td class="c y">✓</td><td class="c n">✗</td></tr>
+    <tr><td>BD-XL</td><td class="c y">✓</td><td class="c p">◐</td></tr>
+    <tr><td>Command-line / scripting</td><td class="c p">◐ job switches</td><td class="c y">✓ full CLI</td></tr>
+    <tr><td>Cross-platform</td><td class="c n">✗</td><td class="c y">✓ CLI</td></tr>
+  </table>
+
+  <h3>Preservation universe — DiscForge only</h3>
+  <p>None of this exists in ImgBurn: console disc identify (PS1/2, Dreamcast, Saturn, CD-i, PSP, GameCube/Wii, Xbox, Xbox 360 GOD); cartridge ROMs (N64/SNES/Genesis/GB·GBC·GBA/NES/FDS); console saves &amp; memory cards (read+write); game audio incl. <b>PS1 STR/MDEC video → PNG</b>; PPF/IPS/BPS patches &amp; cheat decode; collection tooling (1G1R, DAT rebuild, TorrentZip, front-end export); floppy/disk images.</p>
+
+  <h2>3 · Settings deep-dive — ImgBurn tabs → DiscForge</h2>
+  <table>
+    <tr><th>ImgBurn settings area</th><th>DiscForge equivalent</th></tr>
+    <tr><td><b>I/O</b> — SPTI/ElbyCDIO/Patin-Couffin/ASPI, buffers</td><td>SPTI only (user-mode, no kernel driver by design); buffering internal</td></tr>
+    <tr><td><b>Read</b> — retries 0–20, ignore errors, PreGap, SpeedRead, MD5</td><td>Planner-driven, media-aware; C2 re-reads, sub-channel, offset+jitter, bad-sector map</td></tr>
+    <tr><td><b>Write</b> — DAO/TAO/packet, book-type, link size, OPC, BURN-Proof, test</td><td>Burn job: method/Test/Write/Verify/speed/copies; no book-type/OPC/link-size exposure</td></tr>
+    <tr><td><b>Build</b> — ISO/Joliet/UDF versions, restrictions, dates, El Torito, DVD-Video fix-ups</td><td><code>iso-create</code>/<code>create-udf</code>/<code>create-udf-bridge</code>/<code>create-xiso</code> + Rock Ridge + linters; UDF write 1.02</td></tr>
+    <tr><td><b>Device</b> — per-drive flags, region, reset</td><td><code>drives</code> capability report; no region/reset controls</td></tr>
+    <tr><td><b>Discovery</b> — destructive quality test</td><td>No burn test; imports quality-scan exports, grades health from reads</td></tr>
+    <tr><td><b>Layer Break</b> — seamless, interleaved cells, IFO update</td><td><code>dvd-layerbreak</code> analysis; interactive picker not matched</td></tr>
+    <tr><td><b>General / Sound / Events / Registry</b></td><td>Not modelled (CLI-first); no sound/shutdown/associations</td></tr>
+  </table>
+
+  <h2>4 · Gap analysis — current state</h2>
+  <h3 style="color:var(--good)">Closed this parity round</h3>
+  <table>
+    <tr><th>Gap</th><th>How</th></tr>
+    <tr><td class="y">✅ DVD-DL layer-break picker</td><td><code>layerbreak-pick</code> / <code>LayerBreakPlanner</code></td></tr>
+    <tr><td class="y">✅ Overburn / underburn</td><td><code>capacity-check</code> / <code>BurnCapacity</code></td></tr>
+    <tr><td class="y">✅ Low-level write knobs (construction)</td><td><code>WriteParametersPage</code> + OPC/reserve/close CDBs (byte-tested)</td></tr>
+    <tr><td class="y">✅ Wider UDF write (1.02–2.01)</td><td>udfinfo-validated + reader round-tripped</td></tr>
+  </table>
+  <h3>Still trailing — and why</h3>
+  <table>
+    <tr><th class="c">#</th><th>Gap</th><th>Kind</th></tr>
+    <tr><td class="c">1</td><td><b>Hardware-proven burn engine</b> — <b>done 2026-08-10</b>: IMAPI2 data burn AND RAW DAO-96 (direct SPTI) both proven byte-faithful on a Plextor PX-W5224A. Remaining: breadth across more drives/media</td><td>Validation — now largely met</td></tr>
+    <tr><td class="c">2</td><td>Bitsetting / book-type — vendor-specific command bytes</td><td>Needs hardware traces</td></tr>
+    <tr><td class="c">3</td><td>DVD-Video/BDMV assembly + Fix-VTS-Sectors <i>verify</i> <b>and</b> <i>rewrite</i> (<code>dvd-video-fix</code>) shipped; remaining only: IFO/BUP ECC-block padding (hardware-fixture-bound)</td><td>Assembly + fix done; ECC padding pending</td></tr>
+    <tr><td class="c">4</td><td>UDF 2.60 write only (2.50 metadata partition shipped)</td><td>Structural work</td></tr>
+    <tr><td class="c">5</td><td>Manual read-retry execution (0–20)</td><td>Windows-only Devices layer</td></tr>
+    <tr><td class="c">6</td><td>Quality/discovery burn test; HD DVD; sound/shutdown</td><td>Hardware / negligible value</td></tr>
+  </table>
+  <p class="note">Deliberately out of scope (agreed): MP3/AAC/OGG/APE decoders in an offline zero-dependency build (WAV/FLAC already work), GI/DI/PDI proprietary containers, HD DVD.</p>
+
+  <h2>5 · Positioning — which to reach for</h2>
+  <table>
+    <tr><th>Pick <span class="pill ib">ImgBurn</span> when…</th><th>Pick <span class="pill df">DiscForge</span> when…</th></tr>
+    <tr>
+      <td>You need to <b>burn/verify a disc now</b> on Windows with maximum confidence; you need <b>bitsetting / book-type change</b>, or any low-level write control <b>executed and proven on the drive today</b> (DiscForge now builds those commands but ImgBurn has burned them for years).</td>
+      <td>You want to <b>image, identify, convert, verify, preserve or catalogue</b> — especially retro-console material; you need <b>Redump-grade</b> ripping (sub-channel, offsets, C2, submission info); you're on <b>macOS/Linux</b> or want a <b>scriptable CLI</b>; you want <b>any-to-any</b> conversion, CHD/CSO/WBFS/XISO/ECM, or FS linting; you're assembling a <b>DVD-Video/BD-Video</b> disc and want the IFO <b>verify + rewrite</b> (<code>dvd-video-fix</code>) and a UDF 2.50 BD image.</td>
+    </tr>
+  </table>
+  <blockquote><b>Use both:</b> image and verify with DiscForge (superior ripping, hashing, submission info), then burn the resulting image with ImgBurn while DiscForge's own burn engine matures on real hardware.</blockquote>
+
+  <h2>6 · One-screen verdict</h2>
+  <table>
+    <tr><th>Axis</th><th>Winner</th><th>Why</th></tr>
+    <tr><td>Burning a disc on Windows today</td><td><span class="pill ib">ImgBurn</span></td><td>Hardware-proven, low-level control, bitsetting, layer break</td></tr>
+    <tr><td>Everything else about discs</td><td><span class="pill df">DiscForge</span></td><td>Imaging, identify, convert, verify, preserve, catalogue, cross-platform</td></tr>
+    <tr><td>Retro / console preservation</td><td><span class="pill df">DiscForge</span></td><td>ImgBurn has none of it</td></tr>
+    <tr><td>Cross-platform / scripting</td><td><span class="pill df">DiscForge</span></td><td>ImgBurn is Windows-only, GUI-first</td></tr>
+    <tr><td>Low-level write control</td><td><span class="pill ib">ImgBurn</span> proven / tie in construction</td><td>DiscForge now builds layer-break, overburn, OPC/write-parameter CDBs; ImgBurn adds <b>bitsetting</b> + years of on-drive proof</td></tr>
+    <tr><td>Long-term maintenance</td><td><span class="pill df">DiscForge</span></td><td>ImgBurn frozen since 2013</td></tr>
+  </table>
+
+  <p class="foot">Honest caveats: DiscForge's burning is now hardware-proven on a Plextor PX-W5224A for both the IMAPI2 data path and RAW DAO-96 (2026-08-10), but ImgBurn's twenty years of field reliability across countless drives is still broader. ImgBurn is unmaintained since 2013, closed-source, and its official installer historically bundled adware (declinable / <code>/NOCANDY</code>). Neither tool circumvents copy protection. Sources: imgburn.com user guide &amp; forum, Wikipedia; DiscForge repo docs (DEVICES.md, READING.md, INVENTORY.md, COMPARISON.md).</p>
+</div>
+</body>
+</html>

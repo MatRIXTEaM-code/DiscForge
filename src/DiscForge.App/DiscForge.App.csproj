@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DiscForge.App</RootNamespace>
+    <AssemblyName>DiscForge</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>DiscForge.ico</ApplicationIcon>
+    <Version>1.65.0</Version>
+    <!-- To produce a single double-click exe, see docs/GUI.md for the
+         dotnet publish command (XML comments can't contain double hyphens,
+         so the flags are documented there rather than inline). -->
+    <Copyright>Copyright (c) 2026 MaTRIX TeAm. All rights reserved.</Copyright>
+    <Company>DiscForge</Company>
+    <Product>DiscForge</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DiscForge.Core\DiscForge.Core.csproj" />
+    <ProjectReference Include="..\DiscForge.Devices\DiscForge.Devices.csproj" />
+  </ItemGroup>
+
+</Project>

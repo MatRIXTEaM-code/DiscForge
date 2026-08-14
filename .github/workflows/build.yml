@@ -1,0 +1,66 @@
+name: build
+
+# Builds the FULL product on a real Windows runner (the WinForms app included,
+# which can't be built in a Linux CI box), runs the whole test suite, produces
+# the self-contained publish folder, and compiles the Inno Setup installer.
+#
+#  - every push / PR      -> build + test + compile the installer and attach it
+#                            as a downloadable "artifact" (kept ~90 days)
+#  - manual "Run workflow" -> same, on demand
+#
+# Tagged releases (the public download assets) are handled separately by
+# release.yml, so this workflow does NOT run on tags and needs no release
+# permissions.
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up the .NET SDK (honours global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore DiscForge.sln
+
+      - name: Build (Release)
+        run: dotnet build DiscForge.sln -c Release --no-restore
+
+      - name: Run the test suite
+        # The custom harness prints "N passed, M failed" and returns a non-zero
+        # exit code if anything fails, which fails the job here.
+        run: dotnet run --project tests/Harness/Harness.csproj -c Release
+
+      - name: Publish self-contained build
+        shell: pwsh
+        run: .\installer\publish.ps1
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Compile the installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found at $iscc" }
+          & $iscc installer\DiscForge.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer compile failed." }
+
+      - name: Upload the installer as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiscForge-installer
+          path: installer/Output/*.exe
+          if-no-files-found: error

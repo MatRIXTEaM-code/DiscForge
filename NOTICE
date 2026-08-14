@@ -1,0 +1,41 @@
+DiscForge — Notices
+===================
+
+Copyright (C) 2026 MaTRIX TeAm.
+
+DiscForge is free software, licensed under the GNU General Public License
+version 3 or (at your option) any later version. See LICENSE for the full
+terms. It was previously distributed under a proprietary licence; the
+copyright holder relicensed it under the GPL in August 2026.
+
+The following notices are preserved under section 7(b) of the GPL:
+
+Provenance
+----------
+
+This software is a clean-room implementation. Its knowledge of disc and image
+formats derives solely from public documentation and from the observed
+behaviour of hardware and of files supplied by the copyright holder. No
+third-party binary has been disassembled, decompiled or otherwise reverse
+engineered in its creation. See the `docs/` directory, which records the
+derivation of each format.
+
+Product names referenced in the documentation are used only to identify the
+formats and behaviours described. They are the trade marks of their respective
+owners, and no affiliation with or endorsement by those owners is claimed or
+implied.
+
+Copy protection
+---------------
+
+This software does not circumvent, and will not be extended to circumvent, any
+effective technological measure protecting a copyright work. It reads
+unencrypted media only. This is a deliberate and permanent limitation.
+
+Third-party components
+----------------------
+
+This software targets the .NET platform and uses operating-system APIs
+(IMAPI2 and SPTI on Windows; SG_IO on Linux) supplied with the operating
+system. It bundles no third-party code. Any component distributed alongside
+it remains subject to its own licence.

@@ -1,0 +1,47 @@
+name: CI
+
+# Fast cross-platform sanity check on every push/PR: builds and tests the
+# net8.0 Core (the platform-independent half) on Linux, which is quick and
+# cheap. The full Windows build + installer lives in build.yml; the tagged
+# release downloads live in release.yml.
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-core:
+    name: Test Core (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Core and its tests are net8.0 (cross-platform). The Devices/App projects
+      # target net8.0-windows and are covered by the Windows build in build.yml,
+      # so on Linux we build and test only the Core test project.
+      - name: Restore
+        run: dotnet restore tests/DiscForge.Core.Tests/DiscForge.Core.Tests.csproj
+
+      - name: Build
+        run: dotnet build tests/DiscForge.Core.Tests/DiscForge.Core.Tests.csproj -c Release --no-restore
+
+      - name: Test
+        run: >
+          dotnet test tests/DiscForge.Core.Tests/DiscForge.Core.Tests.csproj
+          -c Release --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory ./test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-linux
+          path: ./test-results/*.trx

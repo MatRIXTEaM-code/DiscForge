@@ -1,0 +1,34 @@
+# Normalise line endings so the repo is consistent and Git stops warning about
+# LF<->CRLF conversion on Windows.
+* text=auto
+
+# Scripts and project files Windows tooling prefers to see with CRLF.
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.sln  text eol=crlf
+*.iss  text eol=crlf
+
+# Source, docs and config as LF.
+*.cs     text eol=lf
+*.csproj text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.md     text eol=lf
+
+# Binary assets Git must never line-ending-convert (this protects the checked-in
+# disc-image and memory-card test fixtures from corruption).
+*.png binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.mcr binary
+*.mcd binary
+*.bin binary
+*.cdi binary
+*.chd binary
+*.iso binary
+*.sub binary
+*.mds binary
+*.mdf binary

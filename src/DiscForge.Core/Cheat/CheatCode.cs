@@ -1,0 +1,51 @@
+// DiscForge — Copyright (C) 2026 MaTRIX TeAm.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// This program is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of
+// the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY;
+// see the GNU General Public License (LICENSE at the repository root) for details.
+
+namespace DiscForge.Core.Cheat;
+
+/// <summary>The console family a <see cref="CheatCode"/> targets.</summary>
+public enum CheatPlatform
+{
+    Nes,
+    Snes,
+    Genesis,
+    GameBoy,
+    GameSharkPs1,
+}
+
+/// <summary>
+/// Thrown when a cheat-code string cannot be parsed: wrong length, an illegal
+/// character for the code's alphabet, or a malformed GameShark line.
+/// </summary>
+public sealed class CheatFormatException(string message) : Exception(message);
+
+/// <summary>
+/// A decoded cheat: the CPU/bus address it writes to, the value it writes and,
+/// for Game Genie "compare" codes and GameShark conditionals, the byte the code
+/// tests against. <see cref="Description"/> carries a human-readable note
+/// (chiefly for GameShark, where the leading type byte selects the operation).
+/// </summary>
+public sealed record CheatCode
+{
+    /// <summary>Which console family this code is for.</summary>
+    public required CheatPlatform Platform { get; init; }
+
+    /// <summary>The target address (CPU/bus address; 0x8000-0xFFFF for NES Game Genie).</summary>
+    public required long Address { get; init; }
+
+    /// <summary>The value the code writes.</summary>
+    public required long Value { get; init; }
+
+    /// <summary>
+    /// The "compare" / "old value" byte. Set for Game Genie compare codes (8-letter
+    /// NES, 9-digit Game Boy) and GameShark equal/not-equal conditionals; null otherwise.
+    /// </summary>
+    public long? Compare { get; init; }
+
+    /// <summary>A human-readable note (GameShark operation type, etc.).</summary>
+    public string? Description { get; init; }
+}

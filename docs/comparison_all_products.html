@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DiscForge — Head-to-Head vs Popular Disc Tools (2026)</title>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171b21; --panel2:#1d232b; --ink:#e7ecf2; --dim:#9aa7b4;
+    --line:#2a323c; --accent:#5ec2ff; --good:#54d18c; --part:#e8b64a; --none:#5a6673;
+    --dfbg:#14202a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  header{padding:32px 28px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#131922,#0f1216)}
+  h1{margin:0 0 6px;font-size:26px;letter-spacing:.2px}
+  h2{margin:34px 0 10px;font-size:19px;border-left:3px solid var(--accent);padding-left:10px}
+  .sub{color:var(--dim);font-size:14px;max-width:70ch}
+  .wrap{padding:8px 28px 60px;max-width:1200px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin:14px 0 4px;color:var(--dim);font-size:13px}
+  .legend b{color:var(--ink)}
+  .y{color:var(--good);font-weight:700}
+  .p{color:var(--part);font-weight:700}
+  .n{color:var(--none);font-weight:700}
+  table{border-collapse:collapse;width:100%;margin:10px 0 6px;font-size:13.5px;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{background:var(--panel2);position:sticky;top:0;font-size:12.5px;letter-spacing:.3px;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+  .cap{width:230px;color:var(--ink);font-weight:600}
+  .df{background:var(--dfbg)}
+  th.df{background:#1a2a36;color:#bfe6ff}
+  td.c{text-align:center;font-size:15px}
+  .note{color:var(--dim);font-size:12px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:8px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:13px 15px}
+  .card h3{margin:0 0 4px;font-size:15px}
+  .card .meta{color:var(--dim);font-size:12px;margin-bottom:6px}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;border:1px solid var(--line);color:var(--dim);margin-right:5px}
+  .tag.act{color:var(--good);border-color:#2c5a41}
+  .tag.dead{color:#e78a8a;border-color:#5a2c2c}
+  .tag.comm{color:#d9b3ff;border-color:#48345a}
+  ul{margin:6px 0 0;padding-left:18px}
+  li{margin:3px 0}
+  .foot{margin-top:26px;color:var(--dim);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+  a{color:var(--accent)}
+  .pill{font-size:11px;color:#bfe6ff;border:1px solid #2c4a5c;border-radius:20px;padding:2px 9px}
+</style>
+</head>
+<body>
+<header>
+  <h1>DiscForge — Head-to-Head vs Popular Disc Tools</h1>
+  <div class="sub">An honest capability comparison across the disc-imaging, burning and preservation landscape, refreshed August 2026 with competitor versions and maintenance status verified against current sources. DiscForge figures reflect what actually ships in the codebase (374 CLI commands), including the recently added FAT/exFAT/NTFS/ext filesystem readers and the corrected AaruFormat reader.</div>
+</header>
+<div class="wrap">
+
+  <div class="legend">
+    <span><b>Legend:</b></span>
+    <span><span class="y">●</span> full / first-class</span>
+    <span><span class="p">◑</span> partial / read-only / narrow</span>
+    <span><span class="n">○</span> not a feature</span>
+    <span class="note">"Partial" is used precisely — e.g. read-but-not-write, or one path validated but not the full matrix.</span>
+  </div>
+
+  <h2>The field at a glance</h2>
+  <div class="cards">
+    <div class="card">
+      <h3>DiscForge <span class="pill">this app</span></h3>
+      <div class="meta"><span class="tag act">active</span><span class="tag">.NET 8 · Win + Linux CLI</span><span class="tag">proprietary</span></div>
+      Preservation-grade dumping <i>and</i> RAW-DAO burning in one toolkit, with a "provably correct or declined" ethos. 375 commands spanning imaging, conversion, filesystems, Redump workflow, audio, CHD, DVD/BD authoring and forensics. The analysis toolset runs natively on Linux too.
+    </div>
+    <div class="card">
+      <h3>Aaru</h3>
+      <div class="meta"><span class="tag act">active</span><span class="tag">cross-platform</span><span class="tag">open source</span></div>
+      5.4.2 LTS (Feb 2026); 6.0-alpha.19 (Mar 2026). The closest analog: imaging + ~60 filesystem readers + AaruFormat + CICM metadata. Read/analyse focused — <b>does not burn</b>.
+    </div>
+    <div class="card">
+      <h3>DiscImageCreator (DIC)</h3>
+      <div class="meta"><span class="tag act">active</span><span class="tag">Windows</span><span class="tag">open source</span></div>
+      Redump's official ripper. Protection-aware CD/GD/DVD/BD dumping on real hardware; the accepted submission standard. Not a burner, converter, or filesystem browser.
+    </div>
+    <div class="card">
+      <h3>ImgBurn</h3>
+      <div class="meta"><span class="tag dead">unmaintained</span><span class="tag">Windows</span><span class="tag">freeware</span></div>
+      2.5.8.0, June 2013 — no updates since. Excellent everyday burner + video-disc authoring from folders. No preservation dumping, verification grading, or filesystem parsing.
+    </div>
+    <div class="card">
+      <h3>IsoBuster</h3>
+      <div class="meta"><span class="tag act">active</span><span class="tag comm">commercial</span><span class="tag">Windows</span></div>
+      5.7 (2024–25). Best-in-class recovery/extraction and filesystem browsing from optical/USB/HDD. Reads many image formats. Not a preservation dumper or burner; closed source.
+    </div>
+    <div class="card">
+      <h3>Alcohol 120% / CloneCD</h3>
+      <div class="meta"><span class="tag comm">commercial</span><span class="tag">Windows</span></div>
+      Alcohol 2.1.x (updated); CloneCD legacy. 1:1 copy with protection emulation + virtual-drive mounting. Not preservation-grade; closed source.
+    </div>
+    <div class="card">
+      <h3>cdrtools (cdrecord) / cdrdao</h3>
+      <div class="meta"><span class="tag">maintained-ish</span><span class="tag">Linux/UNIX</span><span class="tag">open source</span></div>
+      The classic CLI burners (incl. RAW/DAO). Rock-solid writing engines; no modern preservation, verification, or GUI workflow.
+    </div>
+    <div class="card">
+      <h3>CHDMAN (MAME)</h3>
+      <div class="meta"><span class="tag act">active</span><span class="tag">cross-platform</span><span class="tag">open source</span></div>
+      The canonical CHD tool — create/verify/extract compressed hunks. Narrow, authoritative scope.
+    </div>
+    <div class="card">
+      <h3>EAC / dBpoweramp</h3>
+      <div class="meta"><span class="tag act">active</span><span class="tag comm">EAC free / dBpa paid</span><span class="tag">Windows</span></div>
+      Secure audio-CD ripping specialists with AccurateRip and encoder integration. Audio-only.
+    </div>
+  </div>
+
+  <h2>Capability matrix</h2>
+  <div class="note">Columns abbreviated: DF = DiscForge, Aaru, DIC = DiscImageCreator, IB = ImgBurn, ISO = IsoBuster, Alc = Alcohol/CloneCD, cdr = cdrtools/cdrdao, CHD = CHDMAN, EAC = EAC/dBpoweramp.</div>
+  <table>
+    <thead>
+      <tr>
+        <th class="cap">Capability</th>
+        <th class="df c">DF</th><th class="c">Aaru</th><th class="c">DIC</th><th class="c">IB</th><th class="c">ISO</th><th class="c">Alc</th><th class="c">cdr</th><th class="c">CHD</th><th class="c">EAC</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="cap">Preservation-grade dumping (read-back verification, per-sector provenance)</td>
+        <td class="df c y">●</td><td class="c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c p">◑</td><td class="c p">◑</td><td class="c n">○</td><td class="c n">○</td><td class="c p">◑</td></tr>
+      <tr><td class="cap">Protection-aware CD dumping (LibCrypt, subchannel Q, weak/twin sectors)</td>
+        <td class="df c y">●</td><td class="c p">◑</td><td class="c y">●</td><td class="c n">○</td><td class="c p">◑</td><td class="c p">◑</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td></tr>
+      <tr><td class="cap">C2 / read-rate quality scanning</td>
+        <td class="df c y">●</td><td class="c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c p">◑</td><td class="c p">◑</td><td class="c n">○</td><td class="c n">○</td><td class="c p">◑</td></tr>
+      <tr><td class="cap">RAW DAO-96 burning (2352+96 subchannel, protection re-creation)</td>
+        <td class="df c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c p">◑</td><td class="c n">○</td><td class="c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td></tr>
+      <tr><td class="cap">General burning (data/ISO/video-disc authoring)</td>
+        <td class="df c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td><td class="c n">○</td><td class="c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c p">◑</td></tr>
+      <tr><td class="cap">Image-format read breadth (bin/cue, ccd, mds, nrg, gdi, cdi, ciso, chd, iso, aaruf, rvz/nkit…)</td>
+        <td class="df c y">●</td><td class="c y">●</td><td class="c p">◑</td><td class="c p">◑</td><td class="c y">●</td><td class="c p">◑</td><td class="c n">○</td><td class="c p">◑</td><td class="c n">○</td></tr>
+      <tr><td class="cap">Image-format conversion</td>
+        <td class="df c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c p">◑</td><td class="c p">◑</td><td class="c n">○</td><td class="c p">◑</td><td class="c n">○</td></tr>
+      <tr><td class="cap">Filesystem reading — ISO9660/Joliet/Rock&nbsp;Ridge, UDF</td>
+        <td class="df c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td><td class="c p">◑</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td></tr>
+      <tr><td class="cap">Filesystem reading — FAT, exFAT, NTFS, ext2/3/4, HFS</td>
+        <td class="df c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td></tr>
+      <tr><td class="cap">Aaru interop — AaruFormat read <b>+ write</b> + CICM metadata sidecar</td>
+        <td class="df c p">◑</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td></tr>
+      <tr><td class="cap">Redump workflow — cue gen, DAT match/diff, submission packaging</td>
+        <td class="df c y">●</td><td class="c p">◑</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c p">◑</td></tr>
+      <tr><td class="cap">Audio ripping + AccurateRip</td>
+        <td class="df c y">●</td><td class="c p">◑</td><td class="c p">◑</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td></tr>
+      <tr><td class="cap">CHD support (read, verify, extract <b>and create</b>)</td>
+        <td class="df c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td><td class="c n">○</td></tr>
+      <tr><td class="cap">DVD-Video / BDMV authoring + layer-break planning</td>
+        <td class="df c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c p">◑</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td></tr>
+      <tr><td class="cap">Forensics — entropy, fuzzy hashing, provenance, disc health/rot maps</td>
+        <td class="df c y">●</td><td class="c p">◑</td><td class="c n">○</td><td class="c n">○</td><td class="c p">◑</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td></tr>
+      <tr><td class="cap">Open source</td>
+        <td class="df c n">○</td><td class="c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td><td class="c y">●</td><td class="c p">◑</td></tr>
+      <tr><td class="cap">Cross-platform (analysis/file toolset; hardware I/O is Windows-only)</td>
+        <td class="df c p">◑</td><td class="c y">●</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c n">○</td><td class="c y">●</td><td class="c y">●</td><td class="c n">○</td></tr>
+      <tr><td class="cap">Actively maintained (2026)</td>
+        <td class="df c y">●</td><td class="c y">●</td><td class="c y">●</td><td class="c n">○</td><td class="c y">●</td><td class="c p">◑</td><td class="c p">◑</td><td class="c y">●</td><td class="c y">●</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Where DiscForge leads</h2>
+  <ul>
+    <li><b>Breadth in one tool.</b> No other single product spans preservation-grade <i>reading</i>, RAW-DAO <i>burning</i>, format conversion, cross-family <i>filesystem reading</i>, Redump workflow, audio ripping, CHD, and DVD/BD authoring. The field is specialised — DiscForge is the union.</li>
+    <li><b>RAW-DAO burning with protection re-creation</b>, validated byte-for-byte against golden builds via sub-channel-Q consensus read-back. Among preservation tools this is almost unique (Aaru and DIC don't burn); the only other RAW-DAO writers are legacy (cdrdao) or commercial copy tools (Alcohol/CloneCD) with no verification grading.</li>
+    <li><b>"Provably correct or declined" verification.</b> Empty/short read-backs fail rather than pass; consensus never blends a forged sub-channel Q; unsupported structures decline instead of emitting maybe-corrupt output. This review pass hardened that ethos further across the filesystem, CHD, ROM and burn-verify paths.</li>
+    <li><b>Filesystem reader coverage</b> now includes FAT, exFAT, NTFS, ext2/3/4, HFS, ISO9660/Joliet/Rock Ridge and UDF — matching IsoBuster/Aaru on the mainstream families, with synthetic-image tests for each.</li>
+    <li><b>Forensics & provenance depth</b> — entropy, fuzzy hashing, disc genome/genealogy, rot/health mapping, provenance merges — goes beyond what any single competitor exposes.</li>
+  </ul>
+
+  <h2>Where competitors still lead (honest gaps)</h2>
+  <ul>
+    <li><b>Aaru — raw filesystem/format breadth &amp; compressed AaruFormat.</b> Aaru reads ~60 filesystems (including tape and flux-level formats DiscForge doesn't touch) and decodes <i>compressed</i> AaruFormat (LZMA/FLAC). DiscForge now reads <i>and writes</i> uncompressed AaruFormat correctly and writes CICM metadata, but still <span class="p">declines</span> compressed AaruFormat — faithful LZMA/FLAC decode needs a real Aaru image as an oracle to validate against, which is the honest blocker on that last step.</li>
+    <li><b>DiscImageCreator — submission trust &amp; drive matrix.</b> DIC is the accepted Redump submission standard with the widest tested-drive support and years of community-validated protection dumping. DiscForge's RAW path is proven on Plextor hardware but doesn't yet carry DIC's breadth of drive support or submission acceptance.</li>
+    <li><b>IsoBuster — recovery UX.</b> DiscForge has the recovery <i>engines</i> (fs-recover, salvage-plan, recover-toc, bad-sectors, scratch-verdict, health/rot maps); IsoBuster's edge is two decades of GUI polish for pulling data off damaged/odd media.</li>
+    <li><b>EAC / dBpoweramp — secure-ripping depth.</b> DiscForge exposes the building blocks (AccurateRip, read-offset/offset-detect, C2, read-stability); EAC's edge is deeper combined drive-offset/error-recovery heuristics and tight encoder integration.</li>
+    <li><b>Openness.</b> Aaru, DIC, cdrtools and CHDMAN are open source; DiscForge is proprietary — a licensing/business decision, not a technical gap.</li>
+  </ul>
+
+  <h2>Update — August 2026 session</h2>
+  <div class="sub" style="max-width:82ch">
+    Three cells moved this pass after verifying against the codebase and running it on Linux:
+    <b>CHD</b> is now full — DiscForge creates CHDs (accepted by chdman), not just reads them.
+    <b>Cross-platform</b> is upgraded to partial — the file/analysis CLI builds and runs natively on Linux (verified this session by reading a real <span class="pill">mke2fs</span>-created ext4 image byte-for-byte); only the hardware burn/read layer stays Windows-only (SPTI), pending a Linux SG_IO backend.
+    <b>Aaru interop</b> gained an uncompressed AaruFormat <b>writer</b> (round-trips through DiscForge's own reader), so DiscForge now both reads and produces the interchange format — the remaining gap is compressed-block decode.
+  </div>
+
+  <h2>Bottom line</h2>
+  <div class="sub" style="max-width:80ch">
+    Against any <i>single</i> competitor, DiscForge matches or exceeds on nearly every axis that overlaps, and it uniquely combines verified preservation reading with verified RAW-DAO burning. The remaining honest gaps are specialisation gaps — Aaru's sheer filesystem/format breadth and compressed-AaruFormat decode, DIC's community-standard submission trust and drive matrix, chdman's maximally-compressed CHD codecs, and EAC's audio-ripping heuristic depth — plus the strategic choice of being proprietary and (for hardware I/O) Windows-only. Nothing in the field does what DiscForge does end-to-end; the closest, Aaru, still doesn't burn.
+  </div>
+
+  <div class="foot">
+    Sources (verified Aug 2026): ImgBurn 2.5.8.0 (2013), <a href="https://en.wikipedia.org/wiki/ImgBurn">Wikipedia</a> ·
+    Aaru 5.4.2 LTS / 6.0-alpha.19, <a href="https://github.com/aaru-dps/Aaru/releases">GitHub releases</a> ·
+    <a href="https://github.com/saramibreak/DiscImageCreator/releases">DiscImageCreator releases</a> ·
+    <a href="https://www.isobuster.com/news/">IsoBuster 5.7 news</a> ·
+    <a href="https://en.wikipedia.org/wiki/Alcohol_120%25">Alcohol 120%</a> ·
+    <a href="https://en.wikipedia.org/wiki/Cdrtools">cdrtools</a> / <a href="https://en.wikipedia.org/wiki/Cdrdao">cdrdao</a> ·
+    <a href="https://en.wikipedia.org/wiki/Exact_Audio_Copy">Exact Audio Copy 1.8</a>.
+    DiscForge column reflects the current codebase (374 CLI commands) at review time. Ratings are DiscForge's own honest assessment, not vendor claims.
+  </div>
+</div>
+</body>
+</html>

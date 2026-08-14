@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- The cross-platform CLI targets net8.0; a net8.0-windows target additionally links the
+         Windows-only optical-burn stack (IMAPI2) so `dforge burn` / `dforge drives` work on Windows. -->
+    <TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>DiscForge.Cli</RootNamespace>
+    <AssemblyName>dforge</AssemblyName>
+    <Version>1.65.0</Version>
+    <Copyright>Copyright (c) 2026 MaTRIX TeAm. All rights reserved.</Copyright>
+    <Company>DiscForge</Company>
+    <Product>DiscForge</Product>
+  </PropertyGroup>
+
+  <!-- Only the Windows target links Devices and defines the WINDOWS compile symbol. -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DiscForge.Core\DiscForge.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <ProjectReference Include="..\DiscForge.Devices\DiscForge.Devices.csproj" />
+  </ItemGroup>
+
+</Project>

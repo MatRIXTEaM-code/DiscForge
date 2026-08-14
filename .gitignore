@@ -1,0 +1,63 @@
+# Build output
+bin/
+obj/
+publish/
+dist/
+installer/Output/
+
+# Built binaries should never be committed - CI rebuilds them from source.
+*.exe
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+# Test results
+TestResults/
+*.trx
+
+# Disc images and dumps — large, and reproducible from the media.
+# Test fixtures are deliberately exempt below: the suite needs them.
+*.cdi
+*.iso
+*.bin
+*.img
+*.sub
+*.cue
+*.mds
+*.mdf
+
+# …except the checked-in fixtures the tests depend on.
+!tests/fixtures/**
+
+# Diagnostics
+discforge-diagnostics-*.txt
+
+# Licence signing material — NEVER commit the private key or issued keys.
+keys/
+*.pem
+*.key
+!tests/**            # (fixtures under tests/ stay tracked)
+PS1/
+discforge_sync/
+errors.txt
+
+PS1/
+discforge_sync/
+errors.txt
+
+PS1/
+discforge_sync/
+errors.txt
+*.badsectors.json
+plextor-profile.json
+cdextra.dfp.json
+
+PS1/
+discforge_sync/
+errors.txt
+*.badsectors.json
+plextor-profile.json
+cdextra.dfp.json
