@@ -49,6 +49,7 @@ jobs:
       - name: Publish CLI (single-file, self-contained)
         run: >
           dotnet publish src/DiscForge.Cli/DiscForge.Cli.csproj
+          -f net8.0-windows
           -c Release -r win-x64 --self-contained
           -p:PublishSingleFile=true
           -o publish/cli-win
@@ -83,6 +84,7 @@ jobs:
       - name: Publish CLI (single-file, self-contained)
         run: >
           dotnet publish src/DiscForge.Cli/DiscForge.Cli.csproj
+          -f net8.0
           -c Release -r linux-x64 --self-contained
           -p:PublishSingleFile=true
           -o publish/cli-linux
