@@ -711,6 +711,7 @@ return args[0].ToLowerInvariant() switch
     "writeinfo" => WriteInfoCmd(args),
     "drive-profile" => DriveProfileCmd(args),
     "drive-db" => DriveDbCmd(args),
+    "plextor-d8" => PlextorD8Cmd(args),
     "disc-scan" => DiscScanCmd(args),
     "read-benchmark" => ReadBenchmarkCmd(args),
     "read-disc" => ReadDiscCmd(args),
@@ -11226,6 +11227,85 @@ static int DiscScanCmd(string[] args)
 #else
     _ = args;
     return Fail("`disc-scan` uses the Windows SPTI READ CD path; run it on Windows with the drive attached.");
+#endif
+}
+
+// The Plextor 0xD8 probe: fire the vendor READ CD-DA at any LBA — including NEGATIVE
+// ones, which is the whole point: classic Plextors will serve the lead-in that way.
+// This is the building block for full lead-in capture; the probe exists so the
+// command can be proven against real hardware sector by sector first.
+static int PlextorD8Cmd(string[] args)
+{
+    if (args.Length < 3)
+        return Fail("usage: dforge plextor-d8 <drive:> <lba> [--count N] [--sub none|q|pw] [--out file]\n" +
+                    "  Issue the Plextor vendor READ CD-DA (0xD8) at <lba> — negative LBAs reach the\n" +
+                    "  lead-in on the classic Plextor CD units (PX-W52xx, Premium…). Prints a per-sector\n" +
+                    "  summary (sync? Q decode + CRC where captured); --out appends the raw bytes to a file.\n" +
+                    "  Try `dforge plextor-d8 D: -150 --count 4 --sub q` with a disc loaded.\n" +
+                    "  Reads only — the command returns what the spiral physically carries, nothing more.");
+#if WINDOWS
+    char letter = char.ToUpperInvariant(args[1].TrimEnd(':', '\\', '/')[0]);
+    if (!long.TryParse(args[2], out long lbaL) || lbaL < int.MinValue || lbaL > int.MaxValue)
+        return Fail($"'{args[2]}' is not an LBA (negative values are allowed here — that's the point).");
+    int lba = (int)lbaL;
+    int count = int.TryParse(OptVal(args, "--count"), out var c) && c is > 0 and <= 64 ? c : 1;
+    var sub = (OptVal(args, "--sub")?.ToLowerInvariant()) switch
+    {
+        null or "none" => DiscForge.Core.Mmc.MmcCommands.PlextorD8SubCode.None,
+        "q" => DiscForge.Core.Mmc.MmcCommands.PlextorD8SubCode.Q16,
+        "pw" => DiscForge.Core.Mmc.MmcCommands.PlextorD8SubCode.RawPw96,
+        var other => throw new ArgumentException($"--sub must be none|q|pw, not '{other}'."),
+    };
+    string? outPath = OptVal(args, "--out");
+
+    try
+    {
+        var caps = DiscForge.Devices.DriveDetector.Detect(letter);
+        var reference = DiscForge.Core.Devices.DriveKnowledgeBase.Find(caps.Vendor, caps.Model);
+        if (reference is null || reference.PreferredRead != DiscForge.Core.Devices.PreferredReadCommand.PlextorD8)
+            Console.WriteLine($"note: {caps.Vendor} {caps.Model} is not a known 0xD8 drive — " +
+                              "most drives reject this vendor command outright. Trying anyway.");
+
+        int perSector = DiscForge.Core.Mmc.MmcCommands.PlextorD8BytesPerSector(sub);
+        var buf = new byte[perSector * count];
+        var cdb = DiscForge.Core.Mmc.MmcCommands.PlextorReadCdDa(lba, (uint)count, sub);
+        using var dev = new DiscForge.Devices.Spti.SptiDevice(letter);
+        var r = dev.SendCommand(cdb, buf, DiscForge.Devices.Spti.SptiDataDirection.In);
+        if (!r.Success)
+            return Fail($"0xD8 at LBA {lba:N0} rejected: sense {r.SenseKey:X}/{r.Asc:X2}/{r.Ascq:X2}. " +
+                        (lba < 0 ? "Some firmwares only open the lead-in close to -1150..-1 — try a smaller magnitude."
+                                 : "Is a disc loaded?"));
+
+        Console.WriteLine($"0xD8 OK: {count} sector(s) at LBA {lba:N0}, {perSector} bytes/sector ({sub}).");
+        for (int i = 0; i < count; i++)
+        {
+            var main = buf.AsSpan(i * perSector, 2352);
+            bool sync = DiscForge.Core.Dumping.SectorExtraction.HasSync(main);
+            string line = $"  LBA {lba + i,8:N0}: {(sync ? "data sync" : "audio/scrambled")}  " +
+                          $"head {System.Convert.ToHexString(main[..12].ToArray())}";
+            if (sub == DiscForge.Core.Mmc.MmcCommands.PlextorD8SubCode.Q16)
+            {
+                var q = buf.AsSpan(i * perSector + 2352, 16);
+                bool crcOk = DiscForge.Core.Dumping.SectorExtraction.QCrcOk(q);
+                int adr = q[0] & 0x0F;
+                line += $"  Q: adr={adr} tno={q[1]:X2} idx={q[2]:X2} " +
+                        $"msf={q[3]:X2}:{q[4]:X2}:{q[5]:X2}/{q[7]:X2}:{q[8]:X2}:{q[9]:X2} " +
+                        $"crc={(crcOk ? "OK" : "bad")}";
+            }
+            Console.WriteLine(line);
+        }
+        if (outPath is not null)
+        {
+            using var os = new FileStream(outPath, FileMode.Append, FileAccess.Write);
+            os.Write(buf, 0, buf.Length);
+            Console.WriteLine($"Appended {buf.Length:N0} bytes to {outPath}");
+        }
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+#else
+    _ = args;
+    return Fail("`plextor-d8` uses the Windows SPTI stack; run it on Windows with the Plextor attached.");
 #endif
 }
 

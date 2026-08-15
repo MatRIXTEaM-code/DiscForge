@@ -402,7 +402,7 @@ public static class SectorExtraction
 
     // ---- small proofs -------------------------------------------------------
 
-    internal static bool HasSync(ReadOnlySpan<byte> s)
+    public static bool HasSync(ReadOnlySpan<byte> s)
     {
         if (s.Length < 12 || s[0] != 0 || s[11] != 0) return false;
         for (int i = 1; i <= 10; i++) if (s[i] != 0xFF) return false;
@@ -426,7 +426,7 @@ public static class SectorExtraction
     /// PX-W5224TA). The BCD restoration is deterministic, and a frame is only
     /// ever accepted because a stored CRC matches; nothing is waved through.
     /// </summary>
-    internal static bool QCrcOk(ReadOnlySpan<byte> q16)
+    public static bool QCrcOk(ReadOnlySpan<byte> q16)
     {
         if (q16.Length < 12) return false;
         if (QCrcMatches(q16)) return true;

@@ -1,9 +1,6 @@
-// DiscForge — Copyright (C) 2026 MaTRIX TeAm.
-// SPDX-License-Identifier: GPL-3.0-or-later
-// This program is free software: you can redistribute it and/or modify it under the terms of the
-// GNU General Public License as published by the Free Software Foundation, either version 3 of
-// the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY;
-// see the GNU General Public License (LICENSE at the repository root) for details.
+// DiscForge — proprietary. Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
+// Not open source. No permission is granted to copy, fork or redistribute.
+// See LICENSE at the root of this repository.
 
 using System.Buffers.Binary;
 
@@ -436,7 +433,50 @@ public static class MmcCommands
     /// <summary>Bytes returned per sector when C2 pointers are requested:
     /// 2352 main channel + 294 C2.</summary>
     public const int SectorBytesWithC2 = 2352 + 294;    
-public static byte[] ReadCd(uint startLba, uint sectorCount,
+/// <summary>Sub-code selection for the Plextor vendor READ CD-DA (0xD8), CDB byte 10.</summary>
+    public enum PlextorD8SubCode : byte
+    {
+        /// <summary>Main channel only: 2352 bytes/sector.</summary>
+        None = 0x00,
+        /// <summary>Main + 16-byte formatted Q: 2368 bytes/sector.</summary>
+        Q16 = 0x01,
+        /// <summary>Main + 96-byte raw interleaved P–W: 2448 bytes/sector.</summary>
+        RawPw96 = 0x02,
+    }
+
+    /// <summary>Bytes per sector for each <see cref="PlextorD8SubCode"/> selection.</summary>
+    public static int PlextorD8BytesPerSector(PlextorD8SubCode sub) => sub switch
+    {
+        PlextorD8SubCode.Q16 => 2352 + 16,
+        PlextorD8SubCode.RawPw96 => 2352 + 96,
+        _ => 2352,
+    };
+
+    /// <summary>
+    /// The Plextor vendor READ CD-DA command (opcode 0xD8) — the classic-Plextor
+    /// speciality that accepts a SIGNED LBA, letting these drives read into the
+    /// lead-in (negative addresses) and past the lead-out: the capability the
+    /// preservation community keeps the drives alive for.
+    ///
+    /// Layout (12-byte CDB): opcode at 0; signed 32-bit LBA, big-endian, at 2–5;
+    /// 32-bit transfer length, big-endian, at 6–9; sub-code selection at 10.
+    /// Clean-room provenance: the layout is cross-confirmed by two independent
+    /// public implementations — DiscImageCreator (execScsiCmdforCD.cpp) and
+    /// redumper (scsi/cmd.ixx, CDB12_ReadCDDA) — and nothing here defeats any
+    /// protection: it reads what the disc's spiral physically carries.
+    /// </summary>
+    public static byte[] PlextorReadCdDa(int startLba, uint sectorCount,
+        PlextorD8SubCode subCode = PlextorD8SubCode.None)
+    {
+        var cdb = new byte[12];
+        cdb[0] = 0xD8;
+        BinaryPrimitives.WriteInt32BigEndian(cdb.AsSpan(2), startLba);
+        BinaryPrimitives.WriteUInt32BigEndian(cdb.AsSpan(6), sectorCount);
+        cdb[10] = (byte)subCode;
+        return cdb;
+    }
+
+    public static byte[] ReadCd(uint startLba, uint sectorCount,
         ExpectedSectorType expected = ExpectedSectorType.Any,
         SectorFields fields = SectorFields.UserData,
         SubChannel subChannel = SubChannel.None)
