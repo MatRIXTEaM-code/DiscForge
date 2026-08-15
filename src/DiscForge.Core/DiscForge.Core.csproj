@@ -7,7 +7,7 @@
     <RootNamespace>DiscForge.Core</RootNamespace>
     <AssemblyTitle>DiscForge Core</AssemblyTitle>
     <Description>Optical disc image formats: CDI, ISO, BIN/CUE. Pure managed code.</Description>
-    <Version>0.56.0</Version>
+    <Version>1.66.0</Version>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Copyright>Copyright (c) 2026 MaTRIX TeAm. All rights reserved.</Copyright>
     <Company>DiscForge</Company>

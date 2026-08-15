@@ -9,7 +9,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>DiscForge.Cli</RootNamespace>
     <AssemblyName>dforge</AssemblyName>
-    <Version>1.65.0</Version>
+    <Version>1.66.0</Version>
     <Copyright>Copyright (c) 2026 MaTRIX TeAm. All rights reserved.</Copyright>
     <Company>DiscForge</Company>
     <Product>DiscForge</Product>
