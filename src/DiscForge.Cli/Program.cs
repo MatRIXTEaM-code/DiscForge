@@ -607,6 +607,7 @@ return args[0].ToLowerInvariant() switch
     "vcd-info" => VcdInfo(args),
     "transcode" => Transcode(args),
     "accuraterip" => AccurateRipCmd(args),
+    "detect-offset" => DetectOffsetCmd(args),
     "mount" => MountCmd(args),
     "ccd-info" => CcdInfo(args),
     "wbfs-info" => WbfsInfo(args),
@@ -2654,7 +2655,7 @@ static int ExtractSectorsDrive(string[] args)
         "  [--recover abort|ignore|replace]          what to do with an unrecoverable sector (default abort)\n" +
         "  [--retries N]                             extra read attempts per sector (default 2)\n" +
         "  [--no-c2]                                 don't treat C2-flagged bytes as read failures\n" +
-        "  [--sub]                                   capture formatted Q to <out>.sub and analyse CRCs\n" +
+        "  [--sub]                                   capture formatted Q to <out>.subq (16 bytes/sector) and analyse CRCs\n" +
         "  [--q-retries N]                           Q-only re-reads when a frame fails CRC (default 4)\n" +
         "  [--jitter]                                audio consensus: accept only two matching reads\n" +
         "  [--json]\n" +
@@ -2770,7 +2771,7 @@ static int ExtractSectorsDrive(string[] args)
                     Stream? subOs = null;
                     try
                     {
-                        if (sub) subOs = File.Create(span.Out + ".sub.part");
+                        if (sub) subOs = File.Create(span.Out + ".subq.part");
                         result = SectorExtraction.Extract(reader, span.Start, span.End, options, os, subOs,
                             json ? null : new Action<long, long>((done, total) =>
                             {
@@ -2786,7 +2787,7 @@ static int ExtractSectorsDrive(string[] args)
             }
             catch (IOException) when (result?.AbortedAtLba is not null)
             {
-                try { File.Delete(span.Out + ".sub.part"); } catch { /* best-effort */ }
+                try { File.Delete(span.Out + ".subq.part"); } catch { /* best-effort */ }
                 if (!json)
                 {
                     Console.WriteLine();
@@ -2801,7 +2802,7 @@ static int ExtractSectorsDrive(string[] args)
             if (!json) Console.WriteLine();
 
             if (sub)
-                File.Move(span.Out + ".sub.part", span.Out + ".sub", overwrite: true);
+                File.Move(span.Out + ".subq.part", span.Out + ".subq", overwrite: true);
 
             var map = result.BadSectors with { Image = Path.GetFileName(span.Out) };
             if (!map.Clean)
@@ -2816,10 +2817,28 @@ static int ExtractSectorsDrive(string[] args)
                 if (result.Recovered > 0) Console.WriteLine($"  recovered:  {result.Recovered:N0} sector(s) needed retries and were proven");
                 if (result.IgnoredBad > 0) Console.WriteLine($"  ignored:    {result.IgnoredBad:N0} unproven sector(s) written as-read — see sidecar");
                 if (result.Replaced > 0) Console.WriteLine($"  replaced:   {result.Replaced:N0} sector(s) written as dummies — see sidecar");
-                if (sub) Console.WriteLine($"  subcode:    {result.QFramesChecked:N0} Q frames, {result.QRecovered:N0} recovered by re-read, {result.QCrcErrors:N0} CRC error(s) → {span.Out}.sub");
+                if (sub) Console.WriteLine($"  subcode:    {result.QFramesChecked:N0} Q frames, {result.QRecovered:N0} recovered by re-read, {result.QCrcErrors:N0} CRC error(s) → {span.Out}.subq");
                 if (!map.Clean) Console.WriteLine($"  bad map:    {DiscForge.Core.Preservation.BadSectorMap.SidecarPath(span.Out)}");
             }
             reports.Add(SpanReport(span.Label, span.Out, result, options));
+        }
+
+        // A whole-disc raw dump earns a .cue sidecar built from the TOC, so the image is
+        // immediately usable by accuraterip / detect-offset / the converters without
+        // hand-writing one. Data-track modes are read back from the dump itself.
+        string? cuePath = null;
+        if (wholeDisc && !aborted && dataType == ExtractDataType.Raw2352)
+        {
+            cuePath = Path.ChangeExtension(outPath, ".cue");
+            var cue = new System.Text.StringBuilder();
+            cue.AppendLine($"FILE \"{Path.GetFileName(outPath)}\" BINARY");
+            foreach (var t in toc.Tracks.OrderBy(t => t.Number))
+            {
+                cue.AppendLine($"  TRACK {t.Number:D2} {CueModeFor(outPath, t)}");
+                cue.AppendLine($"    INDEX 01 {Msf.FromSectors(t.StartLba)}");
+            }
+            File.WriteAllText(cuePath, cue.ToString());
+            if (!json) Console.WriteLine($"  cue sheet:  {cuePath}");
         }
 
         if (json)
@@ -2832,6 +2851,7 @@ static int ExtractSectorsDrive(string[] args)
                 c2 = useC2,
                 jitter,
                 aborted,
+                cue = cuePath,
                 spans = reports,
             }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
@@ -2872,6 +2892,20 @@ static int ExtractSectorsDrive(string[] args)
         string name = Path.GetFileNameWithoutExtension(path);
         string ext = Path.GetExtension(path);
         return Path.Combine(dir, name + suffix + ext);
+    }
+
+    // Audio is AUDIO; a data track's mode is read from byte 15 of its own first
+    // sector in the dump — evidence from the disc, not a guess from the TOC.
+    static string CueModeFor(string binPath, DiscForge.Core.Mmc.TocTrack t)
+    {
+        if (t.IsAudio) return "AUDIO";
+        try
+        {
+            using var fs = File.OpenRead(binPath);
+            fs.Position = (long)t.StartLba * 2352 + 15;
+            return fs.ReadByte() == 2 ? "MODE2/2352" : "MODE1/2352";
+        }
+        catch { return "MODE1/2352"; }
     }
 #else
     return Fail("Live-drive extraction uses the Windows SPTI stack; run it on Windows with the drive attached.\n" + usage);
@@ -3432,6 +3466,135 @@ static int CcdInfo(string[] args)
     }
     catch (DiscForge.Core.Convert.CloneCdReader.CcdFormatException ex) { return Fail(ex.Message); }
     catch (Exception ex) { return Fail(ex.Message); }
+}
+
+// Measure a drive's combined read offset from a rip + an AccurateRip record: sweep the
+// AR v1 checksum of a track across trial sample offsets and find the shift where the rip
+// matches what thousands of other drives submitted. The database checksum is the
+// independent evidence; the matching shift IS the drive's offset — measured, not assumed.
+static int DetectOffsetCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge detect-offset <image.cue> --db <dBAR.bin> [--range N]\n" +
+                    "  Detect the DRIVE READ OFFSET of the drive that ripped <image.cue> by sweeping\n" +
+                    "  AccurateRip checksums across sample offsets (default range ±600) and matching\n" +
+                    "  against the downloaded database record (get the URL via `accuraterip --url`).\n" +
+                    "  Rip the disc WITHOUT offset correction first (e.g. `extract-sectors <drive:> out.bin --disc`).\n" +
+                    "  On a hit, every audio track is re-verified at the detected offset for confirmation.");
+    if (!File.Exists(args[1])) return Fail($"File not found: {args[1]}");
+    string? dbPath = OptVal(args, "--db");
+    if (dbPath is null) return Fail("detect-offset needs --db <dBAR.bin> — fetch it via the URL from `accuraterip <image.cue> --url`.");
+    if (!File.Exists(dbPath)) return Fail($"Database record not found: {dbPath}");
+    int range = int.TryParse(OptVal(args, "--range"), out var rg) && rg is > 0 and <= 5000 ? rg : 600;
+
+    try
+    {
+        using var layout = DiscLayout.FromCueFile(args[1]);
+        var audioTracks = layout.Tracks.Where(t => t.Mode == RawTrackMode.Audio).OrderBy(t => t.Number).ToList();
+        if (audioTracks.Count == 0) return Fail("No audio tracks — read offsets are an audio-CD concept.");
+
+        var offsets = new List<int>();
+        int lba = 0;
+        foreach (var t in layout.Tracks.OrderBy(t => t.Number)) { offsets.Add(lba); lba += t.TotalSectors; }
+        offsets.Add(lba);
+        var ids = DiscForge.Core.Audio.AccurateRip.DiscIds(offsets);
+        var entries = DiscForge.Core.Audio.AccurateRipDatabase.ToEntries(
+            DiscForge.Core.Audio.AccurateRipDatabase.Parse(File.ReadAllBytes(dbPath)), ids);
+        if (entries.Count == 0)
+            return Fail("The database record holds no pressing matching this disc's IDs.");
+
+        int firstNum = audioTracks.First().Number, lastNum = audioTracks.Last().Number;
+
+        // Prefer the LONGEST middle track: no guard-band special cases, so the O(1)
+        // sliding sweep applies, and more samples discriminate better. A 1–2 track
+        // disc falls back to the honest per-offset recompute.
+        var middle = audioTracks.Where(t => t.Number != firstNum && t.Number != lastNum)
+                                .OrderByDescending(t => t.LengthSectors).FirstOrDefault();
+        var probe = middle ?? audioTracks[^1];
+        bool isFirst = probe.Number == firstNum, isLast = probe.Number == lastNum;
+        int probeIndex = audioTracks.IndexOf(probe);
+        int trackFrames = (int)(probe.LengthSectors * 588);
+
+        Console.WriteLine($"Sweeping track {probe.Number} ({(middle is not null ? "middle track, sliding sweep" : "edge track, per-offset recompute")}) " +
+                          $"across offsets -{range}..+{range}…");
+
+        var window = ReadPcmWindow(probe, range, out bool padded);
+        if (padded)
+            Console.WriteLine("  note: part of the sweep margin lies outside the image and was zero-filled.");
+
+        var sweep = middle is not null
+            ? DiscForge.Core.Audio.OffsetDetection.SweepV1(window, trackFrames, range)
+            : DiscForge.Core.Audio.OffsetDetection.BruteSweepV1(window, trackFrames, range, isFirst, isLast);
+        var hits = DiscForge.Core.Audio.OffsetDetection.Match(sweep, range, entries, probeIndex);
+
+        if (hits.Count == 0)
+        {
+            Console.WriteLine($"No offset in ±{range} matches the database. Either the pressing differs from every");
+            Console.WriteLine("submission, the rip has errors, or the offset is outside the range (try --range 2000).");
+            return 1;
+        }
+
+        var best = hits[0];
+        Console.WriteLine($"Offset match: {best.OffsetSamples:+#;-#;0} samples (track {probe.Number}, confidence {best.Confidence})");
+        foreach (var h in hits.Skip(1))
+            Console.WriteLine($"  also matched: {h.OffsetSamples:+#;-#;0} (confidence {h.Confidence})");
+
+        // Confirmation: verify EVERY audio track at the detected offset.
+        Console.WriteLine();
+        Console.WriteLine($"Verifying all {audioTracks.Count} audio track(s) at {best.OffsetSamples:+#;-#;0}:");
+        var computed = new List<DiscForge.Core.Audio.AccurateRip.TrackChecksum>();
+        foreach (var t in audioTracks)
+        {
+            var w = ReadPcmWindow(t, Math.Abs(best.OffsetSamples), out _);
+            int shift = best.OffsetSamples + Math.Abs(best.OffsetSamples);   // window is symmetric
+            computed.Add(DiscForge.Core.Audio.AccurateRip.Compute(
+                w.AsSpan(shift * 4, (int)(t.LengthSectors * 588) * 4),
+                t.Number == firstNum, t.Number == lastNum));
+        }
+        var result = DiscForge.Core.Audio.AccurateRip.Verify(computed, entries);
+        foreach (var v in result.Tracks)
+            Console.WriteLine($"  Track {audioTracks[v.TrackIndex].Number,2}: " + (v.Status switch
+            {
+                DiscForge.Core.Audio.AccurateRip.TrackStatus.MatchV2 => $"ACCURATE (v2, confidence {v.Confidence})",
+                DiscForge.Core.Audio.AccurateRip.TrackStatus.MatchV1 => $"ACCURATE (v1, confidence {v.Confidence})",
+                _ => "not found / mismatch",
+            }));
+        Console.WriteLine();
+        Console.WriteLine(result.AllAccurate
+            ? $"DRIVE READ OFFSET: {best.OffsetSamples:+#;-#;0} samples — confirmed by {result.Tracks.Count} track(s) against AccurateRip."
+            : $"Offset {best.OffsetSamples:+#;-#;0} matched track {probe.Number} but only {result.AccurateCount}/{result.Tracks.Count} " +
+              "tracks verify — treat with caution (damaged rip or mixed pressing).");
+        return result.AllAccurate ? 0 : 1;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+
+    // The track's PCM plus `margin` frames both sides, zero-filled where the image ends.
+    static byte[] ReadPcmWindow(RawTrack t, int margin, out bool padded)
+    {
+        long marginBytes = (long)margin * 4;
+        long trackBytes = (long)t.LengthSectors * t.StoredSectorSize;
+        var buf = new byte[trackBytes + 2 * marginBytes];
+        long wantStart = t.SourceByteOffset - marginBytes;
+        long wantEnd = t.SourceByteOffset + trackBytes + marginBytes;
+        lock (t.Source)
+        {
+            long srcLen = t.Source.Length;
+            long readStart = Math.Max(0, wantStart);
+            long readEnd = Math.Min(srcLen, wantEnd);
+            padded = readStart > wantStart || readEnd < wantEnd;
+            t.Source.Position = readStart;
+            int into = (int)(readStart - wantStart);
+            int total = (int)(readEnd - readStart);
+            int done = 0;
+            while (done < total)
+            {
+                int n = t.Source.Read(buf, into + done, total - done);
+                if (n <= 0) break;
+                done += n;
+            }
+        }
+        return buf;
+    }
 }
 
 static int AccurateRipCmd(string[] args)
