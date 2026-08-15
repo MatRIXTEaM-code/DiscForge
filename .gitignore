@@ -61,3 +61,4 @@ errors.txt
 *.badsectors.json
 plextor-profile.json
 cdextra.dfp.json
+*.subq
