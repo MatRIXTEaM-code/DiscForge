@@ -33,6 +33,8 @@ public class SectorExtractionTests
         public readonly Dictionary<long, Queue<SectorReadAttempt>> Script = new();
         public readonly Dictionary<long, SectorReadAttempt> Fallback = new();
         public readonly Dictionary<long, byte[]> Q = new();
+        /// <summary>Per-LBA queue of Q frames served in order (last repeats) — for Q-retry tests.</summary>
+        public readonly Dictionary<long, Queue<byte[]>> QScript = new();
         public int ReadsIssued;
 
         public long TotalSectors { get; init; } = 1000;
@@ -53,7 +55,14 @@ public class SectorExtractionTests
         private SectorReadAttempt Decorate(SectorReadAttempt a, long lba, bool wantC2, bool wantSubcode)
         {
             var c2 = a.C2 ?? (wantC2 && a.Ok ? new byte[294] : null);
-            var q16 = a.Q16 ?? (wantSubcode && Q.TryGetValue(lba, out var qq) ? qq : null);
+            byte[]? q16 = a.Q16;
+            if (q16 is null && wantSubcode)
+            {
+                if (QScript.TryGetValue(lba, out var qs) && qs.Count > 0)
+                    q16 = qs.Count == 1 ? qs.Peek() : qs.Dequeue();
+                else if (Q.TryGetValue(lba, out var qq))
+                    q16 = qq;
+            }
             return a with { C2 = wantC2 ? c2 : a.C2, Q16 = wantSubcode ? q16 : null };
         }
     }
@@ -386,6 +395,66 @@ public class SectorExtractionTests
         Assert.Equal(3 * 16, subBytes.Length);
         Assert.Equal(Q16For(30), subBytes[..16]);
         Assert.Equal(new byte[16], subBytes[32..48]);    // no Q → zeros, not invention
+    }
+
+    [Fact]
+    public void QRetry_RecoversAValidFrame_MainChannelUntouched()
+    {
+        var d = new FakeDrive();
+        d.QScript[40] = new Queue<byte[]>(new[]
+        {
+            Q16For(40, corrupt: true),                  // first read: noisy Q
+            Q16For(40, corrupt: true),                  // still noisy
+            Q16For(40),                                 // third lands clean
+        });
+
+        using var sub = new MemoryStream();
+        var r = Run(d, 40, 40, new ExtractionOptions { CaptureSubcode = true, QRetries = 4 }, out var bytes, sub);
+
+        Assert.Equal(1, r.QRecovered);
+        Assert.Equal(0, r.QCrcErrors);
+        Assert.Equal(Q16For(40), sub.ToArray());        // the valid frame is what's on disk
+        Assert.Equal(MakeAudio(40), bytes);             // main channel from the FIRST read, untouched
+        Assert.Equal(3, d.ReadsIssued);                 // 1 sector read + 2 Q-only re-reads
+    }
+
+    [Fact]
+    public void QRetry_Exhausted_KeepsTheFreshestFrame_AndCountsTheError()
+    {
+        var d = new FakeDrive();
+        d.Q[40] = Q16For(40, corrupt: true);            // every read returns the same bad frame
+
+        using var sub = new MemoryStream();
+        var r = Run(d, 40, 40, new ExtractionOptions { CaptureSubcode = true, QRetries = 3 }, out _, sub);
+
+        Assert.Equal(0, r.QRecovered);
+        Assert.Equal(1, r.QCrcErrors);                  // still on the record — retried, not hidden
+        Assert.Equal(Q16For(40, corrupt: true), sub.ToArray());
+        Assert.Equal(4, d.ReadsIssued);                 // 1 + 3 exhausted re-reads
+    }
+
+    [Fact]
+    public void QRetry_Zero_IsTheOldSingleReadBehaviour()
+    {
+        var d = new FakeDrive();
+        d.Q[40] = Q16For(40, corrupt: true);
+
+        var r = Run(d, 40, 40, new ExtractionOptions { CaptureSubcode = true, QRetries = 0 }, out _);
+        Assert.Equal(1, r.QCrcErrors);
+        Assert.Equal(0, r.QRecovered);
+        Assert.Equal(1, d.ReadsIssued);
+    }
+
+    [Fact]
+    public void QRetry_DoesNotFire_WhenTheFirstFrameIsValid()
+    {
+        var d = new FakeDrive();
+        d.Q[40] = Q16For(40);
+
+        var r = Run(d, 40, 40, new ExtractionOptions { CaptureSubcode = true, QRetries = 4 }, out _);
+        Assert.Equal(0, r.QCrcErrors);
+        Assert.Equal(0, r.QRecovered);
+        Assert.Equal(1, d.ReadsIssued);                 // no wasted reads on clean captures
     }
 
     [Fact]

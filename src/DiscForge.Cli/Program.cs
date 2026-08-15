@@ -2655,6 +2655,7 @@ static int ExtractSectorsDrive(string[] args)
         "  [--retries N]                             extra read attempts per sector (default 2)\n" +
         "  [--no-c2]                                 don't treat C2-flagged bytes as read failures\n" +
         "  [--sub]                                   capture formatted Q to <out>.sub and analyse CRCs\n" +
+        "  [--q-retries N]                           Q-only re-reads when a frame fails CRC (default 4)\n" +
         "  [--jitter]                                audio consensus: accept only two matching reads\n" +
         "  [--json]\n" +
         "  <addr> is an LBA, +sector, or MSF mm:ss:ff. Ranges are inclusive.";
@@ -2669,7 +2670,7 @@ static int ExtractSectorsDrive(string[] args)
     long count = -1;
     bool wholeDisc = args.Contains("--disc");
     string asArg = "raw", recoverArg = "abort";
-    int retries = 2;
+    int retries = 2, qRetries = 4;
     bool useC2 = !args.Contains("--no-c2");
     bool sub = args.Contains("--sub");
     bool jitter = args.Contains("--jitter");
@@ -2682,6 +2683,7 @@ static int ExtractSectorsDrive(string[] args)
         else if (args[i] == "--as" && i + 1 < args.Length) asArg = args[++i].ToLowerInvariant();
         else if (args[i] == "--recover" && i + 1 < args.Length) recoverArg = args[++i].ToLowerInvariant();
         else if (args[i] == "--retries" && i + 1 < args.Length) retries = int.Parse(args[++i]);
+        else if (args[i] == "--q-retries" && i + 1 < args.Length) qRetries = int.Parse(args[++i]);
     }
 
     ExtractDataType? dataType = asArg switch
@@ -2752,6 +2754,7 @@ static int ExtractSectorsDrive(string[] args)
             UseC2 = useC2,
             CaptureSubcode = sub,
             JitterConsensus = jitter,
+            QRetries = qRetries,
         };
 
         var reports = new List<object>();
@@ -2813,7 +2816,7 @@ static int ExtractSectorsDrive(string[] args)
                 if (result.Recovered > 0) Console.WriteLine($"  recovered:  {result.Recovered:N0} sector(s) needed retries and were proven");
                 if (result.IgnoredBad > 0) Console.WriteLine($"  ignored:    {result.IgnoredBad:N0} unproven sector(s) written as-read — see sidecar");
                 if (result.Replaced > 0) Console.WriteLine($"  replaced:   {result.Replaced:N0} sector(s) written as dummies — see sidecar");
-                if (sub) Console.WriteLine($"  subcode:    {result.QFramesChecked:N0} Q frames, {result.QCrcErrors:N0} CRC error(s) → {span.Out}.sub");
+                if (sub) Console.WriteLine($"  subcode:    {result.QFramesChecked:N0} Q frames, {result.QRecovered:N0} recovered by re-read, {result.QCrcErrors:N0} CRC error(s) → {span.Out}.sub");
                 if (!map.Clean) Console.WriteLine($"  bad map:    {DiscForge.Core.Preservation.BadSectorMap.SidecarPath(span.Out)}");
             }
             reports.Add(SpanReport(span.Label, span.Out, result, options));
@@ -2851,6 +2854,7 @@ static int ExtractSectorsDrive(string[] args)
         abortReason = r.AbortReason,
         qFramesChecked = o.CaptureSubcode ? r.QFramesChecked : (int?)null,
         qCrcErrors = o.CaptureSubcode ? r.QCrcErrors : (int?)null,
+        qRecovered = o.CaptureSubcode ? r.QRecovered : (int?)null,
         badSectors = r.BadSectors.UnreadableLba,
     };
 

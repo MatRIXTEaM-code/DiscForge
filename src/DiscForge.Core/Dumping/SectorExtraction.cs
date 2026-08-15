@@ -66,6 +66,15 @@ public sealed record ExtractionOptions
     /// stream is given) write 16 bytes/sector alongside the image.</summary>
     public bool CaptureSubcode { get; init; }
 
+    /// <summary>
+    /// Extra Q-only re-reads when the accepted sector's Q frame fails its CRC.
+    /// Sub-channel data carries no error correction, so single reads are noisy on
+    /// every drive; re-reading until a CRC-valid frame lands is how subcode is
+    /// captured honestly. The main-channel data — already proven — is never
+    /// re-read or replaced by these attempts.
+    /// </summary>
+    public int QRetries { get; init; } = 4;
+
     /// <summary>Audio jitter guard: a sector is accepted only after two reads
     /// return identical bytes (consensus), each mismatch consuming a retry.
     /// Only meaningful for <see cref="ExtractDataType.Audio2352"/>.</summary>
@@ -113,6 +122,9 @@ public sealed record ExtractionResult
     public string? AbortReason { get; init; }
     public required int QFramesChecked { get; init; }
     public required int QCrcErrors { get; init; }
+    /// <summary>Q frames whose first read failed CRC but a re-read recovered — see
+    /// <see cref="ExtractionOptions.QRetries"/>.</summary>
+    public required int QRecovered { get; init; }
     /// <summary>Every bad sector, absolute LBA, whatever the recovery policy did with it.</summary>
     public required BadSectorMap BadSectors { get; init; }
 
@@ -164,7 +176,7 @@ public static class SectorExtraction
 
         long total = endLba - startLba + 1;
         long written = 0, bytes = 0;
-        int recovered = 0, ignored = 0, replaced = 0, qChecked = 0, qBad = 0;
+        int recovered = 0, ignored = 0, replaced = 0, qChecked = 0, qBad = 0, qRecovered = 0;
         var bad = new List<long>();
         long? abortedAt = null;
         string? abortReason = null;
@@ -212,10 +224,28 @@ public static class SectorExtraction
             if (options.CaptureSubcode)
             {
                 var q = attempt?.Q16;
+                bool qValid = q is { Length: QBytesPerSector } && QCrcOk(q);
+
+                // Sub-channel has no error correction; a CRC-failed (or absent) Q on an
+                // otherwise-proven sector earns Q-only re-reads until a valid frame lands.
+                if (!qValid && good && options.QRetries > 0)
+                {
+                    for (int extra = 0; extra < options.QRetries && !qValid; extra++)
+                    {
+                        var re = reader.Read(lba, wantC2: false, wantSubcode: true);
+                        if (re.Q16 is { Length: QBytesPerSector } rq)
+                        {
+                            q = rq;                       // keep the freshest frame, valid or not
+                            qValid = QCrcOk(rq);
+                        }
+                    }
+                    if (qValid) qRecovered++;
+                }
+
                 if (q is { Length: QBytesPerSector })
                 {
                     qChecked++;
-                    if (!QCrcOk(q)) qBad++;
+                    if (!qValid) qBad++;
                     subOutput?.Write(q, 0, QBytesPerSector);
                 }
                 else
@@ -240,6 +270,7 @@ public static class SectorExtraction
             AbortReason = abortReason,
             QFramesChecked = qChecked,
             QCrcErrors = qBad,
+            QRecovered = qRecovered,
             BadSectors = new BadSectorMap
             {
                 Image = "",
