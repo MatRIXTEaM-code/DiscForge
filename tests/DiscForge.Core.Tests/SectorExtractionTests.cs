@@ -463,4 +463,35 @@ public class SectorExtractionTests
         Assert.True(SectorExtraction.QCrcOk(Q16For(1234)));
         Assert.False(SectorExtraction.QCrcOk(Q16For(1234, corrupt: true)));
     }
+
+    /// <summary>
+    /// Frames captured LIVE from a Plextor PX-W5224TA reading a pressed PS1 disc.
+    /// In formatted-Q mode this drive family converts an ADR-1 frame's BCD fields
+    /// to binary but passes through the CRC computed over the original BCD frame —
+    /// so the check must prove the frame in either canonical form, and still reject
+    /// genuinely corrupt frames in both.
+    /// </summary>
+    [Fact]
+    public void QCrcCheck_AcceptsTheBinaryFormattedQForm_CapturedFromRealHardware()
+    {
+        // LBA 10: rel MSF 00:00:10, abs 00:02:10 — fields are binary (0x0a), CRC is over the BCD frame.
+        Assert.True(SectorExtraction.QCrcOk(System.Convert.FromHexString("41010100000a0000020a3e5900000000")));
+        // LBA 11, same convention.
+        Assert.True(SectorExtraction.QCrcOk(System.Convert.FromHexString("41010100000b0000020b842900000000")));
+        // LBA 0: BCD and binary coincide below ten — passes as-received.
+        Assert.True(SectorExtraction.QCrcOk(System.Convert.FromHexString("41010100000000000200283200000000")));
+        // A genuinely noisy frame off the same disc (track number flipped to 0x15 mid-track):
+        // fails in BOTH forms — corruption is still corruption.
+        Assert.False(SectorExtraction.QCrcOk(System.Convert.FromHexString("41150100012100000321baaf00000000")));
+    }
+
+    [Fact]
+    public void QCrcCheck_BcdRestoration_OnlyAppliesToAdr1Frames()
+    {
+        // An ADR-2 (MCN) frame with binary-looking bytes must NOT be waved through
+        // via BCD restoration — its fields are packed digits, not numbers.
+        var mcn = Q16For(1234);                          // valid ADR-1 base…
+        mcn[0] = (byte)((mcn[0] & 0xF0) | 0x02);         // …rebadged ADR-2: CRC no longer matches
+        Assert.False(SectorExtraction.QCrcOk(mcn));
+    }
 }

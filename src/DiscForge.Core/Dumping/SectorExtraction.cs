@@ -416,11 +416,39 @@ public static class SectorExtraction
         return n;
     }
 
-    /// <summary>Formatted-Q CRC check: the stored CRC-16 over bytes 0..9 must match.</summary>
+    /// <summary>
+    /// Formatted-Q CRC check: the stored CRC-16 must vouch for the frame. Two
+    /// canonical forms are accepted, both proven against the disc's own CRC:
+    /// the frame exactly as received (BCD, as recorded on disc), and — for ADR-1
+    /// frames — the binary form some drives return in formatted-Q mode (the
+    /// classic Plextors among them: they convert the BCD fields to binary but
+    /// pass the CRC of the original BCD frame through, verified live against a
+    /// PX-W5224TA). The BCD restoration is deterministic, and a frame is only
+    /// ever accepted because a stored CRC matches; nothing is waved through.
+    /// </summary>
     internal static bool QCrcOk(ReadOnlySpan<byte> q16)
     {
         if (q16.Length < 12) return false;
-        ushort crc = Crc16.ComputeInverted(q16[..10]);
-        return q16[10] == (byte)(crc >> 8) && q16[11] == (byte)crc;
+        if (QCrcMatches(q16)) return true;
+
+        if ((q16[0] & 0x0F) == 1)                       // ADR 1: position frame, fields are pure numbers
+        {
+            Span<byte> bcd = stackalloc byte[12];
+            q16[..12].CopyTo(bcd);
+            for (int i = 1; i <= 9; i++)
+            {
+                int v = bcd[i];
+                if (v > 99) return false;               // not representable in BCD — not this form
+                bcd[i] = (byte)(((v / 10) << 4) | (v % 10));
+            }
+            return QCrcMatches(bcd);
+        }
+        return false;
+    }
+
+    private static bool QCrcMatches(ReadOnlySpan<byte> q12)
+    {
+        ushort crc = Crc16.ComputeInverted(q12[..10]);
+        return q12[10] == (byte)(crc >> 8) && q12[11] == (byte)crc;
     }
 }

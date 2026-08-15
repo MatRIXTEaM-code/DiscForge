@@ -127,20 +127,28 @@ internal sealed class PackView : UserControl
         Controls.Add(_pack); Controls.Add(_saveLog); Controls.Add(_total);
         Controls.Add(_files); Controls.Add(_verdict); Controls.Add(_out);
 
-        _out.Text =
+        // Prose flows to the window; only the packing REPORT (whose columns are
+        // monospace-aligned) needs wrap off — ShowProse/ShowReport switch modes.
+        ShowProse(
             "Add the files you want to archive, choose your media, and press Pack." + Environment.NewLine +
             Environment.NewLine +
-            "Deciding what goes on which disc by hand either wastes a third of every" + Environment.NewLine +
-            "disc or has you shuffling folders between piles. It is a bin-packing" + Environment.NewLine +
-            "problem, and a computer is markedly better at it." + Environment.NewLine +
+            "Deciding what goes on which disc by hand either wastes a third of every disc " +
+            "or has you shuffling folders between piles. It is a bin-packing problem, and " +
+            "a computer is markedly better at it." + Environment.NewLine +
             Environment.NewLine +
-            "\"Keep folders together\" is usually worth leaving on: an album or a" + Environment.NewLine +
-            "project split across two discs is a nuisance for as long as the archive" + Environment.NewLine +
-            "exists, and a disc left 80% full is not." + Environment.NewLine +
+            "\"Keep folders together\" is usually worth leaving on: an album or a project " +
+            "split across two discs is a nuisance for as long as the archive exists, and " +
+            "a disc left 80% full is not." + Environment.NewLine +
             Environment.NewLine +
-            "Capacities used here are the real ones — a \"700 MB\" CD holds 681 MiB of" + Environment.NewLine +
-            "data. Packing to the number on the box produces a plan that doesn't fit.";
+            "Capacities used here are the real ones — a \"700 MB\" CD holds 681 MiB of data. " +
+            "Packing to the number on the box produces a plan that doesn't fit.");
     }
+
+    /// <summary>Flowing text (help, errors): wrap to the window, whatever its size.</summary>
+    private void ShowProse(string text) { _out.WordWrap = true; _out.Text = text; }
+
+    /// <summary>Column-aligned monospace report: authored line breaks are the layout.</summary>
+    private void ShowReport(string text) { _out.WordWrap = false; _out.Text = text; }
 
     private sealed record MediaChoice(string Name, long Bytes)
     {
@@ -195,7 +203,7 @@ internal sealed class PackView : UserControl
         {
             _verdict.Text = "Could not read that folder.";
             _verdict.ForeColor = Color.FromArgb(0xA0, 0x20, 0x20);
-            _out.Text = ex.Message;
+            ShowProse(ex.Message);
         }
     }
 
@@ -280,7 +288,7 @@ internal sealed class PackView : UserControl
                 : Color.FromArgb(0x20, 0x70, 0x20);
 
             string text = Render(result, media);
-            _out.Text = text;
+            ShowReport(text);
 
             var log = new OperationLog("Disc packing plan");
             log.Settings(
@@ -303,7 +311,7 @@ internal sealed class PackView : UserControl
         {
             _verdict.Text = "Could not work out a plan.";
             _verdict.ForeColor = Color.FromArgb(0xA0, 0x20, 0x20);
-            _out.Text = ex.Message;
+            ShowProse(ex.Message);
             AppLog.WriteException("disc packing", ex);
         }
     }
