@@ -79,6 +79,18 @@ public sealed record ExtractionOptions
     /// return identical bytes (consensus), each mismatch consuming a retry.
     /// Only meaningful for <see cref="ExtractDataType.Audio2352"/>.</summary>
     public bool JitterConsensus { get; init; }
+
+    /// <summary>
+    /// Demand the 12-byte sector sync on every raw read (set this when the span
+    /// being extracted is a DATA track). Raw extraction is otherwise the one
+    /// datatype with no structural proof — and a drive that has been fought to a
+    /// standstill by damage can start returning all-zero buffers WITH success
+    /// status for every remaining sector. That is how a half-void dump once
+    /// passed as "2 bad sectors": 135,417 polite lies, zero checks to catch
+    /// them. A data sector with no sync is a failed read, whatever the drive's
+    /// status byte says.
+    /// </summary>
+    public bool RequireDataSync { get; init; }
 }
 
 /// <summary>One attempt at one sector, as the reader saw it.</summary>
@@ -335,6 +347,9 @@ public static class SectorExtraction
             return $"the drive returned {a.Main.Length} bytes, not a raw {RawSectorSize}-byte sector";
         if (o.UseC2 && a.C2 is not null && CountC2Bits(a.C2) is int n and > 0)
             return $"C2 flagged {n} unreliable byte(s)";
+        if (o.RequireDataSync && !HasSync(a.Main))
+            return "no sector sync on a data track — the drive returned unstructured " +
+                   "(likely muted/zero-filled) data despite claiming success";
 
         // Datatype-specific structural proof.
         switch (o.DataType)

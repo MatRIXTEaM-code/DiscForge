@@ -506,6 +506,41 @@ public class SectorExtractionTests
         Assert.Equal(1, d.ReadsIssued);                 // no wasted reads on clean captures
     }
 
+    /// <summary>
+    /// The 135,417-lie test. During a real dump, a drive that had just fought two
+    /// damaged sectors began returning ALL-ZERO buffers with SUCCESS status for
+    /// every remaining sector of a data track — and raw mode, having no structural
+    /// check, wrote them all down as good. With RequireDataSync, a data-track
+    /// sector with no sync is a failed read regardless of the drive's status byte.
+    /// </summary>
+    [Fact]
+    public void RequireDataSync_RejectsZeroFilledSuccesses_OnADataTrack()
+    {
+        var d = new FakeDrive();
+        d.Sectors[10] = MakeMode2(10);
+        d.Fallback[11] = new SectorReadAttempt { Ok = true, Main = new byte[SS] };  // the polite lie
+
+        var r = Run(d, 10, 11, new ExtractionOptions
+        {
+            ErrorRecovery = ExtractErrorRecovery.Replace,
+            ReadRetries = 1,
+            RequireDataSync = true,
+        }, out var bytes);
+
+        Assert.Equal("INCOMPLETE", r.Grade);                    // the lie is now ON THE RECORD
+        Assert.Equal(1, r.Replaced);
+        Assert.Contains(11L, r.BadSectors.UnreadableLba);
+        Assert.Equal(2, bytes[SS + 15]);                        // replaced with a Mode 2 dummy (context-aware)
+    }
+
+    [Fact]
+    public void RequireDataSync_LeavesAudioAlone()
+    {
+        var d = new FakeDrive();                                // fake audio has no sync — by nature
+        var r = Run(d, 10, 12, new ExtractionOptions { RequireDataSync = false }, out _);
+        Assert.Equal("COMPLETE", r.Grade);
+    }
+
     [Fact]
     public void QCrcCheck_MatchesTheSubQBuilder()
     {

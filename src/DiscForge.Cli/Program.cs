@@ -708,6 +708,7 @@ return args[0].ToLowerInvariant() switch
     "drives" => DrivesCmd(args),
     "burn" => BurnCmd(args),
     "burn-raw" => BurnRawCmd(args),
+    "compose-verify" => ComposeVerifyCmd(args),
     "writeinfo" => WriteInfoCmd(args),
     "drive-profile" => DriveProfileCmd(args),
     "drive-db" => DriveDbCmd(args),
@@ -2748,7 +2749,7 @@ static int ExtractSectorsDrive(string[] args)
             spans.Add(($"sectors {start}..{end}", start, end, dataType == ExtractDataType.Audio2352, outPath));
         }
 
-        var options = new ExtractionOptions
+        var baseOptions = new ExtractionOptions
         {
             DataType = dataType.Value,
             ErrorRecovery = recovery.Value,
@@ -2764,6 +2765,14 @@ static int ExtractSectorsDrive(string[] args)
         foreach (var span in spans)
         {
             reader.SetAudioHint(span.Audio || dataType == ExtractDataType.Audio2352);
+            // Data spans demand sector sync on every raw read — the gate that stops a
+            // damage-stunned drive's zero-filled "successes" from ever entering a dump again.
+            var options = baseOptions with
+            {
+                RequireDataSync = !span.Audio
+                                  && dataType is ExtractDataType.Raw2352
+                                  && baseOptions.DataType != ExtractDataType.Audio2352,
+            };
             ExtractionResult result = null!;
             try
             {
@@ -10877,6 +10886,103 @@ static int WriteInfoCmd(string[] args)
 #endif
 }
 
+// Forensic dry-run of the burn pipeline's COMPOSE stage: generate the exact raw
+// image both burn engines feed to the drive, on THIS machine, then audit it —
+// every program sector descrambled and compared against the source image, plus a
+// double SHA-256 of the temp file (two reads that disagree = unstable RAM/storage).
+// Burns nothing; exists because three burns on two drives died at one fixed offset
+// and the composed temp file is the last component they share.
+static int ComposeVerifyCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge compose-verify <image.cue> [--keep]\n" +
+                    "  Compose the raw DAO image exactly as a burn would, then verify it in place:\n" +
+                    "  per-sector descramble-and-compare against the source, and a double-read hash\n" +
+                    "  of the temp file. Catches machine-side (RAM/storage) corruption without a disc.");
+    if (!File.Exists(args[1])) return Fail($"File not found: {args[1]}");
+
+    string tmp = Path.Combine(Path.GetTempPath(), "df_composeverify_" + Guid.NewGuid().ToString("N") + ".img");
+    try
+    {
+        using var layout = DiscLayout.FromCueFile(args[1]);
+        const int leadIn = 22_500;
+        Console.WriteLine($"Composing raw image to {tmp} …");
+        using (var os = File.Create(tmp))
+            RawImageGenerator.Generate(layout, RawSubcodeForm.Interleaved96, os, leadInSectors: leadIn);
+        long fileLen = new FileInfo(tmp).Length;
+        Console.WriteLine($"  composed {fileLen:N0} bytes.");
+
+        // Pass 1+2: hash the file twice. Two sequential reads of the same file that
+        // disagree are a hardware verdict all by themselves.
+        Console.WriteLine("Hashing the composed image twice (read-stability check)…");
+        string h1 = HashFile(tmp), h2 = HashFile(tmp);
+        Console.WriteLine($"  read 1: {h1}");
+        Console.WriteLine($"  read 2: {h2}{(h1 == h2 ? "  (stable)" : "  *** READS DISAGREE — unstable RAM/storage ***")}");
+        if (h1 != h2) return 2;
+
+        // Pass 3: verify every stored program sector against the source image.
+        Console.WriteLine("Verifying every program sector against the source (descramble & compare)…");
+        const int frame = 2352 + 96;
+        int bad = 0;
+        long firstBad = -1;
+        var t = layout.Tracks[0];
+        long stored = t.LengthSectors;
+        var buf = new byte[frame];
+        var main = new byte[2352];
+        var src = new byte[2352];
+        using (var img = File.OpenRead(tmp))
+        {
+            for (long s = 0; s < stored; s++)
+            {
+                long fi = leadIn + t.PregapGeneratedSectors + s;
+                img.Position = fi * (long)frame;
+                img.ReadExactly(buf, 0, frame);
+                Array.Copy(buf, main, 2352);
+                bool audio = t.Mode == RawTrackMode.Audio;
+                if (!audio) CdScrambler.ScrambleInPlace(main);   // involution: descramble
+                lock (t.Source)
+                {
+                    t.Source.Position = t.SourceByteOffset + s * t.StoredSectorSize;
+                    t.Source.ReadExactly(src, 0, 2352);
+                }
+                if (!main.AsSpan().SequenceEqual(src))
+                {
+                    if (bad == 0) firstBad = s;
+                    bad++;
+                    if (bad <= 5)
+                        Console.WriteLine($"  MISMATCH at stored sector {s:N0} (file offset {fi * (long)frame:N0})");
+                }
+                if (s % 20000 == 0) Console.Write($"\r  {s:N0}/{stored:N0}…");
+            }
+        }
+        Console.WriteLine($"\r  {stored:N0}/{stored:N0} checked.      ");
+        if (bad == 0)
+        {
+            Console.WriteLine("COMPOSED IMAGE VERIFIED: every program sector byte-faithful on this machine.");
+            Console.WriteLine("(If burns still die at a fixed sector, the corruption happens AFTER this file —");
+            Console.WriteLine(" in the burn-time read-back or below — and the next step is instrumenting that.)");
+        }
+        else
+        {
+            Console.WriteLine($"*** {bad:N0} corrupt sector(s), first at stored sector {firstBad:N0} ***");
+            Console.WriteLine("The compose stage is corrupting on THIS machine (generator code is verified");
+            Console.WriteLine("clean elsewhere): suspect RAM or the temp-folder storage. Run Windows Memory");
+            Console.WriteLine("Diagnostic and try TMP on a different physical drive.");
+        }
+        if (args.Contains("--keep")) Console.WriteLine($"kept: {tmp}");
+        return bad == 0 ? 0 : 1;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+    finally { if (!args.Contains("--keep")) try { File.Delete(tmp); } catch { } }
+
+    static string HashFile(string p)
+    {
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        using var fs = File.OpenRead(p);
+        return System.Convert.ToHexString(sha.ComputeHash(fs));
+    }
+}
+
 static int BurnRawCmd(string[] args)
 {
     if (args.Length < 3)
@@ -11774,14 +11880,46 @@ static int PsxVideoModeCmd(string[] args)
 static int CdrInfo(string[] args)
 {
     if (args.Length < 2)
-        return Fail("usage: dforge cdr-info <atip-dump-file>\n" +
-                    "  Decodes a raw READ TOC/PMA/ATIP response and names the media maker where known.\n" +
-                    "  (Reading ATIP live from a drive is done in the Windows GUI.)");
-    if (!File.Exists(args[1])) return Fail($"File not found: {args[1]}");
+        return Fail("usage: dforge cdr-info <atip-dump-file | drive:>\n" +
+                    "  Decodes ATIP — the recordable disc's factory record in the pregroove wobble:\n" +
+                    "  media maker (dye) and, crucially, the LEAD-OUT START, which is the blank's TRUE\n" +
+                    "  capacity regardless of what the label claims. Give a drive letter to read it live\n" +
+                    "  (works on burnt discs too — the wobble is moulded in, not burned).");
+
+    byte[] atip;
+    bool isDrive = args[1].Length <= 2 && char.IsAsciiLetter(args[1][0])
+                   && (args[1].Length == 1 || args[1][1] == ':');
+    if (isDrive)
+    {
+#if WINDOWS
+        char letter = char.ToUpperInvariant(args[1][0]);
+        try
+        {
+            using var dev = new DiscForge.Devices.Spti.SptiDevice(letter);
+            // Ask for exactly the ATIP response size (4-byte header + 28 bytes of
+            // descriptor). Vintage firmwares can stall on a large allocation here.
+            atip = new byte[32];
+            var cdb = DiscForge.Core.Mmc.MmcCommands.ReadTocFormat(
+                DiscForge.Core.Mmc.MmcCommands.TocFormat.Atip, allocationLength: 32);
+            var r = dev.SendCommand(cdb, atip, DiscForge.Devices.Spti.SptiDataDirection.In, 15);
+            if (!r.Success)
+                return Fail($"ATIP read rejected (sense {r.SenseKey:X}/{r.Asc:X2}/{r.Ascq:X2}) — " +
+                            "a pressed disc carries no ATIP; is a recordable disc loaded?");
+        }
+        catch (Exception ex) { return Fail(ex.Message); }
+#else
+        return Fail("Live ATIP reads use the Windows SPTI stack; on other platforms pass a dump file.");
+#endif
+    }
+    else
+    {
+        if (!File.Exists(args[1])) return Fail($"File not found: {args[1]}");
+        atip = File.ReadAllBytes(args[1]);
+    }
 
     try
     {
-        var id = DiscForge.Core.Media.MediaIdentityParser.ParseAtip(File.ReadAllBytes(args[1]));
+        var id = DiscForge.Core.Media.MediaIdentityParser.ParseAtip(atip);
         if (id is null) return Fail("No ATIP in that dump — a pressed (non-recordable) disc carries none.");
 
         if (id.AtipCode is not null)
@@ -11790,7 +11928,14 @@ static int CdrInfo(string[] args)
             Console.WriteLine($"  manufacturer : {id.Manufacturer ?? "(not in the table — look up the code)"}");
             Console.WriteLine($"  type         : {(id.IsRewritable ? "CD-RW" : "CD-R")}");
             if (id.CapacityMb is double mb) Console.WriteLine($"  capacity     : {mb:N0} MB");
-            if (id.LeadOut is (int m, int s, int f)) Console.WriteLine($"  lead-out     : {m:00}:{s:00}:{f:00}");
+            if (id.LeadOut is (int m, int s, int f))
+            {
+                long capSectors = ((long)m * 60 + s) * 75 + f - 150;
+                Console.WriteLine($"  lead-out     : {m:00}:{s:00}:{f:00}  = {capSectors:N0} sectors " +
+                                  $"({capSectors * 2352.0 / 1_000_000:N0} MB raw / {capSectors * 2048.0 / 1_048_576:N0} MiB data)");
+                Console.WriteLine($"                 ^ the blank's TRUE program capacity — an image needing more sectors" );
+                Console.WriteLine($"                   than this records nothing past that point, razor-edged.");
+            }
         }
         else if (id.MediaId is not null)
         {
