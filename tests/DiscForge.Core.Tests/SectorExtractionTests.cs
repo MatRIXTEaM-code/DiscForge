@@ -85,6 +85,18 @@ public class SectorExtractionTests
         return s;
     }
 
+    /// <summary>A structurally valid raw Mode 2 Form 1 sector with patterned user data.</summary>
+    private static byte[] MakeMode2(long lba)
+    {
+        var s = new byte[SS];
+        RawSectorBuilder.WriteSync(s);
+        RawSectorBuilder.WriteHeader(s, Msf.FromSectors(lba + 150), mode: 2);
+        s[18] = 0x08; s[22] = 0x08;                     // sub-header: Data, Form 1
+        for (int i = 24; i < 2072; i++) s[i] = (byte)((lba + i) & 0xFF);
+        EdcEcc.FillMode2Form1(s);
+        return s;
+    }
+
     private static ExtractionResult Run(FakeDrive d, long start, long end, ExtractionOptions o,
                                         out byte[] output, Stream? sub = null)
     {
@@ -286,6 +298,43 @@ public class SectorExtractionTests
         Assert.True(edcOk); Assert.True(eccOk);
         Assert.All(bytes[16..2064], b => Assert.Equal(0, b));
         Assert.Equal(new[] { 12L }, r.BadSectors.UnreadableLba);
+    }
+
+    /// <summary>
+    /// The lesson the first burn round-trip taught: a Mode 1 dummy patched into a
+    /// Mode 2 XA track is structurally alien, and a real drive lost tracking at
+    /// exactly that boundary on the burned copy. Replacements must match their
+    /// neighbourhood's mode.
+    /// </summary>
+    [Fact]
+    public void Replace_FollowsTheSurroundingMode_InAMode2Track()
+    {
+        var d = new FakeDrive();
+        d.Sectors[11] = MakeMode2(11);                  // proven Mode 2 context…
+        d.Fallback[12] = new SectorReadAttempt { Ok = false, Main = [], Error = "unrecovered read error" };
+
+        var r = Run(d, 11, 12, new ExtractionOptions { ErrorRecovery = ExtractErrorRecovery.Replace, ReadRetries = 0 }, out var bytes);
+
+        Assert.Equal(1, r.Replaced);
+        var dummy = bytes[SS..];
+        Assert.True(SectorExtraction.HasSync(dummy));
+        Assert.Equal(2, dummy[15]);                     // …so the dummy is Mode 2
+        Assert.Equal(0x08, dummy[18]);                  // sub-header: Data, Form 1
+        Assert.Equal(dummy[18], dummy[22]);             // duplicated per spec
+        var (edcOk, eccOk) = EdcEcc.VerifyMode2Form1(dummy);
+        Assert.True(edcOk); Assert.True(eccOk);
+        Assert.All(dummy[24..2072], b => Assert.Equal(0, b));
+    }
+
+    [Fact]
+    public void Replace_IsSilence_WhenTheNeighbourhoodIsAudio()
+    {
+        var d = new FakeDrive();                        // default fake sectors are audio (no sync)
+        d.Fallback[12] = new SectorReadAttempt { Ok = false, Main = [], Error = "unrecovered read error" };
+
+        var r = Run(d, 11, 12, new ExtractionOptions { ErrorRecovery = ExtractErrorRecovery.Replace, ReadRetries = 0 }, out var bytes);
+        Assert.Equal(1, r.Replaced);
+        Assert.Equal(new byte[SS], bytes[SS..]);        // silence, not a data dummy
     }
 
     [Fact]

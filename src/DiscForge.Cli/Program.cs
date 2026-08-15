@@ -10937,7 +10937,8 @@ static int BurnRawCmd(string[] args)
             var progressS = new Progress<DiscForge.Core.Burning.BurnProgress>(p =>
                 Console.WriteLine($"  [{p.Phase}] {p.Fraction * 100,5:0.0}%{(p.Detail is null ? "" : "  " + p.Detail)}"));
             Console.WriteLine($"RAW DAO-96 {(simulate ? "SIMULATION (laser off)" : "burn")} (direct SPTI) of {Path.GetFileName(args[1])} to {letter}: ({caps.Vendor} {caps.Model})…");
-            DiscForge.Devices.Burning.SptiRawDaoBurnEngine.Burn(letter, layoutS, progressS, simulate);
+            DiscForge.Devices.Burning.SptiRawDaoBurnEngine.Burn(letter, layoutS, progressS, simulate,
+                writeSpeedMultiplier: speed ?? 4);   // conservative default: max-speed on aged media is how round-trip #1 died
             Console.WriteLine(simulate ? "Simulation complete (SPTI) — no disc written." : "RAW burn complete (SPTI).");
             return 0;
         }

@@ -186,6 +186,12 @@ public static class SectorExtraction
         int baselineAttempts =
             options.JitterConsensus && options.DataType == ExtractDataType.Audio2352 ? 2 : 1;
 
+        // The mode of the last PROVEN sector (1, 2, or 0 for audio/no-sync). Replacement
+        // dummies follow it, so a hole in a Mode 2 track is patched with a Mode 2 sector —
+        // a Mode 1 dummy mid-XA-track is structurally alien, and the burn round-trip
+        // showed a real drive losing tracking at exactly that boundary.
+        byte? lastGoodMode = null;
+
         for (long lba = startLba; lba <= endLba; lba++)
         {
             var (good, attempt, attemptsUsed, why) = ReadProven(reader, lba, options);
@@ -196,6 +202,8 @@ public static class SectorExtraction
             if (good)
             {
                 payload = Convert(attempt!.Main, options.DataType);
+                if (attempt.Main.Length == RawSectorSize)
+                    lastGoodMode = HasSync(attempt.Main) ? attempt.Main[15] : (byte)0;
             }
             else
             {
@@ -211,7 +219,7 @@ public static class SectorExtraction
                         ignored++;
                         break;
                     default:
-                        payload = ReplacementPayload(lba, options.DataType);
+                        payload = ReplacementPayload(lba, options.DataType, lastGoodMode);
                         replaced++;
                         break;
                 }
@@ -381,12 +389,28 @@ public static class SectorExtraction
 
     /// <summary>Replace policy: a structurally valid dummy — real sync, header for
     /// THIS LBA, valid EDC/ECC over zero user data; silence for audio; zeros for
-    /// cooked payloads (which carry no structure of their own).</summary>
-    private static byte[] ReplacementPayload(long lba, ExtractDataType t)
+    /// cooked payloads (which carry no structure of their own). For raw extraction
+    /// the dummy's MODE follows the surrounding proven sectors (<paramref name="contextMode"/>):
+    /// a Mode 2 XA track gets a Mode 2 Form 1 dummy, an audio span gets silence,
+    /// and only a Mode 1 context (or no context at all) gets the Mode 1 dummy.</summary>
+    private static byte[] ReplacementPayload(long lba, ExtractDataType t, byte? contextMode = null)
     {
         var msf = Msf.FromSectors(lba + 150);
         switch (t)
         {
+            case ExtractDataType.Raw2352 when contextMode == 0:
+                return new byte[RawSectorSize];            // audio neighbourhood: silence
+            case ExtractDataType.Raw2352 when contextMode == 2:
+            {
+                // Mode 2 Form 1 dummy: sync, header, data-submode sub-header
+                // (duplicated per spec), zero user data, valid EDC/ECC.
+                var s = new byte[RawSectorSize];
+                RawSectorBuilder.WriteSync(s);
+                RawSectorBuilder.WriteHeader(s, msf, mode: 2);
+                s[18] = 0x08; s[22] = 0x08;                // submode: Data, Form 1
+                EdcEcc.FillMode2Form1(s);
+                return s;
+            }
             case ExtractDataType.Raw2352:
             {
                 var s = new byte[RawSectorSize];

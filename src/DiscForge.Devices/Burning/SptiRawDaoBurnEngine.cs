@@ -1,9 +1,6 @@
-// DiscForge — Copyright (C) 2026 MaTRIX TeAm.
-// SPDX-License-Identifier: GPL-3.0-or-later
-// This program is free software: you can redistribute it and/or modify it under the terms of the
-// GNU General Public License as published by the Free Software Foundation, either version 3 of
-// the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY;
-// see the GNU General Public License (LICENSE at the repository root) for details.
+// DiscForge — proprietary. Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
+// Not open source. No permission is granted to copy, fork or redistribute.
+// See LICENSE at the root of this repository.
 
 using System.Buffers.Binary;
 using System.Runtime.Versioning;
@@ -119,8 +116,13 @@ public static class SptiRawDaoBurnEngine
     /// on hardware, but the drive will not consume raw-P-W blocks in a cooked write mode — the
     /// WRITE(10) parks (win32=121, no sense), which is exactly what pointed here.
     /// </summary>
+    /// <param name="writeSpeedMultiplier">Requested CD write speed (e.g. 4 for 4x).
+    /// Null lets the drive choose against the loaded media's descriptor. Whatever
+    /// happens, the outcome of the request is REPORTED — the first hardware
+    /// round-trip failed with a max-speed burn whose speed request had been
+    /// silently swallowed, and that silence is not allowed to recur.</param>
     public static void Burn(char driveLetter, DiscLayout layout, IProgress<BurnProgress>? progress = null,
-                            bool simulate = false)
+                            bool simulate = false, int? writeSpeedMultiplier = 4)
     {
         using var dev = new SptiDevice(driveLetter);
 
@@ -129,9 +131,21 @@ public static class SptiRawDaoBurnEngine
         var mode = SetRawDaoWriteParameters(dev, layout, testWrite: simulate, writeType: CdWriteType.Raw);
         if (!mode.Success) throw new IOException("MODE SELECT (Write Type = Raw) rejected: " + mode.Describe());
 
-        // Set a write speed (4x) — some drives won't begin streaming write data until one is
+        // Set the write speed — some drives won't begin streaming write data until one is
         // set, which shows up as a WRITE(10) that never completes (timeout, no sense).
-        try { dev.SendCommand(MmcCommands.SetCdSpeed(0xFFFF, 706), Array.Empty<byte>(), SptiDataDirection.None, 20); } catch { }
+        // A rejected speed request means the drive will burn at ITS choice (often maximum),
+        // which on aged media is how a disc ends up unreadable past half-radius — so the
+        // request's fate is always surfaced, never swallowed.
+        ushort kbs = writeSpeedMultiplier is int m and > 0
+            ? (ushort)Math.Min(ushort.MaxValue, m * 176 + 2)
+            : DiscForge.Core.Mmc.SetCdSpeed.Max;
+        var speedResult = dev.SendCommand(MmcCommands.SetCdSpeed(0xFFFF, kbs),
+            Array.Empty<byte>(), SptiDataDirection.None, 20);
+        progress?.Report(new BurnProgress("prepare", 0.04,
+            speedResult.Success
+                ? $"Write speed: requested {(writeSpeedMultiplier is int mm and > 0 ? $"{mm}x ({kbs} KB/s)" : "drive maximum")} — accepted"
+                : $"WARNING: write-speed request ({kbs} KB/s) REJECTED ({speedResult.Describe()}) — " +
+                  "the drive will pick its own speed, possibly maximum. On aged media consider aborting."));
 
         // NO SEND CUE SHEET in Raw mode — the TOC lives in the lead-in sub-channel we write.
 
