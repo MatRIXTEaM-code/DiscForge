@@ -168,6 +168,12 @@ internal sealed class TranscodeView : UserControl
         CheckFfmpeg();
     }
 
+    /// <summary>Flowing text (help, errors): wrap to the window, whatever its size.</summary>
+    private void ShowProse(string text) { _out.WordWrap = true; _out.Text = text; }
+
+    /// <summary>Column-aligned monospace report: authored line breaks are the layout.</summary>
+    private void ShowReport(string text) { _out.WordWrap = false; _out.Text = text; }
+
     private sealed record TargetChoice(string Name, long Bytes)
     {
         public override string ToString() => Name;
@@ -201,39 +207,39 @@ internal sealed class TranscodeView : UserControl
         {
             _status.Text = $"FFmpeg: {_ffmpeg}";
             _status.ForeColor = Color.FromArgb(0x20, 0x70, 0x20);
-            _out.Text =
+            ShowProse(
                 "Open a video file, choose what to fit it onto, and press Encode." + Environment.NewLine +
                 Environment.NewLine +
-                "DiscForge works out the bitrate needed to hit the target size and hands" + Environment.NewLine +
-                "the encoding to FFmpeg. Two-pass takes roughly twice as long and spends" + Environment.NewLine +
-                "the bits where they matter — worth it when squeezing hard, unnecessary" + Environment.NewLine +
+                "DiscForge works out the bitrate needed to hit the target size and hands " +
+                "the encoding to FFmpeg. Two-pass takes roughly twice as long and spends " +
+                "the bits where they matter — worth it when squeezing hard, unnecessary " +
                 "when barely compressing." + Environment.NewLine +
                 Environment.NewLine +
-                "Unencrypted sources only. Re-encoding needs readable video, and DiscForge" + Environment.NewLine +
-                "does not decrypt — so home-made discs, camcorder footage and anything you" + Environment.NewLine +
-                "authored yourself, but not a commercial DVD.";
+                "Unencrypted sources only. Re-encoding needs readable video, and DiscForge " +
+                "does not decrypt — so home-made discs, camcorder footage and anything you " +
+                "authored yourself, but not a commercial DVD.");
             return;
         }
 
         _status.Text = "FFmpeg not found — encoding is unavailable.";
         _status.ForeColor = Color.FromArgb(0xA0, 0x60, 0x00);
-        _out.Text =
-            "FFmpeg does the actual encoding, and it isn't installed — or at least" + Environment.NewLine +
+        ShowProse(
+            "FFmpeg does the actual encoding, and it isn't installed — or at least " +
             "isn't on the PATH where DiscForge can find it." + Environment.NewLine +
             Environment.NewLine +
-            "It isn't bundled deliberately: it's a large program under its own licence," + Environment.NewLine +
-            "and shipping a copy inside a disc tool would be presumptuous and a" + Environment.NewLine +
+            "It isn't bundled deliberately: it's a large program under its own licence, " +
+            "and shipping a copy inside a disc tool would be presumptuous and a " +
             "maintenance burden nobody asked for." + Environment.NewLine +
             Environment.NewLine +
             "To install it:" + Environment.NewLine +
             Environment.NewLine +
             "  winget install Gyan.FFmpeg" + Environment.NewLine +
             Environment.NewLine +
-            "then restart DiscForge. Or download a build from ffmpeg.org and put the" + Environment.NewLine +
+            "then restart DiscForge. Or download a build from ffmpeg.org and put the " +
             "folder containing ffmpeg.exe on your PATH." + Environment.NewLine +
             Environment.NewLine +
-            "Everything else in DiscForge works without it — this one view is all that" + Environment.NewLine +
-            "depends on it.";
+            "Everything else in DiscForge works without it — this one view is all that " +
+            "depends on it.");
     }
 
     private async Task OpenAsync()
@@ -263,14 +269,12 @@ internal sealed class TranscodeView : UserControl
         {
             _status.Text = "Could not determine the duration — encoding to a size needs it.";
             _status.ForeColor = Color.FromArgb(0xA0, 0x60, 0x00);
-            _out.Text =
+            ShowProse(
                 "FFmpeg did not report a duration for this file." + Environment.NewLine +
                 Environment.NewLine +
-                "Without it there is no way to work out what bitrate hits a target size," +
-                Environment.NewLine +
-                "so only \"keep as is\" would be meaningful. The file may be a raw stream" +
-                Environment.NewLine +
-                "with no container, or damaged.";
+                "Without it there is no way to work out what bitrate hits a target size, " +
+                "so only \"keep as is\" would be meaningful. The file may be a raw stream " +
+                "with no container, or damaged.");
             _encode.Enabled = false;
             return;
         }
@@ -278,14 +282,14 @@ internal sealed class TranscodeView : UserControl
         SuggestOutput();
 
         var span = TimeSpan.FromSeconds(_durationSeconds);
-        _out.Text =
+        ShowReport(
             $"{Path.GetFileName(dlg.FileName)}" + Environment.NewLine +
             $"  {Format(_inputBytes)}, {(int)span.TotalHours}:{span.Minutes:D2}:{span.Seconds:D2}" +
             Environment.NewLine +
             $"  average {Format((long)(_inputBytes * 8 / _durationSeconds / 8))}/s " +
             $"({_inputBytes * 8.0 / _durationSeconds / 1_000_000:N1} Mbit/s)" +
             Environment.NewLine + Environment.NewLine +
-            "Choose a target and press Encode.";
+            "Choose a target and press Encode.");
 
         _status.Text = $"FFmpeg: {_ffmpeg}";
         _status.ForeColor = Color.FromArgb(0x20, 0x70, 0x20);
@@ -386,7 +390,7 @@ internal sealed class TranscodeView : UserControl
 
         if (string.Equals(_inputPath, _outputPath, StringComparison.OrdinalIgnoreCase))
         {
-            _out.Text = "The output would overwrite the source. Choose a different name.";
+            ShowProse("The output would overwrite the source. Choose a different name.");
             return;
         }
 
@@ -410,16 +414,13 @@ internal sealed class TranscodeView : UserControl
 
         if (ratio >= 0.999 && target.Bytes > 0)
         {
-            _out.Text =
-                $"{Path.GetFileName(_inputPath)} is {Format(_inputBytes)}, which already fits" +
-                Environment.NewLine +
+            ShowProse(
+                $"{Path.GetFileName(_inputPath)} is {Format(_inputBytes)}, which already fits " +
                 $"{target.Name} ({Format(target.Bytes)}). Nothing needs re-encoding." +
                 Environment.NewLine + Environment.NewLine +
-                "Choosing \"keep as is\" would copy the streams into a new container without" +
-                Environment.NewLine +
-                "touching the video, which is fast and lossless. Re-encoding anyway would" +
-                Environment.NewLine +
-                "only lose quality for no benefit.";
+                "Choosing \"keep as is\" would copy the streams into a new container without " +
+                "touching the video, which is fast and lossless. Re-encoding anyway would " +
+                "only lose quality for no benefit.");
             return;
         }
 
@@ -442,13 +443,13 @@ internal sealed class TranscodeView : UserControl
         _progress.Value = 0;
         var log = new StringBuilder();
 
-        _out.Text =
+        ShowReport(
             $"Encoding {Path.GetFileName(_inputPath)}" + Environment.NewLine +
             $"  {Format(_inputBytes)} → about {Format(plannedBytes)} " +
             $"({ratio:P0} of the original)" + Environment.NewLine +
             $"  {encode.Codec}, {(encode.TwoPass ? "two passes" : "one pass")}, " +
             $"{encode.VideoBitrate / 1000:N0} kbit/s" + Environment.NewLine +
-            Environment.NewLine;
+            Environment.NewLine);
 
         var ffmpeg = _ffmpeg;
         var outputPath = _outputPath;

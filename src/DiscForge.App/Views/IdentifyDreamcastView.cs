@@ -58,11 +58,17 @@ internal sealed class IdentifyDreamcastView : UserControl
         Controls.Add(_details);
 
         _summary.Text = "Open a Dreamcast image (.gdi, .cue, .cdi, or a raw .bin/.iso) to read its boot header.";
-        _details.Text =
-            "The IP.BIN boot header sits at the front of a GD-ROM's bootable data track." + Environment.NewLine +
-            "It names the disc — title, product number, region, and the peripherals the" + Environment.NewLine +
-            "game supports — and reading it is purely descriptive.";
+        ShowProse(
+            "The IP.BIN boot header sits at the front of a GD-ROM's bootable data track. " +
+            "It names the disc — title, product number, region, and the peripherals the " +
+            "game supports — and reading it is purely descriptive.");
     }
+
+    /// <summary>Flowing text (help, errors): wrap to the window, whatever its size.</summary>
+    private void ShowProse(string text) { _details.WordWrap = true; _details.Text = text; }
+
+    /// <summary>Column-aligned monospace report: authored line breaks are the layout.</summary>
+    private void ShowReport(string text) { _details.WordWrap = false; _details.Text = text; }
 
     private void Open()
     {
@@ -88,7 +94,7 @@ internal sealed class IdentifyDreamcastView : UserControl
                 _summary.Text = "No Dreamcast boot header (\"SEGA SEGAKATANA\") — not a bootable Dreamcast image, " +
                                 "or this format isn't supported here.";
                 _summary.ForeColor = Color.FromArgb(0xA0, 0x60, 0x00);
-                _details.Text = "This image has no high-density Dreamcast data track to read a boot header from.";
+                ShowProse("This image has no high-density Dreamcast data track to read a boot header from.");
                 return;
             }
 
@@ -116,20 +122,20 @@ internal sealed class IdentifyDreamcastView : UserControl
             else
                 sb.AppendLine("    (none decoded)");
 
-            _details.Text = sb.ToString();
+            ShowReport(sb.ToString());
             StatusBus.Report($"Identified: {h.Title} ({h.ProductNumber}).");
         }
         catch (IpBinFormatException ex)
         {
             _summary.Text = "Could not read the boot header: " + ex.Message;
             _summary.ForeColor = Color.FromArgb(0xA0, 0x20, 0x20);
-            _details.Text = ex.Message;
+            ShowProse(ex.Message);
         }
         catch (Exception ex)
         {
             _summary.Text = "Could not read the image: " + ex.Message;
             _summary.ForeColor = Color.FromArgb(0xA0, 0x20, 0x20);
-            _details.Text = ex.Message;
+            ShowProse(ex.Message);
             AppLog.WriteException("identify dreamcast", ex);
         }
     }

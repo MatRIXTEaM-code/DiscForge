@@ -135,18 +135,26 @@ internal sealed class RipAudioView : UserControl
         Controls.Add(_jitter); Controls.Add(_useCdText); Controls.Add(_continueOnError);
         Controls.Add(_tracks); Controls.Add(_progress); Controls.Add(_out);
 
-        _out.Text =
+        // Prose flows to the window; only the rip REPORT (whose columns are
+        // monospace-aligned) needs wrap off — ShowProse/ShowReport switch modes.
+        ShowProse(
             "Detect a drive with an audio CD in it." + Environment.NewLine +
             Environment.NewLine +
-            "Jitter correction reads overlapping chunks and aligns them by" + Environment.NewLine +
-            "correlation. CD-DA sectors carry no header, so a drive can return" + Environment.NewLine +
-            "audio a few samples either side of where it was asked — differently" + Environment.NewLine +
+            "Jitter correction reads overlapping chunks and aligns them by " +
+            "correlation. CD-DA sectors carry no header, so a drive can return " +
+            "audio a few samples either side of where it was asked — differently " +
             "each time. Joining those blindly clicks at every seam." + Environment.NewLine +
             Environment.NewLine +
-            "AccurateRip checksums are computed as the rip runs. Comparing them" + Environment.NewLine +
-            "against the database tells you whether your rip matches everyone" + Environment.NewLine +
-            "else's of the same pressing — which catches errors nothing reported.";
+            "AccurateRip checksums are computed as the rip runs. Comparing them " +
+            "against the database tells you whether your rip matches everyone " +
+            "else's of the same pressing — which catches errors nothing reported.");
     }
+
+    /// <summary>Flowing text (help, errors): wrap to the window, whatever its size.</summary>
+    private void ShowProse(string text) { _out.WordWrap = true; _out.Text = text; }
+
+    /// <summary>Column-aligned monospace report: authored line breaks are the layout.</summary>
+    private void ShowReport(string text) { _out.WordWrap = false; _out.Text = text; }
 
     private async Task DetectAsync()
     {
@@ -155,17 +163,17 @@ internal sealed class RipAudioView : UserControl
         _rip.Enabled = false;
         _plan = null;
         _cdText = CdTextInfo.None;
-        _out.Text = "Detecting…";
+        ShowProse("Detecting…");
         try
         {
             _detected = await Task.Run(() => DriveDetector.DetectAll());
             foreach (var d in _detected) _drives.Items.Add(d.Summary());
             if (_drives.Items.Count > 0) _drives.SelectedIndex = 0;
-            else _out.Text = "No optical drives detected (raw access usually needs administrator).";
+            else ShowProse("No optical drives detected (raw access usually needs administrator).");
         }
         catch (Exception ex)
         {
-            _out.Text = "Detection failed: " + ex.Message;
+            ShowProse("Detection failed: " + ex.Message);
             AppLog.WriteException("rip detect", ex);
         }
     }
@@ -188,11 +196,11 @@ internal sealed class RipAudioView : UserControl
             _tracks.Items.Clear();
             _plan = null;
             _rip.Enabled = false;
-            _out.Text = "Tray ejected. Insert a disc and press Detect again.";
+            ShowProse("Tray ejected. Insert a disc and press Detect again.");
         }
         catch (Exception ex)
         {
-            _out.Text = "Could not eject: " + ex.Message;
+            ShowProse("Could not eject: " + ex.Message);
         }
     }
 
@@ -213,7 +221,7 @@ internal sealed class RipAudioView : UserControl
         _rip.Enabled = false;
         _plan = null;
         _cdText = CdTextInfo.None;
-        _out.Text = "Reading the table of contents…";
+        ShowProse("Reading the table of contents…");
 
         try
         {
@@ -241,8 +249,8 @@ internal sealed class RipAudioView : UserControl
             }
             else
             {
-                sb.AppendLine("No CD-TEXT on this disc — files will be numbered. Most discs have");
-                sb.AppendLine("none; it was optional and rarely used.");
+                sb.AppendLine("No CD-TEXT on this disc — files will be numbered. Most discs have " +
+                              "none; it was optional and rarely used.");
                 sb.AppendLine();
             }
 
@@ -258,15 +266,15 @@ internal sealed class RipAudioView : UserControl
             {
                 if (caps.CddaAccurateStream)
                 {
-                    sb.AppendLine("This drive reports \"accurate stream\": it returns audio from where it");
-                    sb.AppendLine("was asked, so jitter correction will find little to fix. Leaving it on");
-                    sb.AppendLine("costs only the overlap re-read.");
+                    sb.AppendLine("This drive reports \"accurate stream\": it returns audio from where it " +
+                                  "was asked, so jitter correction will find little to fix. Leaving it on " +
+                                  "costs only the overlap re-read.");
                 }
                 else
                 {
-                    sb.AppendLine("This drive does NOT report \"accurate stream\": it may return audio");
-                    sb.AppendLine("offset from where it was asked, and differently each time. Leave jitter");
-                    sb.AppendLine("correction on, or the joins between reads will click.");
+                    sb.AppendLine("This drive does NOT report \"accurate stream\": it may return audio " +
+                                  "offset from where it was asked, and differently each time. Leave jitter " +
+                                  "correction on, or the joins between reads will click.");
                 }
                 sb.AppendLine();
             }
@@ -275,12 +283,12 @@ internal sealed class RipAudioView : UserControl
             if (_plan.Warnings.Count > 0) sb.AppendLine();
 
             sb.AppendLine("Press \"Rip to WAV…\" and choose where the files should go.");
-            _out.Text = sb.ToString();
+            ShowProse(sb.ToString());
             _rip.Enabled = true;
         }
         catch (Exception ex)
         {
-            _out.Text = ex.Message;
+            ShowProse(ex.Message);
             AppLog.WriteException("rip toc", ex);
         }
     }
@@ -325,7 +333,7 @@ internal sealed class RipAudioView : UserControl
 
         _progress.Value = 0;
         _saveLog.Enabled = false;
-        _out.Text = "Ripping…";
+        ShowProse("Ripping…");
 
         // Rebuild the plan with CD-TEXT filenames where they exist. The planner
         // sanitises them: a title can contain anything at all, and one that
@@ -354,7 +362,7 @@ internal sealed class RipAudioView : UserControl
         },
         ex =>
         {
-            _out.Text = "Rip failed: " + ex.Message;
+            ShowProse("Rip failed: " + ex.Message);
             AppLog.WriteException("audio rip", ex);
         });
 
@@ -363,16 +371,13 @@ internal sealed class RipAudioView : UserControl
             // Cancelled. Whatever tracks finished are complete files — the rest
             // were written to .partial and cleaned up, so nothing half-written
             // is left claiming to be a WAV.
-            _out.Text =
+            ShowProse(
                 "Rip cancelled." + Environment.NewLine +
                 Environment.NewLine +
-                "Tracks that finished before you stopped are complete and playable." +
-                Environment.NewLine +
-                "The one in progress was discarded rather than left half-written — a" +
-                Environment.NewLine +
-                "WAV declares its own length, so a truncated one looks complete to a" +
-                Environment.NewLine +
-                "player and stops early.";
+                "Tracks that finished before you stopped are complete and playable. " +
+                "The one in progress was discarded rather than left half-written — a " +
+                "WAV declares its own length, so a truncated one looks complete to a " +
+                "player and stops early.");
             _progress.Value = 0;
             StatusBus.Report("Rip cancelled");
             return;
@@ -380,7 +385,7 @@ internal sealed class RipAudioView : UserControl
 
         _progress.Value = 100;
         string text = Render(result, dir, _cdText);
-        _out.Text = text;
+        ShowReport(text);
 
         // The log carries the AccurateRip checksums alongside the drive that
         // produced them, which is what makes them comparable: a rip is verified

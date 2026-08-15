@@ -115,19 +115,27 @@ internal sealed class QualityView : UserControl
         Controls.Add(_scan); Controls.Add(_cancel); Controls.Add(_saveLog); Controls.Add(_elapsed);
         Controls.Add(_media); Controls.Add(_progress); Controls.Add(_verdict); Controls.Add(_out);
 
-        _out.Text =
+        // Prose flows to the window; only the scan REPORT (whose columns are
+        // monospace-aligned) needs wrap off — ShowProse/ShowReport switch modes.
+        ShowProse(
             "Detect a drive with a CD in it, then scan." + Environment.NewLine +
             Environment.NewLine +
-            "A disc gives no warning before it fails — it reads perfectly until the" + Environment.NewLine +
-            "day it doesn't. The drive knows sooner: long before sectors become" + Environment.NewLine +
-            "unreadable, error correction starts having to work, and C2 pointers" + Environment.NewLine +
+            "A disc gives no warning before it fails — it reads perfectly until the " +
+            "day it doesn't. The drive knows sooner: long before sectors become " +
+            "unreadable, error correction starts having to work, and C2 pointers " +
             "make that visible." + Environment.NewLine +
             Environment.NewLine +
-            "This samples across the whole surface and reports where the drive is" + Environment.NewLine +
+            "This samples across the whole surface and reports where the drive is " +
             "struggling, so a disc can be copied while copying still works." + Environment.NewLine +
             Environment.NewLine +
-            "CD only — the command this uses does not exist for DVD or Blu-ray.";
+            "CD only — the command this uses does not exist for DVD or Blu-ray.");
     }
+
+    /// <summary>Flowing text (help, errors): wrap to the window, whatever its size.</summary>
+    private void ShowProse(string text) { _out.WordWrap = true; _out.Text = text; }
+
+    /// <summary>Column-aligned monospace report: authored line breaks are the layout.</summary>
+    private void ShowReport(string text) { _out.WordWrap = false; _out.Text = text; }
 
     private async Task DetectAsync()
     {
@@ -225,7 +233,7 @@ internal sealed class QualityView : UserControl
         _progress.Value = 0;
         _verdict.Text = "";
         _saveLog.Enabled = false;
-        _out.Text = "Scanning…";
+        ShowProse("Scanning…");
 
         uint sectors = _totalSectors;
         var report = await _runner.RunAsync(cancel =>
@@ -237,7 +245,7 @@ internal sealed class QualityView : UserControl
         },
         ex =>
         {
-            _out.Text = "Scan failed: " + ex.Message;
+            ShowProse("Scan failed: " + ex.Message);
             AppLog.WriteException("quality scan", ex);
         });
 
@@ -247,9 +255,8 @@ internal sealed class QualityView : UserControl
             // disc, so there is nothing worth reporting.
             _verdict.Text = "Scan cancelled.";
             _verdict.ForeColor = Color.Gray;
-            _out.Text = "Cancelled before the scan finished. A partial sample says little about" +
-                        Environment.NewLine +
-                        "a disc's condition, so no verdict is offered.";
+            ShowProse("Cancelled before the scan finished. A partial sample says little about " +
+                      "a disc's condition, so no verdict is offered.");
             _progress.Value = 0;
             return;
         }
@@ -266,7 +273,7 @@ internal sealed class QualityView : UserControl
         };
 
         string text = Render(report);
-        _out.Text = text;
+        ShowReport(text);
 
         // A quality verdict is only meaningful alongside the drive that produced
         // it — drives differ enormously in what they report — so the log carries

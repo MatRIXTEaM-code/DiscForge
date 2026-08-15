@@ -152,27 +152,35 @@ internal sealed class RecoveryView : UserControl
         Controls.Add(_scan); Controls.Add(_cancel); Controls.Add(_saveLog); Controls.Add(_elapsed);
         Controls.Add(_c2); Controls.Add(_progress); Controls.Add(_out);
 
-        _out.Text =
+        // Prose flows to the window; only the recovery REPORT (whose columns are
+        // monospace-aligned) needs wrap off — ShowProse/ShowReport switch modes.
+        ShowProse(
             "Detect a drive, then choose a sector range to recover." + Environment.NewLine +
             Environment.NewLine +
-            "This reads each sector as many times as needed, using the drive's C2" + Environment.NewLine +
-            "error pointers to take every byte from a read that could correct it." + Environment.NewLine +
-            "Damage that no single read survives is often recoverable across several," + Environment.NewLine +
+            "This reads each sector as many times as needed, using the drive's C2 " +
+            "error pointers to take every byte from a read that could correct it. " +
+            "Damage that no single read survives is often recoverable across several, " +
             "because the uncorrectable bytes move between attempts." + Environment.NewLine +
             Environment.NewLine +
-            "What re-reading cannot fix, the sector's own Reed-Solomon parity often" + Environment.NewLine +
+            "What re-reading cannot fix, the sector's own Reed-Solomon parity often " +
             "can — knowing where the bad bytes are doubles what it can repair." + Environment.NewLine +
             Environment.NewLine +
-            "On a badly damaged disc, try 4x. A drive at 48x has under a millisecond" + Environment.NewLine +
-            "to resolve each pit; at 4x it has twelve times as long, and tracks a" + Environment.NewLine +
+            "On a badly damaged disc, try 4x. A drive at 48x has under a millisecond " +
+            "to resolve each pit; at 4x it has twelve times as long, and tracks a " +
             "warped or scratched surface far more steadily." + Environment.NewLine +
             Environment.NewLine +
             "CD only: the command this relies on does not exist for DVD or Blu-ray." + Environment.NewLine +
             Environment.NewLine +
-            "Damage sits mostly toward the outer edge of a disc — higher sector" + Environment.NewLine +
-            "numbers. LBA 0 is the innermost track and reads cleanly on almost" + Environment.NewLine +
-            "anything, so it is a poor place to look for trouble.";
+            "Damage sits mostly toward the outer edge of a disc — higher sector " +
+            "numbers. LBA 0 is the innermost track and reads cleanly on almost " +
+            "anything, so it is a poor place to look for trouble.");
     }
+
+    /// <summary>Flowing text (help, errors): wrap to the window, whatever its size.</summary>
+    private void ShowProse(string text) { _out.WordWrap = true; _out.Text = text; }
+
+    /// <summary>Column-aligned monospace report: authored line breaks are the layout.</summary>
+    private void ShowReport(string text) { _out.WordWrap = false; _out.Text = text; }
 
     private async Task DetectAsync()
     {
@@ -253,15 +261,15 @@ internal sealed class RecoveryView : UserControl
             _c2.Text = $"{drive.MediaProfile} loaded — C2 recovery is a CD-only feature. " +
                        "Insert a CD to use it.";
             _c2.ForeColor = Color.FromArgb(0xA0, 0x60, 0x00);
-            _out.Text =
+            ShowProse(
                 $"The drive holds {drive.MediaProfile} media." + Environment.NewLine +
                 Environment.NewLine +
-                "C2 error pointers come from READ CD, which is a Compact Disc command." + Environment.NewLine +
-                "DVD and Blu-ray drives reject it, so there is nothing to recover with" + Environment.NewLine +
-                "here — not because the disc is bad, but because the mechanism doesn't" + Environment.NewLine +
+                "C2 error pointers come from READ CD, which is a Compact Disc command. " +
+                "DVD and Blu-ray drives reject it, so there is nothing to recover with " +
+                "here — not because the disc is bad, but because the mechanism doesn't " +
                 "apply to this format." + Environment.NewLine +
                 Environment.NewLine +
-                "DVD error recovery works differently and isn't implemented yet.";
+                "DVD error recovery works differently and isn't implemented yet.");
             return;
         }
 
@@ -322,7 +330,7 @@ internal sealed class RecoveryView : UserControl
 
         _progress.Value = 0;
         _saveLog.Enabled = false;
-        _out.Text = "Reading…";
+        ShowProse("Reading…");
 
         var summary = await _runner.RunAsync(cancel =>
         {
@@ -413,7 +421,7 @@ internal sealed class RecoveryView : UserControl
         },
         ex =>
         {
-            _out.Text = "Recovery failed: " + ex.Message;
+            ShowProse("Recovery failed: " + ex.Message);
             AppLog.WriteException("c2 recovery", ex);
         });
 
@@ -421,7 +429,7 @@ internal sealed class RecoveryView : UserControl
 
         _progress.Value = 100;
         string report = Render(summary, start, _runner.Elapsed);
-        _out.Text = report;
+        ShowReport(report);
 
         // Build a self-contained record: the hardware and media details are what
         // make a result interpretable later, or by anyone else.

@@ -164,22 +164,30 @@ internal sealed class SubcodeView : UserControl
         Controls.Add(_saveSbi);
         Controls.Add(_progress); Controls.Add(_verdict); Controls.Add(_out);
 
-        _out.Text =
-            "Sub-channel is the eight bits per frame that ride alongside the audio" + Environment.NewLine +
-            "or data — 96 bytes for every sector. The Q channel carries timing and" + Environment.NewLine +
+        // Prose flows to the window; only the analysis REPORT (whose columns are
+        // monospace-aligned) needs wrap off — ShowProse/ShowReport switch modes.
+        ShowProse(
+            "Sub-channel is the eight bits per frame that ride alongside the audio " +
+            "or data — 96 bytes for every sector. The Q channel carries timing and " +
             "track position, and every frame includes a CRC over its own contents." + Environment.NewLine +
             Environment.NewLine +
-            "On a healthy disc essentially all of them validate. A scattered handful" + Environment.NewLine +
-            "that don't — a few dozen across a whole disc, isolated rather than in" + Environment.NewLine +
-            "runs — is the signature of LibCrypt and its relatives: the corruption is" + Environment.NewLine +
-            "deliberate and the pattern is the key. A copy that \"repairs\" it destroys" + Environment.NewLine +
+            "On a healthy disc essentially all of them validate. A scattered handful " +
+            "that don't — a few dozen across a whole disc, isolated rather than in " +
+            "runs — is the signature of LibCrypt and its relatives: the corruption is " +
+            "deliberate and the pattern is the key. A copy that \"repairs\" it destroys " +
             "both the protection and the disc's ability to authenticate itself." + Environment.NewLine +
             Environment.NewLine +
-            "Damage looks different: runs rather than isolated frames, following the" + Environment.NewLine +
+            "Damage looks different: runs rather than isolated frames, following the " +
             "geometry of a scratch, and usually far more of it." + Environment.NewLine +
             Environment.NewLine +
-            "Analyse a .sub sidecar, or read the sub-channel straight off a disc.";
+            "Analyse a .sub sidecar, or read the sub-channel straight off a disc.");
     }
+
+    /// <summary>Flowing text (help, errors): wrap to the window, whatever its size.</summary>
+    private void ShowProse(string text) { _out.WordWrap = true; _out.Text = text; }
+
+    /// <summary>Column-aligned monospace report: authored line breaks are the layout.</summary>
+    private void ShowReport(string text) { _out.WordWrap = false; _out.Text = text; }
 
     private void SwitchSource()
     {
@@ -214,21 +222,21 @@ internal sealed class SubcodeView : UserControl
         {
             _verdict.Text = "This does not look like a sub-channel sidecar.";
             _verdict.ForeColor = Color.FromArgb(0xA0, 0x60, 0x00);
-            _out.Text =
+            ShowProse(
                 $"{size:N0} bytes is not a whole number of {RawSubchannel.FrameSize}-byte frames " +
                 $"({size / (double)RawSubchannel.FrameSize:N2})." + Environment.NewLine +
                 Environment.NewLine +
-                "A .sub file holds exactly 96 bytes for every sector of its track. A file" + Environment.NewLine +
-                "that doesn't divide evenly is either truncated or a different format —" + Environment.NewLine +
-                "some tools write 16-byte formatted-Q sidecars instead of the full 96.";
+                "A .sub file holds exactly 96 bytes for every sector of its track. A file " +
+                "that doesn't divide evenly is either truncated or a different format — " +
+                "some tools write 16-byte formatted-Q sidecars instead of the full 96.");
             _analyse.Enabled = false;
             return;
         }
 
         _verdict.Text = "";
-        _out.Text = $"{size / RawSubchannel.FrameSize:N0} frames " +
-                    $"({size / RawSubchannel.FrameSize / 75.0 / 60:N1} minutes of disc). " +
-                    "Press Analyse.";
+        ShowProse($"{size / RawSubchannel.FrameSize:N0} frames " +
+                  $"({size / RawSubchannel.FrameSize / 75.0 / 60:N1} minutes of disc). " +
+                  "Press Analyse.");
         _analyse.Enabled = true;
         _saveSbi.Enabled = true;
     }
@@ -289,7 +297,7 @@ internal sealed class SubcodeView : UserControl
     {
         _drives.Items.Clear();
         _analyse.Enabled = false;
-        _out.Text = "Detecting…";
+        ShowProse("Detecting…");
         try
         {
             _detected = await Task.Run(() => DriveDetector.DetectAll());
@@ -297,18 +305,18 @@ internal sealed class SubcodeView : UserControl
             if (_drives.Items.Count > 0)
             {
                 _drives.SelectedIndex = 0;
-                _out.Text = "Choose a sector range and press Analyse.\r\n\r\n" +
-                            "Five thousand sectors is about a minute of disc — enough to see the\r\n" +
-                            "pattern without reading the whole thing.";
+                ShowProse("Choose a sector range and press Analyse.\r\n\r\n" +
+                          "Five thousand sectors is about a minute of disc — enough to see the " +
+                          "pattern without reading the whole thing.");
             }
             else
             {
-                _out.Text = "No optical drives detected (raw access usually needs administrator).";
+                ShowProse("No optical drives detected (raw access usually needs administrator).");
             }
         }
         catch (Exception ex)
         {
-            _out.Text = "Detection failed: " + ex.Message;
+            ShowProse("Detection failed: " + ex.Message);
             AppLog.WriteException("subcode detect", ex);
         }
     }
@@ -336,7 +344,7 @@ internal sealed class SubcodeView : UserControl
         _progress.Value = 0;
         _saveLog.Enabled = false;
         _verdict.Text = "";
-        _out.Text = "Analysing…";
+        ShowProse("Analysing…");
 
         Outcome? outcome;
 
@@ -353,7 +361,7 @@ internal sealed class SubcodeView : UserControl
             },
             ex =>
             {
-                _out.Text = "Could not analyse: " + ex.Message;
+                ShowProse("Could not analyse: " + ex.Message);
                 AppLog.WriteException("subcode analyse file", ex);
             });
         }
@@ -389,7 +397,7 @@ internal sealed class SubcodeView : UserControl
             },
             ex =>
             {
-                _out.Text = ex.Message;
+                ShowProse(ex.Message);
                 AppLog.WriteException("subcode analyse disc", ex);
             });
         }
@@ -402,7 +410,7 @@ internal sealed class SubcodeView : UserControl
         (_verdict.Text, _verdict.ForeColor) = Verdict(a, outcome.Refused);
 
         string text = Render(outcome);
-        _out.Text = text;
+        ShowReport(text);
 
         var log = new OperationLog("Sub-channel analysis");
         if (!_fromFile.Checked && _drives.SelectedIndex >= 0)

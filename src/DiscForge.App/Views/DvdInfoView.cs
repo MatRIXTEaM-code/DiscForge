@@ -82,22 +82,28 @@ internal sealed class DvdInfoView : UserControl
         Controls.Add(_distinctiveOnly); Controls.Add(_saveLog);
         Controls.Add(_summary); Controls.Add(_out);
 
-        _out.Text =
+        ShowProse(
             "Choose a VIDEO_TS folder to see what the disc holds." + Environment.NewLine +
             Environment.NewLine +
-            "For a disc in the drive, browse to the drive letter and select the" + Environment.NewLine +
-            "VIDEO_TS folder itself — not a file inside it. That works on encrypted" + Environment.NewLine +
-            "commercial discs too: the IFO files describing the structure are never" + Environment.NewLine +
+            "For a disc in the drive, browse to the drive letter and select the " +
+            "VIDEO_TS folder itself — not a file inside it. That works on encrypted " +
+            "commercial discs too: the IFO files describing the structure are never " +
             "scrambled, only the video is." + Environment.NewLine +
             Environment.NewLine +
-            "A DVD declares how many titles it has, how many chapters in each, and" + Environment.NewLine +
+            "A DVD declares how many titles it has, how many chapters in each, and " +
             "which audio and subtitle streams are present in what languages." + Environment.NewLine +
             Environment.NewLine +
-            "Some discs declare dozens of decoy titles as a form of copy protection —" + Environment.NewLine +
-            "title sets whose IFO files exist but whose video does not. Where that is" + Environment.NewLine +
-            "what a table looks like, it is labelled as such rather than presented as" + Environment.NewLine +
-            "a contents listing.";
+            "Some discs declare dozens of decoy titles as a form of copy protection — " +
+            "title sets whose IFO files exist but whose video does not. Where that is " +
+            "what a table looks like, it is labelled as such rather than presented as " +
+            "a contents listing.");
     }
+
+    /// <summary>Flowing text (help, errors): wrap to the window, whatever its size.</summary>
+    private void ShowProse(string text) { _out.WordWrap = true; _out.Text = text; }
+
+    /// <summary>Column-aligned monospace report: authored line breaks are the layout.</summary>
+    private void ShowReport(string text) { _out.WordWrap = false; _out.Text = text; }
 
     private void SaveLog()
     {
@@ -146,16 +152,15 @@ internal sealed class DvdInfoView : UserControl
         {
             _summary.Text = "Not a DVD-Video disc.";
             _summary.ForeColor = Color.FromArgb(0xA0, 0x60, 0x00);
-            _out.Text = ex.Message + Environment.NewLine + Environment.NewLine +
-                        "A data DVD, or one holding video in some other form, has no VIDEO_TS" +
-                        Environment.NewLine +
-                        "structure to read. Use Browse to see its files instead.";
+            ShowProse(ex.Message + Environment.NewLine + Environment.NewLine +
+                      "A data DVD, or one holding video in some other form, has no VIDEO_TS " +
+                      "structure to read. Use Browse to see its files instead.");
         }
         catch (Exception ex)
         {
             _summary.Text = "Could not read it.";
             _summary.ForeColor = Color.FromArgb(0xA0, 0x20, 0x20);
-            _out.Text = ex.Message;
+            ShowProse(ex.Message);
             AppLog.WriteException("dvd structure", ex);
         }
     }
@@ -179,7 +184,7 @@ internal sealed class DvdInfoView : UserControl
 
         string text = Render(_structure, _source, finding,
                              _distinctiveOnly.Visible && _distinctiveOnly.Checked);
-        _out.Text = text;
+        ShowReport(text);
 
         var log = new OperationLog("DVD structure");
         log.Settings(("Source", _source), ("Titles", _structure.Titles.Count),

@@ -129,20 +129,26 @@ internal sealed class CueEditorView : UserControl
         Controls.Add(_album); Controls.Add(_performer); Controls.Add(_catalog);
         Controls.Add(_tracks); Controls.Add(_verdict); Controls.Add(_out);
 
-        _out.Text =
+        ShowProse(
             "Open a .cue to check it against the data file it describes." + Environment.NewLine +
             Environment.NewLine +
-            "A cuesheet claims things about a BIN — where each track starts, how" + Environment.NewLine +
-            "long it runs, what kind of sectors it holds. Nothing in the text" + Environment.NewLine +
-            "checks those claims against the actual file, so a sheet can look" + Environment.NewLine +
+            "A cuesheet claims things about a BIN — where each track starts, how " +
+            "long it runs, what kind of sectors it holds. Nothing in the text " +
+            "checks those claims against the actual file, so a sheet can look " +
             "perfect and still describe a disc that doesn't exist." + Environment.NewLine +
             Environment.NewLine +
-            "Check re-runs those tests — useful after an edit, or when the BIN" + Environment.NewLine +
+            "Check re-runs those tests — useful after an edit, or when the BIN " +
             "beside it has been replaced." + Environment.NewLine +
             Environment.NewLine +
             "Double-click a track to edit its title, performer or ISRC." + Environment.NewLine +
-            "\"From image…\" writes a fresh sheet for a .cdi that has lost its own.";
+            "\"From image…\" writes a fresh sheet for a .cdi that has lost its own.");
     }
+
+    /// <summary>Flowing text (help, errors): wrap to the window, whatever its size.</summary>
+    private void ShowProse(string text) { _out.WordWrap = true; _out.Text = text; }
+
+    /// <summary>Column-aligned monospace report: authored line breaks are the layout.</summary>
+    private void ShowReport(string text) { _out.WordWrap = false; _out.Text = text; }
 
     private void MarkDirty()
     {
@@ -186,7 +192,7 @@ internal sealed class CueEditorView : UserControl
         catch (Exception ex)
         {
             _verdict.Text = "";
-            _out.Text = "Could not parse the sheet: " + ex.Message;
+            ShowProse("Could not parse the sheet: " + ex.Message);
             AppLog.WriteException("cue open", ex);
         }
     }
@@ -230,7 +236,7 @@ internal sealed class CueEditorView : UserControl
         {
             _verdict.Text = "Could not check the sheet.";
             _verdict.ForeColor = Color.FromArgb(0xA0, 0x20, 0x20);
-            _out.Text = ex.Message;
+            ShowProse(ex.Message);
             AppLog.WriteException("cue check", ex);
             return;
         }
@@ -288,7 +294,7 @@ internal sealed class CueEditorView : UserControl
             }
         }
 
-        _out.Text = sb.ToString();
+        ShowReport(sb.ToString());
         StatusBus.Report(_verdict.Text);
     }
 
@@ -345,7 +351,7 @@ internal sealed class CueEditorView : UserControl
         }
         catch (Exception ex)
         {
-            _out.Text = "Could not save: " + ex.Message;
+            ShowProse("Could not save: " + ex.Message);
             AppLog.WriteException("cue save", ex);
         }
     }
@@ -420,19 +426,19 @@ internal sealed class CueEditorView : UserControl
 
             _verdict.Text = "Not yet checked — save the sheet, then press Check.";
             _verdict.ForeColor = Color.Gray;
-            _out.Text =
+            ShowProse(
                 $"Built a sheet from {Path.GetFileName(open.FileName)}: " +
                 $"{tracks.Count} track(s)." + Environment.NewLine +
                 Environment.NewLine +
-                $"It refers to '{binName}', which does not exist yet — convert the image with" + Environment.NewLine +
-                "Interop or the CLI to produce it, or edit the FILE name to match a BIN you" + Environment.NewLine +
+                $"It refers to '{binName}', which does not exist yet — convert the image with " +
+                "Interop or the CLI to produce it, or edit the FILE name to match a BIN you " +
                 "already have." + Environment.NewLine +
                 Environment.NewLine +
-                "Press Save to write the sheet, then Check to test it against the file.";
+                "Press Save to write the sheet, then Check to test it against the file.");
         }
         catch (Exception ex)
         {
-            _out.Text = "Could not read the image: " + ex.Message;
+            ShowProse("Could not read the image: " + ex.Message);
             AppLog.WriteException("cue from image", ex);
         }
     }
