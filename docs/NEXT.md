@@ -1,10 +1,12 @@
 # DiscForge — what's left (session handoff)
 
-State: v1.66.0 released, plus the post-1.66 batch below awaiting commit.
-2,467 tests green. A fresh Claude session can work from this file alone; the
-code comments carry the details.
+State: v1.66.0 released; commit 2c92b4f banked the first post-1.66 batch
+(everything under "Landed" below through the Dump Certificate); the second
+batch (Pressing DNA, Drive Dossier, Disc Actuary) awaits commit. 2,496 tests
+green. A fresh Claude session can work from this file alone; the code comments
+carry the details.
 
-## Landed since v1.66.0 (built + tested, needs commit/push/release)
+## Landed since v1.66.0
 
 - **Track-aware `--disc`** — DONE. `ExtractSectorsDrive` walks the TOC: one span
   per track, per-track audio hint + `RequireDataSync`, the 150-sector audio pregap
@@ -31,7 +33,25 @@ code comments carry the details.
   Sidecar counts auto-included. AND extract-sectors grew `--cert [--cert-key f]`:
   a dump can now be born certified — drive, firmware, settings, per-span grades,
   audit verdict and Merkle root captured at the moment of extraction (gap 3
-  closed). State: 2,477 tests green.
+  closed).
+- **Pressing DNA** — DONE. `dforge pressing-dna <a.cue> [b.cue]`
+  (Core/Forensics/PressingDna): disc-genome's complement — the offset-SENSITIVE
+  fingerprint (exact geometry, pregaps, audio edges, MCN/ISRC) that tells
+  PRESSINGS of one title apart; names the constant-shift write-offset signature
+  when it sees one. Verdicts: same pressing / same title different pressing /
+  different discs.
+- **Drive Dossier** — DONE (gap 4). `dforge drive-dossier <drive:|vendor model>`
+  (Core/Devices/DriveDossier): local per-drive memory seeded by the knowledge
+  base — observations accumulate across sessions into distilled facts and
+  warnings (mute signatures, first-sector C2 wolf-cries, confirmed offset,
+  overread reach). extract-sectors auto-records the sync-gate mute signature.
+- **Disc Actuary** — DONE (feature E). `dforge disc-actuary <id> --record …` /
+  `--collection` (Core/Forensics/DiscActuary): every quality scan appends to a
+  per-disc time series; rot-kinetics' decay model fits each disc; the shelf
+  ranks by remaining readable life — "re-dump these first, they're dying
+  fastest". Accepts scan-import formats or manual --tier1. (Also fixed a latent
+  RotKinetics DateTimeOffset overflow on near-zero slopes — projections beyond
+  500 years now honestly report "no crossing".)
 
 ## The immediate arc
 
@@ -66,6 +86,15 @@ code comments carry the details.
 - Uninstall the old "DiscForge 1.65" from Program Files (shadows `dforge` on PATH).
 - COPTR + awesome-list submissions: paste-ready text in `docs/registry-submissions.md`.
 - Cross-check AaruFormat interop against a real Aaru-generated `.aaruf`.
+
+## Deliberately parked for a hardware/desktop session
+
+- **Resumable dumps (gap 5)**: progress journal beside the `.part`; needs live
+  drive testing to trust the seek/append semantics — don't build it blind.
+- **`dforge prove` (feature H)**: the one-verb round trip orchestrates drive
+  commands end-to-end; wire it when the redemption burn works.
+- **WASM Core (feature C)**: needs NuGet/Blazor tooling the sandbox can't reach;
+  build on Andy's machine or CI.
 
 ## Longer-term backlog (docs/ROADMAP.md)
 

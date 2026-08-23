@@ -56,6 +56,12 @@ public static class RotKinetics
     /// <summary>Red Book's peak block-error-rate ceiling — the default "unrecoverable soon" threshold.</summary>
     public const double DefaultThreshold = 220;
 
+    /// <summary>Projections beyond this horizon are reported as "no crossing": a
+    /// near-zero fitted slope extrapolates to absurd dates (and once overflowed
+    /// DateTimeOffset), and a multi-century forecast from a few scans is noise
+    /// dressed as precision, not a finding.</summary>
+    public const double MaxProjectionYears = 500;
+
     /// <summary>Boltzmann constant in eV/K.</summary>
     private const double KB = 8.617333e-5;
     /// <summary>A representative activation energy for optical-media decay (eV); literature places dye/reflective
@@ -135,7 +141,7 @@ public static class RotKinetics
             }
 
             double yearsFromLast = RemainingFromLast(k);
-            if (yearsFromLast > 0)
+            if (yearsFromLast > 0 && yearsFromLast <= MaxProjectionYears)
             {
                 yearsToThreshold = yearsFromLast;
                 date = pts[^1].Time.AddDays(yearsFromLast * DaysPerYear);
@@ -143,7 +149,7 @@ public static class RotKinetics
                 {
                     double early = RemainingFromLast(k + slopeSe);   // steeper → sooner
                     double late = RemainingFromLast(Math.Max(k - slopeSe, 1e-6));  // shallower → later
-                    if (early > 0 && late > 0)
+                    if (early > 0 && late > 0 && late <= MaxProjectionYears)
                         band = (pts[^1].Time.AddDays(early * DaysPerYear), pts[^1].Time.AddDays(late * DaysPerYear));
                 }
             }

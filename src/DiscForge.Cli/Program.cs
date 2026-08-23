@@ -162,6 +162,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  disc-delta <base.iso> <target.iso> <out.delta>  File-level delta carrying only what changed");
     Console.WriteLine("  disc-patch <base.iso> <in.delta> <out.iso>      Rebuild the target byte-exact from base + delta");
     Console.WriteLine("  disc-genome <a.cue> [b.cue]  Offset-invariant disc fingerprint; compare two rips for same-disc");
+    Console.WriteLine("  pressing-dna <a.cue> [b.cue]  Which PRESSING: geometry, pregaps, audio edges, MCN/ISRC — ring codes, answered offline");
     Console.WriteLine("  health-map <in.bin> <out.svg>  Render a per-sector EDC/ECC health heatmap (SVG)");
     Console.WriteLine("  disc-mri <in.bin|.cue> [out.svg|.png]  Polar damage map on the PHYSICAL disc — scratches, rings, rot, voids");
     Console.WriteLine("  error-pattern <in.bin>  Classify failing sectors: scratch/rot (recover) vs protection (preserve)");
@@ -359,6 +360,8 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  writeinfo <drive>       Read-only: disc status + the drive's next-writable-address (for raw-DAO write setup)");
     Console.WriteLine("  drive-profile <drive>   Consolidated per-drive profile: read/write reach, write modes, read fidelity [--out profile.json]");
     Console.WriteLine("  drive-db [text]         Bundled drive knowledge base: community-reference offsets, overread reach, C2 reputation (sourced)");
+    Console.WriteLine("  drive-dossier <drive:|vendor model>  Local per-drive memory: observed quirks accumulate into warnings (auto-fed by extract-sectors)");
+    Console.WriteLine("  disc-actuary <id> [--record ...] | --collection  Longitudinal scan history per disc; rank the shelf by remaining readable life");
     Console.WriteLine("                          (Windows SPTI). Pair with `burn` to clone a personal, unencrypted disc. Refuses");
     Console.WriteLine("                          copy-protected discs (CSS/CPRM/AACS); for audio/mixed CDs rip in the GUI");
     Console.WriteLine("  raw-dump <drive> [--stream-read]  Drive/media diagnostic for the Hitachi-LG GDR-816x DVD-ROM family:");
@@ -533,6 +536,7 @@ return args[0].ToLowerInvariant() switch
     "disc-delta" => DiscDeltaCmd(args),
     "disc-patch" => DiscPatchCmd(args),
     "disc-genome" => DiscGenomeCmd(args),
+    "pressing-dna" => PressingDnaCmd(args),
     "health-map" => HealthMapCmd(args),
     "disc-mri" => DiscMriCmd(args),
     "error-pattern" => ErrorPatternCmd(args),
@@ -719,6 +723,8 @@ return args[0].ToLowerInvariant() switch
     "writeinfo" => WriteInfoCmd(args),
     "drive-profile" => DriveProfileCmd(args),
     "drive-db" => DriveDbCmd(args),
+    "drive-dossier" => DriveDossierCmd(args),
+    "disc-actuary" => DiscActuaryCmd(args),
     "plextor-d8" => PlextorD8Cmd(args),
     "disc-scan" => DiscScanCmd(args),
     "read-benchmark" => ReadBenchmarkCmd(args),
@@ -2881,6 +2887,8 @@ static int ExtractSectorsDrive(string[] args)
                                       "around the bad sector (the hole will be recorded in a sidecar).");
                 }
                 aborted = true;
+                if (abortWhy?.Contains("no sector sync") == true)
+                    RecordMuteObservation(letter, abortLba.Value, json);
             }
 
             if (!aborted)
@@ -2942,6 +2950,8 @@ static int ExtractSectorsDrive(string[] args)
                 }
                 aborted = true;
                 reports.Add(SpanReport(span.Label, span.Out, result, OptionsFor(span)));
+                if (result.AbortReason?.Contains("no sector sync") == true)
+                    RecordMuteObservation(letter, result.AbortedAtLba!.Value, json);
                 break;
             }
 
@@ -3121,6 +3131,28 @@ static int ExtractSectorsDrive(string[] args)
         return aborted ? 1 : anyBad ? 2 : 0;
     }
     catch (Exception ex) { return Fail(ex.Message); }
+
+    // The dossier hook: a sync-gate firing is exactly the hard-won lesson the per-drive
+    // dossier exists to remember. Best-effort — the dossier is a bonus, never a failure.
+    static void RecordMuteObservation(char letter, long lba, bool json)
+    {
+        try
+        {
+            var caps = DiscForge.Devices.DriveDetector.Detect(letter);
+            string dir = DiscForge.Core.Devices.DriveDossierStore.DefaultDirectory;
+            var d = DiscForge.Core.Devices.DriveDossierStore.LoadOrNew(dir, caps.Vendor, caps.Model, caps.FirmwareRevision);
+            d = d.Observe(new DiscForge.Core.Devices.DriveObservation(
+                DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"),
+                DiscForge.Core.Devices.DriveDossier.CategoryMute,
+                $"sync gate fired at LBA {lba:N0}: SUCCESS status with unstructured data on a data track",
+                lba, "extract-sectors"));
+            DiscForge.Core.Devices.DriveDossierStore.Save(dir, d);
+            if (!json)
+                Console.WriteLine($"  dossier:    mute signature recorded for {caps.Vendor} {caps.Model} " +
+                                  $"({d.MuteSignatureCount} on record — see `dforge drive-dossier {letter}:`)");
+        }
+        catch { /* never let bookkeeping worsen a failed dump */ }
+    }
 
     static void PrintAudit(string file, DiscForge.Core.Dumping.ExtractionAudit.Result audit, bool json)
     {
@@ -5759,6 +5791,76 @@ static int DiscGenomeCmd(string[] args)
         return m.SameDisc ? 0 : 2;
     }
     catch (Exception ex) { return Fail(ex.Message); }
+}
+
+// Pressing DNA: disc-genome's complement. The genome ignores what varies between
+// pressings to answer "same content?"; this keeps exactly those details — geometry,
+// pregaps, audio edges (write-offset artifacts), MCN/ISRC — to answer "same PRESSING?".
+static int PressingDnaCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge pressing-dna <a.cue> [b.cue] [--json]\n" +
+                    "  Fingerprints a PRESSING: exact track geometry and pregap lengths, where the audio\n" +
+                    "  actually sits inside each track (write-offset artifacts), and the cue's MCN/ISRC\n" +
+                    "  identity. With two cues: SAME PRESSING / same title but different pressing (each\n" +
+                    "  differing trait named — including the constant-shift write-offset signature) /\n" +
+                    "  different discs. The offline cousin of reading the ring code.");
+    try
+    {
+        var (fa, na) = LoadPressingFingerprint(args[1]);
+        if (args.Length < 3 || args[2].StartsWith("--"))
+        {
+            if (args.Contains("--json"))
+            {
+                EmitJson(new { file = na, contentId = fa.ContentId, pressingId = fa.PressingId,
+                               traits = fa.Traits.Select(t => new { t.Name, t.Value }) });
+                return 0;
+            }
+            Console.WriteLine($"{na}");
+            Console.WriteLine($"  content id  : {fa.ContentId}   (which title — offset-invariant)");
+            Console.WriteLine($"  pressing id : {fa.PressingId}   (which pressing — every measured trait)");
+            foreach (var t in fa.Traits) Console.WriteLine($"    {t.Name,-22} {t.Value}");
+            return 0;
+        }
+
+        var (fb, nb) = LoadPressingFingerprint(args[2]);
+        var m = DiscForge.Core.Forensics.PressingDna.Compare(fa, fb);
+        if (args.Contains("--json"))
+        {
+            EmitJson(new { a = na, b = nb, aPressingId = fa.PressingId, bPressingId = fb.PressingId,
+                           m.SameContent, m.SamePressing, verdict = m.Verdict, differences = m.Differences });
+            return m.SamePressing ? 0 : m.SameContent ? 1 : 2;
+        }
+        Console.WriteLine($"A {na}  pressing {fa.PressingId}  content {fa.ContentId}");
+        Console.WriteLine($"B {nb}  pressing {fb.PressingId}  content {fb.ContentId}");
+        Console.WriteLine($"  => {m.Verdict}");
+        foreach (var d in m.Differences) Console.WriteLine($"     {d}");
+        return m.SamePressing ? 0 : m.SameContent ? 1 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+
+    static (DiscForge.Core.Forensics.PressingFingerprint, string) LoadPressingFingerprint(string cuePath)
+    {
+        var tracks = LoadGenomeTracks(cuePath);
+        var cue = DiscForge.Core.Cue.CueSheet.Parse(File.ReadAllText(cuePath));
+        var pregaps = new Dictionary<int, int>();
+        var isrcs = new Dictionary<int, string>();
+        foreach (var t in cue.Tracks)
+        {
+            if (t.Pregap is { } pg) pregaps[t.Number] = (int)pg.ToSectors();
+            else
+            {
+                var i0 = t.Indices.FirstOrDefault(i => i.Number == 0);
+                var i1 = t.Indices.FirstOrDefault(i => i.Number == 1);
+                if (i0 is not null && i1 is not null)
+                    pregaps[t.Number] = (int)(i1.Time.ToSectors() - i0.Time.ToSectors());
+            }
+            if (!string.IsNullOrEmpty(t.Isrc)) isrcs[t.Number] = t.Isrc;
+        }
+        var fp = DiscForge.Core.Forensics.PressingDna.Compute(tracks, pregaps, cue.Catalog,
+                                                              isrcs.Count > 0 ? isrcs : null);
+        return (fp, Path.GetFileName(cuePath));
+    }
 }
 
 // Date a disc from its ISO 9660 timestamps and flag contradictions (re-mastering / tampering).
@@ -11998,6 +12100,187 @@ static int DriveDbCmd(string[] args)
         Console.WriteLine(r.Render());
     }
     return 0;
+}
+
+// The per-drive dossier: drive-db is the community's seed; this is what THIS drive
+// did on THIS bench, accumulated across operations. Some observations are recorded
+// automatically (the sync-gate mute signature, from extract-sectors); the rest are
+// added by hand as lessons are learned.
+static int DriveDossierCmd(string[] args)
+{
+    const string usage =
+        "usage: dforge drive-dossier <drive:> | <vendor> <model>\n" +
+        "       [--observe <category> <detail> [--value N]] [--dir <folder>] [--json]\n" +
+        "  Shows (and appends to) the local dossier for a drive: observed behaviour that\n" +
+        "  accumulates across sessions — mute signatures, C2 wolf-cries, the offset a real\n" +
+        "  confirmation pinned, overread reach. Distilled facts become warnings shown here\n" +
+        "  and seeded warnings for future tooling. Categories with meaning: mute,\n" +
+        "  c2-first-sector, offset (--value samples), leadout-overread / leadin-reach\n" +
+        "  (--value LBA); anything else is a free note. Default store: per-user AppData.";
+    if (args.Length < 2) return Fail(usage);
+
+    try
+    {
+        string dir = OptVal(args, "--dir") ?? DiscForge.Core.Devices.DriveDossierStore.DefaultDirectory;
+        string vendor, model; string? fw = null;
+        var positional = args.Skip(1).TakeWhile(a => !a.StartsWith("--")).ToList();
+        if (positional.Count == 1 && positional[0].TrimEnd(':').Length == 1)
+        {
+#if WINDOWS
+            var caps = DiscForge.Devices.DriveDetector.Detect(char.ToUpperInvariant(positional[0][0]));
+            (vendor, model, fw) = (caps.Vendor, caps.Model, caps.FirmwareRevision);
+#else
+            return Fail("A drive letter needs Windows; on this platform give <vendor> <model> instead.");
+#endif
+        }
+        else if (positional.Count >= 2) (vendor, model) = (positional[0], string.Join(' ', positional.Skip(1)));
+        else return Fail(usage);
+
+        var dossier = DiscForge.Core.Devices.DriveDossierStore.LoadOrNew(dir, vendor, model, fw);
+
+        // --observe <category> <detail> [--value N]
+        int oi = Array.IndexOf(args, "--observe");
+        if (oi >= 0)
+        {
+            if (oi + 2 >= args.Length) return Fail("--observe needs <category> <detail>.");
+            long? value = OptVal(args, "--value") is { } v ? long.Parse(v) : null;
+            dossier = dossier.Observe(new DiscForge.Core.Devices.DriveObservation(
+                DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"),
+                args[oi + 1].ToLowerInvariant(), args[oi + 2], value, "manual"));
+            DiscForge.Core.Devices.DriveDossierStore.Save(dir, dossier);
+        }
+
+        var seed = DiscForge.Core.Devices.DriveKnowledgeBase.Find(vendor, model);
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                dossier.Vendor, dossier.Model, dossier.Firmware,
+                observations = dossier.Observations.Count,
+                dossier.MuteSignatureCount, dossier.C2FirstSectorFlags,
+                dossier.ConfirmedOffsetSamples, dossier.MaxLeadOutOverreadLba, dossier.MinLeadInLba,
+                warnings = dossier.Warnings(seed),
+                file = DiscForge.Core.Devices.DriveDossierStore.PathFor(dir, vendor, model),
+            });
+            return 0;
+        }
+        Console.Write(dossier.Render(seed));
+        Console.WriteLine($"  file         : {DiscForge.Core.Devices.DriveDossierStore.PathFor(dir, vendor, model)}");
+        if (seed is not null) Console.WriteLine($"  seed         : knowledge-base entry \"{seed.DisplayName}\" (drive-db for details)");
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+// The Disc Actuary: every quality scan appends to a per-disc time series; the
+// series fits rot-kinetics' decay model; a collection ranks by remaining life.
+static int DiscActuaryCmd(string[] args)
+{
+    const string usage =
+        "usage: dforge disc-actuary <disc-id> --record (<scan-file> | --tier1 N [--tier2 N] [--cu N])\n" +
+        "                           [--title s] [--drive s] [--when ISO]        append one scan\n" +
+        "       dforge disc-actuary <disc-id>                                   assess one disc\n" +
+        "       dforge disc-actuary --collection                                rank the whole shelf\n" +
+        "  common: [--dir folder] [--temp C --rh PCT] [--threshold N] [--json]\n" +
+        "  A scan says how a disc is TODAY; the actuary keeps every scan and says how long it\n" +
+        "  has LEFT — first-order decay fit per disc (see rot-kinetics), ranked across the\n" +
+        "  collection: \"re-dump these first, they're dying fastest\". <scan-file> accepts the\n" +
+        "  quality-scan formats scan-import reads (Nero DiscSpeed, opti-drive, csv...); --tier1\n" +
+        "  is the manual route (CD C1 / DVD PIE max). Disc-id: use the disc-genome ShortId, or\n" +
+        "  any label you'll keep using. Default store: per-user AppData.";
+    if (args.Length < 2) return Fail(usage);
+
+    try
+    {
+        string dir = OptVal(args, "--dir")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DiscForge", "actuary");
+        DiscForge.Core.Forensics.StorageEnvironment? env = null;
+        if (OptVal(args, "--temp") is { } tc && OptVal(args, "--rh") is { } rh)
+            env = new DiscForge.Core.Forensics.StorageEnvironment(double.Parse(tc), double.Parse(rh));
+        double threshold = OptVal(args, "--threshold") is { } th
+            ? double.Parse(th) : DiscForge.Core.Forensics.RotKinetics.DefaultThreshold;
+
+        if (args[1] == "--collection")
+        {
+            var all = DiscForge.Core.Forensics.DiscActuary.LoadAll(dir);
+            if (all.Count == 0) return Fail($"No histories under '{dir}' yet — record scans first.");
+            var ranked = DiscForge.Core.Forensics.DiscActuary.Rank(all, env, threshold);
+            if (args.Contains("--json"))
+            {
+                EmitJson(ranked.Select(v => new
+                {
+                    v.DiscId, v.Title, v.ScanCount, v.LatestTier1, v.LatestUncorrectable,
+                    alreadyFailing = v.AlreadyFailing, yearsRemaining = v.YearsRemaining,
+                    growthPerYear = v.Kinetics?.GrowthPerYear, headline = v.Headline,
+                }));
+                return ranked.Any(v => v.AlreadyFailing) ? 2 : 0;
+            }
+            Console.Write(DiscForge.Core.Forensics.DiscActuary.RenderTriage(ranked));
+            return ranked.Any(v => v.AlreadyFailing) ? 2 : 0;
+        }
+
+        string discId = args[1];
+        var history = DiscForge.Core.Forensics.DiscActuary.LoadOrNew(dir, discId, OptVal(args, "--title"));
+
+        int ri = Array.IndexOf(args, "--record");
+        if (ri >= 0)
+        {
+            double t1, t2 = 0, cu = 0;
+            DateTimeOffset when = DateTimeOffset.UtcNow;
+            string? drive = OptVal(args, "--drive"), source = "manual";
+            if (OptVal(args, "--tier1") is { } m1)
+            {
+                t1 = double.Parse(m1);
+                if (OptVal(args, "--tier2") is { } m2) t2 = double.Parse(m2);
+                if (OptVal(args, "--cu") is { } mc) cu = double.Parse(mc);
+            }
+            else if (ri + 1 < args.Length && File.Exists(args[ri + 1]))
+            {
+                var qs = DiscForge.Core.Forensics.QualityScanImport.Parse(File.ReadAllText(args[ri + 1]));
+                var maxes = qs.Rows.Select(r => r.ToSample(qs.Family)).ToList();
+                t1 = maxes.Count > 0 ? maxes.Max(s => s.C1) : 0;
+                t2 = maxes.Count > 0 ? maxes.Max(s => s.C2) : 0;
+                cu = maxes.Count > 0 ? maxes.Max(s => s.Cu) : 0;
+                if (qs.ScannedAt is { } sa) when = sa;
+                drive ??= qs.Drive;
+                source = Path.GetFileName(args[ri + 1]);
+            }
+            else return Fail("--record needs a readable scan file or --tier1 N.");
+            if (OptVal(args, "--when") is { } w) when = DateTimeOffset.Parse(w, System.Globalization.CultureInfo.InvariantCulture);
+
+            history = history.Append(new DiscForge.Core.Forensics.ActuaryScan(
+                when.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"), t1, t2, cu, drive, source));
+            history.Save(DiscForge.Core.Forensics.DiscActuary.PathFor(dir, discId));
+            if (!args.Contains("--json"))
+                Console.WriteLine($"Recorded scan #{history.Scans.Count} for {discId}: tier1={t1:0}, tier2={t2:0}, cu={cu:0}.");
+        }
+
+        var verdict = DiscForge.Core.Forensics.DiscActuary.Assess(history, env, threshold);
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                verdict.DiscId, verdict.Title, verdict.ScanCount, verdict.LatestTier1,
+                verdict.LatestUncorrectable, alreadyFailing = verdict.AlreadyFailing,
+                yearsRemaining = verdict.YearsRemaining, growthPerYear = verdict.Kinetics?.GrowthPerYear,
+                rSquared = verdict.Kinetics?.RSquared, headline = verdict.Headline,
+                file = DiscForge.Core.Forensics.DiscActuary.PathFor(dir, discId),
+            });
+            return verdict.AlreadyFailing ? 2 : 0;
+        }
+        Console.WriteLine($"{verdict.Title ?? discId}: {verdict.Headline}");
+        if (verdict.Kinetics is { } k)
+        {
+            Console.WriteLine($"  trend    : {k.GrowthPerYear:P0}/yr over {verdict.ScanCount} scans (R²={k.RSquared:0.00})");
+            if (k.ThresholdDate is { } td) Console.WriteLine($"  crosses  : ~{td:yyyy-MM}" +
+                (k.Band is { } b ? $" (band {b.Early:yyyy-MM}..{b.Late:yyyy-MM})" : ""));
+            if (Math.Abs(k.EnvAccelFactor - 1.0) > 0.01)
+                Console.WriteLine($"  storage  : ×{k.EnvAccelFactor:0.00} vs 25°C/50%RH reference");
+        }
+        Console.WriteLine($"  file     : {DiscForge.Core.Forensics.DiscActuary.PathFor(dir, discId)}");
+        return verdict.AlreadyFailing ? 2 : 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
 }
 
 static int DriveProfileCmd(string[] args)
