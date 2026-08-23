@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>DiscForge.Devices</RootNamespace>
     <Description>Optical drive access: SPTI raw MMC pass-through and IMAPI2 burning. User-mode only, no kernel drivers.</Description>
-    <Version>1.66.0</Version>
+    <Version>1.67.0</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Copyright>Copyright (c) 2026 MaTRIX TeAm. All rights reserved.</Copyright>
     <Company>DiscForge</Company>

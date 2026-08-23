@@ -1,10 +1,9 @@
 # DiscForge — what's left (session handoff)
 
-State: v1.66.0 released; commit 2c92b4f banked the first post-1.66 batch
-(everything under "Landed" below through the Dump Certificate); the second
-batch (Pressing DNA, Drive Dossier, Disc Actuary) awaits commit. 2,496 tests
-green. A fresh Claude session can work from this file alone; the code comments
-carry the details.
+State: v1.67.0 — everything under "Landed" below is committed (2c92b4f +
+3e9f2f1 + 37078ba) and the version is unified at 1.67.0 across all four
+projects. 2,496 tests green. A fresh Claude session can work from this file
+alone; the code comments carry the details.
 
 ## Landed since v1.66.0
 
