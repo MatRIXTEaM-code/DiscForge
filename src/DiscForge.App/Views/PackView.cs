@@ -41,15 +41,18 @@ internal sealed class PackView : UserControl
         Width = 160, DropDownStyle = ComboBoxStyle.DropDownList, Font = Theme.Ui,
         Location = new Point(70, 12),
     };
+    // The checkbox column lives between the media combo (ends x≈230) and the Pack
+    // button (starts x=552). Both stack at x=300: the previous (240, 36) put the
+    // second checkbox on top of the Remove button (buttons row y=44, x≤276).
     private readonly CheckBox _groups = new()
     {
         Text = "Keep folders together on one disc", AutoSize = true,
-        Location = new Point(240, 14), Font = Theme.Ui, Checked = true,
+        Location = new Point(300, 10), Font = Theme.Ui, Checked = true,
     };
     private readonly CheckBox _overhead = new()
     {
         Text = "Allow for filesystem overhead", AutoSize = true,
-        Location = new Point(240, 36), Font = Theme.Ui, Checked = true,
+        Location = new Point(300, 32), Font = Theme.Ui, Checked = true,
     };
     private readonly Button _addFiles = new()
     {
