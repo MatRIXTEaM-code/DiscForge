@@ -45,6 +45,12 @@ public static class RawImageInspector
         /// <summary>What the data checks covered: "Mode 1 EDC+ECC",
         /// "XA Form 1/2 EDC", or an honest "none" for formless Mode 2.</summary>
         public string? CheckKind { get; init; }
+        /// <summary>Sampled sectors inside this DATA track that carry no
+        /// 12-byte sync pattern — structurally impossible in healthy data, so
+        /// each one is a void or foreign content, and none of them received
+        /// any EDC/ECC check. Silently skipping them once let a 47%-empty
+        /// image print "clean"; they are counted now.</summary>
+        public int SynclessSectors { get; init; }
     }
 
     public sealed record Report
@@ -68,6 +74,16 @@ public static class RawImageInspector
         public int CdTextPacksBad { get; init; }
         public required IReadOnlyList<TrackInfo> Tracks { get; init; }
         public IReadOnlyList<string> Notes { get; init; } = Array.Empty<string>();
+        /// <summary>Main-only (2352) images: how many sectors the scan sampled.</summary>
+        public int MainSectorsSampled { get; init; }
+        /// <summary>Main-only images: sampled sectors with no sync pattern —
+        /// audio content, or voids in a nominally-data image. Never silently
+        /// skipped again.</summary>
+        public int MainSynclessSectors { get; init; }
+        /// <summary>Main-only images: sampled sectors that are entirely zero
+        /// (a subset of the sync-less count). A large value against a data
+        /// image is the muted-drive signature.</summary>
+        public int MainZeroSectors { get; init; }
     }
 
     /// <summary>
@@ -211,7 +227,7 @@ public static class RawImageInspector
 
             bool? scrambled = null;
             int? mode = null;
-            int checkedCount = 0, edcErr = 0, eccErr = 0;
+            int checkedCount = 0, edcErr = 0, eccErr = 0, syncless = 0;
             string? checkKind = null;
             if (isData)
             {
@@ -223,6 +239,7 @@ public static class RawImageInspector
                 {
                     image.Position = s * size;
                     image.ReadExactly(main, 0, 2352);
+                    if (!HasSync(main)) { syncless++; continue; }
                     if (scrambled is null)
                     {
                         scrambled = DetectScrambled(main, out mode);
@@ -255,7 +272,11 @@ public static class RawImageInspector
                 EdcErrors = edcErr,
                 EccErrors = eccErr,
                 CheckKind = checkKind,
+                SynclessSectors = syncless,
             });
+            if (syncless > 0)
+                notes.Add($"track {n}: {syncless} sampled data sector(s) have NO sync pattern — " +
+                          "voids or foreign content the EDC/ECC checks could not even reach.");
         }
 
         if (firstTrack > 0 && trackNumbers.Count > 0 &&
@@ -295,14 +316,20 @@ public static class RawImageInspector
         var main = new byte[2352];
         bool? scrambled = null;
         int? mode = null;
-        int checkedCount = 0, edcErr = 0, eccErr = 0, audioLike = 0;
+        int checkedCount = 0, edcErr = 0, eccErr = 0, audioLike = 0, zeroed = 0, sampled = 0;
         long step = deep ? 1 : Math.Max(1, total / 512);
 
         for (long s = 0; s < total; s += step)
         {
             image.Position = s * 2352;
             image.ReadExactly(main, 0, 2352);
-            if (!HasSync(main)) { audioLike++; continue; }
+            sampled++;
+            if (!HasSync(main))
+            {
+                audioLike++;
+                if (IsAllZero(main)) zeroed++;
+                continue;
+            }
             scrambled ??= DetectScrambled(main, out mode);
             if (scrambled is null) continue;
             if (scrambled == true) CdScrambler.ScrambleInPlace(main);
@@ -317,12 +344,27 @@ public static class RawImageInspector
 
         if (audioLike > 0 && checkedCount == 0)
             notes.Add("No sync patterns found — this looks like audio (or not a raw image).");
+        else if (audioLike > 0)
+        {
+            // The half-void lesson: a data image that is partly sync-less used
+            // to sail through as "clean" because these sectors were silently
+            // skipped. They are either audio tracks of a mixed-mode disc
+            // (legitimate) or voids (the muted-drive signature) — without
+            // subcode this scan cannot tell which, so it says so out loud.
+            int pct = (int)Math.Round(100.0 * audioLike / sampled);
+            notes.Add($"{audioLike} of {sampled} sampled sectors ({pct}%) have NO sync pattern " +
+                      $"({zeroed} entirely zero). Mixed-mode audio, or voids in a data image — " +
+                      "the EDC/ECC verdict above covers ONLY the structured sectors.");
+        }
 
         return new Report
         {
             SectorSize = 2352,
             Form = null,
             TotalSectors = total,
+            MainSectorsSampled = sampled,
+            MainSynclessSectors = audioLike,
+            MainZeroSectors = zeroed,
             Tracks = new[]
             {
                 new TrackInfo
@@ -431,6 +473,12 @@ public static class RawImageInspector
     {
         if (main[0] != 0 || main[11] != 0) return false;
         for (int i = 1; i <= 10; i++) if (main[i] != 0xFF) return false;
+        return true;
+    }
+
+    private static bool IsAllZero(ReadOnlySpan<byte> s)
+    {
+        for (int i = 0; i < s.Length; i++) if (s[i] != 0) return false;
         return true;
     }
 

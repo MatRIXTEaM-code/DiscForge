@@ -122,6 +122,67 @@ public class RawInspectorTests
         Assert.Equal(30, r.Tracks[0].DataSectorsChecked);
         Assert.Equal(0, r.Tracks[0].EdcErrors + r.Tracks[0].EccErrors);
     }
+
+    /// <summary>
+    /// The honesty fix. A bare 2352 image that is half real Mode 1 data and
+    /// half zeros — the exact shape of the half-void dump — used to inspect
+    /// as "clean" because sync-less sectors were silently skipped. They must
+    /// be counted, reported, and carried in the Report.
+    /// </summary>
+    [Fact]
+    public void Inspect_HalfVoidMainChannelBin_CountsSynclessSectors()
+    {
+        var img = new MemoryStream();
+        var sector = new byte[2352];
+        var user = new byte[2048];
+        var rnd = new Random(7);
+        for (int s = 0; s < 15; s++)
+        {
+            rnd.NextBytes(user);
+            RawSectorBuilder.BuildMode1(user, Msf.FromSectors(150 + s), sector);
+            img.Write(sector, 0, 2352);
+        }
+        img.Write(new byte[15 * 2352]);              // the drive's lie: muted zeros
+        img.Position = 0;
+
+        var r = RawImageInspector.Inspect(img, deep: true);
+
+        Assert.Equal(30, r.MainSectorsSampled);
+        Assert.Equal(15, r.MainSynclessSectors);
+        Assert.Equal(15, r.MainZeroSectors);
+        Assert.Equal(15, r.Tracks[0].DataSectorsChecked);   // structured half still verified
+        Assert.Contains(r.Notes, n => n.Contains("NO sync pattern"));
+    }
+
+    /// <summary>
+    /// With subcode present the inspector KNOWS a track is data, so a
+    /// sync-less sector inside it is damage the EDC/ECC checks could not even
+    /// reach — counted per-track and noted, never skipped.
+    /// </summary>
+    [Fact]
+    public void Inspect_DataTrackWithMutedSectors_CountsThemAsSyncless()
+    {
+        var userData = new byte[40 * 2048];
+        new Random(3).NextBytes(userData);
+        using var bin = new MemoryStream(userData);
+        const string cue = "FILE \"d.bin\" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n";
+        using var layout = DiscLayout.FromCue(CueSheet.Parse(cue), _ => bin);
+        var img = new MemoryStream();
+        RawImageGenerator.Generate(layout, RawSubcodeForm.Packed96, img);
+
+        // Mute three data sectors' main channel; their subcode stays intact.
+        var buf = img.GetBuffer();
+        foreach (int s in new[] { 10, 11, 12 })
+            Array.Clear(buf, (int)((RawImageGenerator.LeadInSectors + 150 + s) * 2448L), 2352);
+
+        img.Position = 0;
+        var r = RawImageInspector.Inspect(img, deep: true);
+
+        Assert.Equal(3, r.Tracks[0].SynclessSectors);
+        Assert.Equal(37, r.Tracks[0].DataSectorsChecked);
+        Assert.Equal(0, r.Tracks[0].EdcErrors + r.Tracks[0].EccErrors);
+        Assert.Contains(r.Notes, n => n.Contains("track 1") && n.Contains("NO sync pattern"));
+    }
 }
 
 /// <summary>CD+G: program-area R–W passthrough from .sub sidecars.</summary>

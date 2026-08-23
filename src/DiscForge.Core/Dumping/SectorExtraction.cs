@@ -81,6 +81,16 @@ public sealed record ExtractionOptions
     public bool JitterConsensus { get; init; }
 
     /// <summary>
+    /// Classify this span's failures as TRACK-BOUNDARY holes rather than damage:
+    /// they land in <see cref="BadSectorMap.BoundaryLba"/>, not UnreadableLba,
+    /// and boundary-only holes do not cost the dump its COMPLETE grade. Set for
+    /// spans that are audio pregaps or data→audio transition zones — the sectors
+    /// drives refuse by GEOMETRY (the famously unreadable gap at every track
+    /// change), which an honest map must record without slandering the disc.
+    /// </summary>
+    public bool ClassifyFailuresAsBoundary { get; init; }
+
+    /// <summary>
     /// Demand the 12-byte sector sync on every raw read (set this when the span
     /// being extracted is a DATA track). Raw extraction is otherwise the one
     /// datatype with no structural proof — and a drive that has been fought to a
@@ -140,11 +150,14 @@ public sealed record ExtractionResult
     /// <summary>Every bad sector, absolute LBA, whatever the recovery policy did with it.</summary>
     public required BadSectorMap BadSectors { get; init; }
 
-    public bool Complete => AbortedAtLba is null && BadSectors.Clean;
+    /// <summary>Complete = nothing aborted and no GENUINE damage. Track-boundary
+    /// holes (<see cref="BadSectorMap.BoundaryLba"/>) are drive geometry, not
+    /// damage, and do not cost the grade — they are still on the record.</summary>
+    public bool Complete => AbortedAtLba is null && !BadSectors.DamagePresent;
 
-    /// <summary>COMPLETE, INCOMPLETE (holes recorded) or ABORTED.</summary>
+    /// <summary>COMPLETE, INCOMPLETE (genuine damage recorded) or ABORTED.</summary>
     public string Grade => AbortedAtLba is not null ? "ABORTED"
-                         : BadSectors.Clean ? "COMPLETE" : "INCOMPLETE";
+                         : !BadSectors.DamagePresent ? "COMPLETE" : "INCOMPLETE";
 }
 
 /// <summary>
@@ -190,6 +203,7 @@ public static class SectorExtraction
         long written = 0, bytes = 0;
         int recovered = 0, ignored = 0, replaced = 0, qChecked = 0, qBad = 0, qRecovered = 0;
         var bad = new List<long>();
+        var boundary = new List<long>();
         long? abortedAt = null;
         string? abortReason = null;
 
@@ -219,7 +233,7 @@ public static class SectorExtraction
             }
             else
             {
-                bad.Add(lba);
+                (options.ClassifyFailuresAsBoundary ? boundary : bad).Add(lba);
                 switch (options.ErrorRecovery)
                 {
                     case ExtractErrorRecovery.Abort:
@@ -295,7 +309,8 @@ public static class SectorExtraction
             {
                 Image = "",
                 TotalSectors = (int)Math.Min(reader.TotalSectors, int.MaxValue),
-                UnreadableLba = bad,
+                UnreadableLba = bad.Concat(boundary).ToList(),
+                BoundaryLba = boundary,
                 Note = $"extract-sectors {startLba}..{endLba}, recovery={options.ErrorRecovery}, " +
                        $"retries={options.ReadRetries}, c2={(options.UseC2 ? "on" : "off")}",
             },

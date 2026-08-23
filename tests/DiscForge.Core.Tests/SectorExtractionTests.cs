@@ -541,6 +541,43 @@ public class SectorExtractionTests
         Assert.Equal("COMPLETE", r.Grade);
     }
 
+    /// <summary>
+    /// The mixed-mode lesson: sectors a drive refuses at a track transition are
+    /// GEOMETRY, not damage. A span flagged as boundary records its failures in
+    /// BoundaryLba, keeps them out of the damage count, and the dump keeps its
+    /// COMPLETE grade — on the record without slandering the disc.
+    /// </summary>
+    [Fact]
+    public void BoundarySpan_FailuresAreBoundary_NotDamage_AndGradeSurvives()
+    {
+        var d = DeadSectorDrive(12);
+        var r = Run(d, 10, 14, new ExtractionOptions
+        {
+            ErrorRecovery = ExtractErrorRecovery.Replace,
+            ReadRetries = 0,
+            ClassifyFailuresAsBoundary = true,
+        }, out _);
+
+        Assert.Equal("COMPLETE", r.Grade);              // boundary holes don't cost the grade…
+        Assert.False(r.BadSectors.DamagePresent);
+        Assert.Contains(12L, r.BadSectors.BoundaryLba); // …but they are ON THE RECORD
+        Assert.Contains(12L, r.BadSectors.UnreadableLba);
+        Assert.Equal(1, r.Replaced);
+    }
+
+    [Fact]
+    public void OrdinarySpan_FailuresRemainDamage()
+    {
+        var d = DeadSectorDrive(12);
+        var r = Run(d, 10, 14, new ExtractionOptions
+        {
+            ErrorRecovery = ExtractErrorRecovery.Replace, ReadRetries = 0,
+        }, out _);
+        Assert.Equal("INCOMPLETE", r.Grade);
+        Assert.True(r.BadSectors.DamagePresent);
+        Assert.Empty(r.BadSectors.BoundaryLba);
+    }
+
     [Fact]
     public void QCrcCheck_MatchesTheSubQBuilder()
     {

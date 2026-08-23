@@ -1,6 +1,9 @@
-// DiscForge — proprietary. Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
-// Not open source. No permission is granted to copy, fork or redistribute.
-// See LICENSE at the root of this repository.
+// DiscForge — Copyright (C) 2026 MaTRIX TeAm.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// This program is free software: you can redistribute it and/or modify it under the terms of the
+// GNU General Public License as published by the Free Software Foundation, either version 3 of
+// the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY;
+// see the GNU General Public License (LICENSE at the repository root) for details.
 
 using DiscForge.Core.Audio;
 using DiscForge.Core.BluRay;
@@ -145,6 +148,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  dump-merge <out> <in1> <in2> [in3 ...]  Merge several imperfect rips of the SAME");
     Console.WriteLine("                          disc into one image (EDC-verified where possible)");
     Console.WriteLine("  merge-cert <out> <in1> <in2> [...] [--key f | --gen-key] | verify <cert> [out in...]  Bad-sector-aware merge + a signed, checkable per-sector provenance certificate");
+    Console.WriteLine("  dump-cert <image> [--gen-key] | verify | prove | check   Signed dump certificate with a Merkle root — prove any 2 KB slice against the dump event");
     Console.WriteLine("  c2-merge <out.bin> <in1.bin> [in1.c2] <in2.bin> [in2.c2] ...  Byte-level C2 recovery: reassemble a sector from the good bytes of several C2-flagged reads");
     Console.WriteLine("  dvd-ecc self-test | repair <block.bin> <out.bin>  DVD RS-PC error correction on a 208×182 ECC block (PI/PO product code); software-first, round-trip validated");
     Console.WriteLine("  flux-demod self-test | encode <in> <out.dff> [--cell N --jitter J] | decode <in.dff> <out>  Demodulate an optical flux capture to the EFM bitstream (software-first; clock recovery + NRZI)");
@@ -159,6 +163,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  disc-patch <base.iso> <in.delta> <out.iso>      Rebuild the target byte-exact from base + delta");
     Console.WriteLine("  disc-genome <a.cue> [b.cue]  Offset-invariant disc fingerprint; compare two rips for same-disc");
     Console.WriteLine("  health-map <in.bin> <out.svg>  Render a per-sector EDC/ECC health heatmap (SVG)");
+    Console.WriteLine("  disc-mri <in.bin|.cue> [out.svg|.png]  Polar damage map on the PHYSICAL disc — scratches, rings, rot, voids");
     Console.WriteLine("  error-pattern <in.bin>  Classify failing sectors: scratch/rot (recover) vs protection (preserve)");
     Console.WriteLine("  disc-fs <image.iso>     Identify every filesystem a disc carries (ISO/Joliet/UDF/HFS/CD-XA)");
     Console.WriteLine("  hfs-ls <image>          Walk a classic Mac HFS volume: files, folders, fork sizes");
@@ -529,6 +534,7 @@ return args[0].ToLowerInvariant() switch
     "disc-patch" => DiscPatchCmd(args),
     "disc-genome" => DiscGenomeCmd(args),
     "health-map" => HealthMapCmd(args),
+    "disc-mri" => DiscMriCmd(args),
     "error-pattern" => ErrorPatternCmd(args),
     "disc-cluster" => DiscClusterCmd(args),
     "hidden-sessions" => HiddenSessionsCmd(args),
@@ -583,6 +589,7 @@ return args[0].ToLowerInvariant() switch
     "bad-sectors" => BadSectorsCmd(args),
     "redump-diff" => RedumpDiffCmd(args),
     "dump-audit" => DumpAuditCmd(args),
+    "dump-cert" => DumpCertCmd(args),
     "read-stability" => ReadStabilityCmd(args),
     "redump-prep" => RedumpPrepCmd(args),
     "cu2" => Cu2Cmd(args),
@@ -2660,6 +2667,9 @@ static int ExtractSectorsDrive(string[] args)
         "  [--sub]                                   capture formatted Q to <out>.subq (16 bytes/sector) and analyse CRCs\n" +
         "  [--q-retries N]                           Q-only re-reads when a frame fails CRC (default 4)\n" +
         "  [--jitter]                                audio consensus: accept only two matching reads\n" +
+        "  [--no-audit]                              skip the automatic post-dump audit of the output file\n" +
+        "  [--cert] [--cert-key <keyfile>]           emit a Dump Certificate sidecar (drive, settings, span grades,\n" +
+        "                                            Merkle root over the sectors); --cert-key signs it (ECDSA)\n" +
         "  [--json]\n" +
         "  <addr> is an LBA, +sector, or MSF mm:ss:ff. Ranges are inclusive.";
     if (args.Length < 3) return Fail(usage);
@@ -2677,6 +2687,7 @@ static int ExtractSectorsDrive(string[] args)
     bool useC2 = !args.Contains("--no-c2");
     bool sub = args.Contains("--sub");
     bool jitter = args.Contains("--jitter");
+    bool noAudit = args.Contains("--no-audit");
     for (int i = 3; i < args.Length; i++)
     {
         if (args[i] == "--start" && i + 1 < args.Length) startArg = args[++i];
@@ -2720,11 +2731,36 @@ static int ExtractSectorsDrive(string[] args)
             letter, audioHint: dataType == ExtractDataType.Audio2352);
         var toc = reader.Toc;
 
-        // Resolve the extract mode into (label, start, end, audioHint, outPath) spans.
-        var spans = new List<(string Label, long Start, long End, bool Audio, string Out)>();
+        // Resolve the extract mode into (label, start, end, audioHint, boundary, outPath) spans.
+        // Boundary spans (audio pregaps at data→audio transitions) classify failures as
+        // track-boundary geometry, never as damage — the mixed-mode lesson, encoded.
+        var spans = new List<(string Label, long Start, long End, bool Audio, bool Boundary, string Out)>();
+        var pregapStarts = new Dictionary<int, long>();      // trackNo → its captured pregap start (for the cue)
         if (wholeDisc)
         {
-            spans.Add(("disc", 0, reader.TotalSectors - 1, toc.Tracks.Count > 0 && toc.Tracks[0].IsAudio, outPath));
+            // Track-aware: one span per TOC track, all into ONE file. A data track whose
+            // successor is audio is split at the standard 150-sector pregap: the data part
+            // keeps the sync gate; the pregap part reads as audio and is boundary-classified.
+            var ordered = toc.Tracks.OrderBy(t => t.Number).ToList();
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                var t = ordered[i];
+                long tStart = t.StartLba, tEnd = t.StartLba + t.LengthSectors - 1;
+                var next = i + 1 < ordered.Count ? ordered[i + 1] : null;
+                if (!t.IsAudio && next is { IsAudio: true } && next.StartLba - 150 > tStart)
+                {
+                    long pregap = next.StartLba - 150;
+                    spans.Add(($"track {t.Number} (data)", tStart, pregap - 1, false, false, outPath));
+                    spans.Add(($"track {next.Number} pregap", pregap, tEnd, true, true, outPath));
+                    pregapStarts[next.Number] = pregap;
+                }
+                else
+                {
+                    spans.Add(($"track {t.Number} ({(t.IsAudio ? "audio" : "data")})", tStart, tEnd, t.IsAudio, false, outPath));
+                }
+            }
+            if (spans.Count == 0)
+                spans.Add(("disc", 0, reader.TotalSectors - 1, false, false, outPath));
         }
         else if (trackArg is not null)
         {
@@ -2735,7 +2771,7 @@ static int ExtractSectorsDrive(string[] args)
                 var t = toc.Tracks.FirstOrDefault(x => x.Number == n);
                 if (t is null) return Fail($"Track {n} is not on this disc (tracks {toc.FirstTrack}..{toc.LastTrack}).");
                 string path = wanted.Count == 1 ? outPath : InsertSuffix(outPath, $".t{n:D2}");
-                spans.Add(($"track {n}", t.StartLba, t.StartLba + t.LengthSectors - 1, t.IsAudio, path));
+                spans.Add(($"track {n}", t.StartLba, t.StartLba + t.LengthSectors - 1, t.IsAudio, false, path));
             }
         }
         else
@@ -2746,7 +2782,7 @@ static int ExtractSectorsDrive(string[] args)
             if (endArg is not null) end = ResolveAddr(endArg);
             else if (count > 0) end = start + count - 1;
             else return Fail("A sector range needs --count N or --end <addr>.");
-            spans.Add(($"sectors {start}..{end}", start, end, dataType == ExtractDataType.Audio2352, outPath));
+            spans.Add(($"sectors {start}..{end}", start, end, dataType == ExtractDataType.Audio2352, false, outPath));
         }
 
         var baseOptions = new ExtractionOptions
@@ -2760,19 +2796,124 @@ static int ExtractSectorsDrive(string[] args)
             QRetries = qRetries,
         };
 
-        var reports = new List<object>();
-        bool anyBad = false, aborted = false;
-        foreach (var span in spans)
-        {
-            reader.SetAudioHint(span.Audio || dataType == ExtractDataType.Audio2352);
-            // Data spans demand sector sync on every raw read — the gate that stops a
-            // damage-stunned drive's zero-filled "successes" from ever entering a dump again.
-            var options = baseOptions with
+        // Per-span options: data spans get the sync gate; boundary spans (audio pregaps
+        // at data→audio transitions) never abort — geometry is replaced and recorded as
+        // BoundaryLba, not damage.
+        ExtractionOptions OptionsFor((string Label, long Start, long End, bool Audio, bool Boundary, string Out) span)
+            => baseOptions with
             {
                 RequireDataSync = !span.Audio
                                   && dataType is ExtractDataType.Raw2352
                                   && baseOptions.DataType != ExtractDataType.Audio2352,
+                ClassifyFailuresAsBoundary = span.Boundary,
+                ErrorRecovery = span.Boundary ? ExtractErrorRecovery.Replace : baseOptions.ErrorRecovery,
+                ReadRetries = span.Boundary ? Math.Min(baseOptions.ReadRetries, 2) : baseOptions.ReadRetries,
             };
+
+        ExtractionResult RunSpan((string Label, long Start, long End, bool Audio, bool Boundary, string Out) span,
+                                 Stream os, Stream? subOs)
+        {
+            reader.SetAudioHint(span.Audio || dataType == ExtractDataType.Audio2352);
+            var result = SectorExtraction.Extract(reader, span.Start, span.End, OptionsFor(span), os, subOs,
+                json ? null : new Action<long, long>((done, total) =>
+                {
+                    if (done % 512 == 0 || done == total)
+                        Console.Write($"\r{span.Label}: {done:N0}/{total:N0} sectors…");
+                }));
+            if (!json) Console.WriteLine();
+            return result;
+        }
+
+        void PrintSpanSummary(string label, ExtractionResult result, string outFile)
+        {
+            if (json) return;
+            Console.WriteLine($"{label}: {result.SectorsWritten:N0} sector(s), {result.BytesWritten:N0} bytes  [{result.Grade}]");
+            if (result.Recovered > 0) Console.WriteLine($"  recovered:  {result.Recovered:N0} sector(s) needed retries and were proven");
+            if (result.IgnoredBad > 0) Console.WriteLine($"  ignored:    {result.IgnoredBad:N0} unproven sector(s) written as-read — see sidecar");
+            if (result.Replaced > 0) Console.WriteLine($"  replaced:   {result.Replaced:N0} sector(s) written as dummies — see sidecar");
+            if (result.BadSectors.BoundaryCount > 0)
+                Console.WriteLine($"  boundary:   {result.BadSectors.BoundaryCount:N0} track-boundary sector(s) — geometry, not damage");
+            if (sub) Console.WriteLine($"  subcode:    {result.QFramesChecked:N0} Q frames, {result.QRecovered:N0} recovered by re-read, {result.QCrcErrors:N0} CRC error(s) → {outFile}.subq");
+        }
+
+        var reports = new List<object>();
+        var allResults = new List<ExtractionResult>();
+        var outcomes = new List<((string Label, long Start, long End, bool Audio, bool Boundary, string Out) Span, ExtractionResult Result)>();
+        bool anyBad = false, aborted = false;
+        long? abortLba = null; string? abortWhy = null;
+
+        if (wholeDisc)
+        {
+            // ONE atomic file, every track span written sequentially into it. An abort in
+            // any span leaves NO output — the whole-disc dump is all-or-honestly-nothing.
+            try
+            {
+                WriteFileAtomically(outPath, os =>
+                {
+                    Stream? subOs = null;
+                    try
+                    {
+                        if (sub) subOs = File.Create(outPath + ".subq.part");
+                        foreach (var span in spans)
+                        {
+                            var result = RunSpan(span, os, subOs);
+                            allResults.Add(result);
+                            outcomes.Add((span, result));
+                            reports.Add(SpanReport(span.Label, outPath, result, OptionsFor(span)));
+                            PrintSpanSummary(span.Label, result, outPath);
+                            if (result.AbortedAtLba is not null)
+                            {
+                                abortLba = result.AbortedAtLba; abortWhy = result.AbortReason;
+                                throw new IOException($"aborted at LBA {result.AbortedAtLba:N0}: {result.AbortReason}");
+                            }
+                        }
+                    }
+                    finally { subOs?.Dispose(); }
+                });
+            }
+            catch (IOException) when (abortLba is not null)
+            {
+                try { File.Delete(outPath + ".subq.part"); } catch { /* best-effort */ }
+                if (!json)
+                {
+                    Console.WriteLine($"ABORTED at LBA {abortLba:N0}: {abortWhy}");
+                    Console.WriteLine("No output written. Re-run with --recover ignore|replace to extract " +
+                                      "around the bad sector (the hole will be recorded in a sidecar).");
+                }
+                aborted = true;
+            }
+
+            if (!aborted)
+            {
+                if (sub) File.Move(outPath + ".subq.part", outPath + ".subq", overwrite: true);
+
+                // One merged sidecar for the whole disc.
+                var merged = new DiscForge.Core.Preservation.BadSectorMap
+                {
+                    Image = Path.GetFileName(outPath),
+                    TotalSectors = (int)Math.Min(reader.TotalSectors, int.MaxValue),
+                    UnreadableLba = allResults.SelectMany(r => r.BadSectors.UnreadableLba).OrderBy(x => x).ToList(),
+                    BoundaryLba = allResults.SelectMany(r => r.BadSectors.BoundaryLba).OrderBy(x => x).ToList(),
+                    Note = $"track-aware whole-disc dump, {spans.Count} span(s), recovery={recoverArg}, retries={retries}, c2={(useC2 ? "on" : "off")}",
+                };
+                if (!merged.Clean)
+                {
+                    merged.Save(DiscForge.Core.Preservation.BadSectorMap.SidecarPath(outPath));
+                    anyBad = merged.DamagePresent;
+                }
+                string discGrade = merged.DamagePresent ? "INCOMPLETE" : "COMPLETE";
+                if (!json)
+                {
+                    long secs = allResults.Sum(r => r.SectorsWritten);
+                    long bs = allResults.Sum(r => r.BytesWritten);
+                    Console.WriteLine($"disc: {secs:N0} sector(s), {bs:N0} bytes → {outPath}  [{discGrade}]" +
+                        (merged.BoundaryCount > 0 ? $"  ({merged.BoundaryCount} boundary sector(s) — geometry, not damage)" : ""));
+                    if (!merged.Clean) Console.WriteLine($"  bad map:    {DiscForge.Core.Preservation.BadSectorMap.SidecarPath(outPath)}");
+                }
+            }
+        }
+        else foreach (var span in spans)
+        {
             ExtractionResult result = null!;
             try
             {
@@ -2782,12 +2923,7 @@ static int ExtractSectorsDrive(string[] args)
                     try
                     {
                         if (sub) subOs = File.Create(span.Out + ".subq.part");
-                        result = SectorExtraction.Extract(reader, span.Start, span.End, options, os, subOs,
-                            json ? null : new Action<long, long>((done, total) =>
-                            {
-                                if (done % 512 == 0 || done == total)
-                                    Console.Write($"\r{span.Label}: {done:N0}/{total:N0} sectors…");
-                            }));
+                        result = RunSpan(span, os, subOs);
                     }
                     finally { subOs?.Dispose(); }
                     if (result.AbortedAtLba is not null)
@@ -2800,16 +2936,14 @@ static int ExtractSectorsDrive(string[] args)
                 try { File.Delete(span.Out + ".subq.part"); } catch { /* best-effort */ }
                 if (!json)
                 {
-                    Console.WriteLine();
                     Console.WriteLine($"ABORTED at LBA {result.AbortedAtLba:N0}: {result.AbortReason}");
                     Console.WriteLine($"No output written. Re-run with --recover ignore|replace to extract " +
                                       $"around the bad sector (the hole will be recorded in a sidecar).");
                 }
                 aborted = true;
-                reports.Add(SpanReport(span.Label, span.Out, result, options));
+                reports.Add(SpanReport(span.Label, span.Out, result, OptionsFor(span)));
                 break;
             }
-            if (!json) Console.WriteLine();
 
             if (sub)
                 File.Move(span.Out + ".subq.part", span.Out + ".subq", overwrite: true);
@@ -2818,19 +2952,135 @@ static int ExtractSectorsDrive(string[] args)
             if (!map.Clean)
             {
                 map.Save(DiscForge.Core.Preservation.BadSectorMap.SidecarPath(span.Out));
-                anyBad = true;
+                anyBad |= map.DamagePresent;
             }
 
-            if (!json)
+            PrintSpanSummary($"{span.Label} → {span.Out}", result, span.Out);
+            if (!json && !map.Clean) Console.WriteLine($"  bad map:    {DiscForge.Core.Preservation.BadSectorMap.SidecarPath(span.Out)}");
+            outcomes.Add((span, result));
+            reports.Add(SpanReport(span.Label, span.Out, result, OptionsFor(span)));
+        }
+
+        // The automatic post-dump audit: re-read the file we just WROTE and verify it
+        // independently of everything the extraction engine believed — sync census and
+        // sampled EDC on data spans, zero census everywhere. This is the half-void
+        // lesson made habit: a dump is not COMPLETE because the drive said SUCCESS;
+        // it is COMPLETE because the bytes on disk prove it. --no-audit opts out.
+        object? auditJson = null;
+        string? auditGrade = null;
+        if (!aborted && !noAudit)
+        {
+            if (dataType == ExtractDataType.Raw2352)
             {
-                Console.WriteLine($"{span.Label}: {result.SectorsWritten:N0} sector(s), {result.BytesWritten:N0} bytes → {span.Out}  [{result.Grade}]");
-                if (result.Recovered > 0) Console.WriteLine($"  recovered:  {result.Recovered:N0} sector(s) needed retries and were proven");
-                if (result.IgnoredBad > 0) Console.WriteLine($"  ignored:    {result.IgnoredBad:N0} unproven sector(s) written as-read — see sidecar");
-                if (result.Replaced > 0) Console.WriteLine($"  replaced:   {result.Replaced:N0} sector(s) written as dummies — see sidecar");
-                if (sub) Console.WriteLine($"  subcode:    {result.QFramesChecked:N0} Q frames, {result.QRecovered:N0} recovered by re-read, {result.QCrcErrors:N0} CRC error(s) → {span.Out}.subq");
-                if (!map.Clean) Console.WriteLine($"  bad map:    {DiscForge.Core.Preservation.BadSectorMap.SidecarPath(span.Out)}");
+                try
+                {
+                    var auditResults = new List<(string File, DiscForge.Core.Dumping.ExtractionAudit.Result Audit)>();
+                    if (wholeDisc)
+                    {
+                        var specs = new List<DiscForge.Core.Dumping.ExtractionAudit.SpanSpec>();
+                        long off = 0;
+                        foreach (var span in spans)
+                        {
+                            long n = span.End - span.Start + 1;
+                            specs.Add(new(span.Label, off, n, span.Audio, span.Boundary));
+                            off += n;
+                        }
+                        using var af = File.OpenRead(outPath);
+                        auditResults.Add((outPath, DiscForge.Core.Dumping.ExtractionAudit.Run(af, specs)));
+                    }
+                    else foreach (var span in spans)
+                    {
+                        using var af = File.OpenRead(span.Out);
+                        auditResults.Add((span.Out, DiscForge.Core.Dumping.ExtractionAudit.Run(af, new[]
+                        {
+                            new DiscForge.Core.Dumping.ExtractionAudit.SpanSpec(
+                                span.Label, 0, span.End - span.Start + 1, span.Audio, span.Boundary),
+                        })));
+                    }
+
+                    foreach (var (file, audit) in auditResults)
+                    {
+                        PrintAudit(file, audit, json);
+                        anyBad |= !audit.Passed;
+                    }
+                    auditGrade = auditResults.All(a => a.Audit.Passed) ? "PASS" : "FAIL";
+                    auditJson = auditResults.Select(a => new
+                    {
+                        file = a.File,
+                        grade = a.Audit.Grade,
+                        failures = a.Audit.Failures,
+                        spans = a.Audit.Spans.Select(s => new
+                        {
+                            s.Label, s.Sectors, s.Audio, s.Boundary,
+                            s.SyncMissing, s.AllZero, s.LongestZeroRun, s.EdcChecked, s.EdcErrors,
+                        }),
+                    }).ToList();
+                }
+                catch (Exception ex)
+                {
+                    if (!json) Console.WriteLine($"audit: FAILED to run — {ex.Message}");
+                    anyBad = true;
+                }
             }
-            reports.Add(SpanReport(span.Label, span.Out, result, options));
+            else if (!json)
+                Console.WriteLine($"audit: skipped — --as {asArg} writes payload bytes only " +
+                                  "(no sync/EDC structure in the file to verify)");
+        }
+
+        // The Dump Certificate, born at the dump: drive, firmware, settings, per-span
+        // grades, audit verdict, and a Merkle root over the freshly written sectors —
+        // the provenance that used to die in terminal scrollback, now a signed sidecar.
+        string? certKeyFile = OptVal(args, "--cert-key");
+        if (!aborted && (args.Contains("--cert") || certKeyFile is not null))
+        {
+            int certSectorSize = asArg switch
+            {
+                "mode1" or "form1" => 2048,
+                "form2" => 2324,
+                "2336" => 2336,
+                _ => 2352,
+            };
+            string? certDrive = null, certFw = null;
+            try
+            {
+                var caps = DiscForge.Devices.DriveDetector.Detect(letter);
+                certDrive = $"{caps.Vendor} {caps.Model}".Trim();
+                certFw = caps.FirmwareRevision;
+            }
+            catch { /* certificate still worth issuing without the inquiry */ }
+            string certSettings = $"as={asArg} recovery={recoverArg} retries={retries} " +
+                                  $"c2={(useC2 ? "on" : "off")} jitter={(jitter ? "on" : "off")} q-retries={qRetries}";
+
+            foreach (var file in outcomes.Select(o => o.Span.Out).Distinct())
+            {
+                var fo = outcomes.Where(o => o.Span.Out == file).ToList();
+                DiscForge.Core.Preservation.DumpCertificate cert;
+                using (var cfs = File.OpenRead(file))
+                    cert = DiscForge.Core.Preservation.DumpCertificate.Create(
+                        cfs, Path.GetFileName(file),
+                        DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"), certSectorSize);
+                cert = cert with
+                {
+                    Drive = certDrive,
+                    Firmware = certFw,
+                    Settings = certSettings,
+                    ToolVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3),
+                    Spans = fo.Select(o => new DiscForge.Core.Preservation.CertifiedSpan(
+                        o.Span.Label, o.Span.Start, o.Span.End, o.Span.Audio, o.Span.Boundary, o.Result.Grade)).ToList(),
+                    UnreadableCount = fo.Sum(o => o.Result.BadSectors.UnreadableLba.Count - o.Result.BadSectors.BoundaryLba.Count),
+                    BoundaryCount = fo.Sum(o => o.Result.BadSectors.BoundaryLba.Count),
+                    AuditGrade = auditGrade,
+                };
+                if (certKeyFile is not null)
+                {
+                    if (!File.Exists(certKeyFile)) return Fail($"--cert-key '{certKeyFile}' not found.");
+                    using var priv = DiscForge.Core.Preservation.DumpLineageLog.LoadPrivateKey(File.ReadAllText(certKeyFile).Trim());
+                    cert = cert.Sign(priv);
+                }
+                string certPath = DiscForge.Core.Preservation.DumpCertificate.SidecarPath(file);
+                cert.Save(certPath);
+                if (!json) Console.WriteLine($"  certificate: {certPath}{(cert.Signed ? " (signed)" : " (unsigned — add --cert-key to sign)")}");
+            }
         }
 
         // A whole-disc raw dump earns a .cue sidecar built from the TOC, so the image is
@@ -2845,6 +3095,8 @@ static int ExtractSectorsDrive(string[] args)
             foreach (var t in toc.Tracks.OrderBy(t => t.Number))
             {
                 cue.AppendLine($"  TRACK {t.Number:D2} {CueModeFor(outPath, t)}");
+                if (pregapStarts.TryGetValue(t.Number, out long pre))
+                    cue.AppendLine($"    INDEX 00 {Msf.FromSectors(pre)}");
                 cue.AppendLine($"    INDEX 01 {Msf.FromSectors(t.StartLba)}");
             }
             File.WriteAllText(cuePath, cue.ToString());
@@ -2863,11 +3115,33 @@ static int ExtractSectorsDrive(string[] args)
                 aborted,
                 cue = cuePath,
                 spans = reports,
+                audit = auditJson,
             }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
         return aborted ? 1 : anyBad ? 2 : 0;
     }
     catch (Exception ex) { return Fail(ex.Message); }
+
+    static void PrintAudit(string file, DiscForge.Core.Dumping.ExtractionAudit.Result audit, bool json)
+    {
+        if (json) return;
+        Console.WriteLine($"AUDIT [{audit.Grade}] {Path.GetFileName(file)} — independent re-read of the written file:");
+        foreach (var s in audit.Spans)
+        {
+            string detail = s.Audio
+                ? $"{s.Sectors:N0} audio sector(s), {s.AllZero:N0} all-zero" +
+                  (s.LongestZeroRun > 0 ? $" (longest run {s.LongestZeroRun:N0})" : "") +
+                  (s.Boundary ? "  [boundary]" : "")
+                : $"sync {s.Sectors - s.SyncMissing:N0}/{s.Sectors:N0}" +
+                  (s.SyncMissing > 0 ? "  <-- BAD" : "") +
+                  $", EDC OK {s.EdcChecked - s.EdcErrors:N0}/{s.EdcChecked:N0} sampled" +
+                  (s.EdcErrors > 0 ? "  <-- BAD" : "") +
+                  (s.AllZero > 0 ? $", {s.AllZero:N0} all-zero" : "");
+            Console.WriteLine($"  {s.Label}: {detail}");
+        }
+        foreach (var f in audit.Failures) Console.WriteLine($"  FAIL: {f}");
+        if (audit.Passed) Console.WriteLine("  every data sector structured; sampled EDC clean.");
+    }
 
     static object SpanReport(string label, string outPath, ExtractionResult r, ExtractionOptions o) => new
     {
@@ -2984,6 +3258,8 @@ static int InspectRaw(string[] args)
                           $"of {t.DataSectorsChecked}  <-- BAD";
                 else if (t.CheckKind is not null)
                     data += $"; checks: {t.CheckKind}";
+                if (t.SynclessSectors > 0)
+                    data += $"; {t.SynclessSectors} SYNC-LESS  <-- BAD";
             }
             Console.WriteLine($"  {t.Number:D2} {kind,-6} {Msf.FromSectors(t.StartSector),-12} " +
                               $"{t.Isrc ?? "-",-13} {data}");
@@ -2991,10 +3267,22 @@ static int InspectRaw(string[] args)
 
         foreach (var n in r.Notes) Console.WriteLine($"note: {n}");
 
-        bool clean = r.QCrcErrors == 0 &&
+        // Honesty rules, learned from the half-void dump: sync-less sectors inside a
+        // known DATA track are structural damage the checks could not even reach —
+        // never "clean". In a main-only image the scan cannot tell audio from voids,
+        // so the verdict must state its coverage instead of overclaiming.
+        int trackSyncless = r.Tracks.Sum(t => t.SynclessSectors);
+        bool clean = r.QCrcErrors == 0 && trackSyncless == 0 &&
                      r.Tracks.All(t => t.EdcErrors == 0 && t.EccErrors == 0);
         Console.WriteLine();
-        Console.WriteLine(clean ? "Result: clean." : "Result: problems found (see above).");
+        if (!clean)
+            Console.WriteLine("Result: problems found (see above).");
+        else if (r.Form is null && r.MainSynclessSectors > 0 && r.Tracks.Any(t => t.IsData))
+            Console.WriteLine($"Result: structured sectors clean — but {r.MainSynclessSectors} of " +
+                $"{r.MainSectorsSampled} sampled sectors carry no sync ({r.MainZeroSectors} all-zero) " +
+                "and were NOT verified. Mixed-mode audio or voids; inspect with subcode to prove which.");
+        else
+            Console.WriteLine("Result: clean.");
         return clean ? 0 : 1;
     }
     catch (Exception ex) { return Fail(ex.Message); }
@@ -6793,6 +7081,182 @@ static int DumpAuditCmd(string[] args)
     catch (Exception ex) { return Fail(ex.Message); }
 }
 
+// The Dump Certificate: signed provenance + a Merkle root over the sectors, so any
+// single 2 KB slice can later be proven against the original dump event without
+// rehashing the file. Subcommands mirror merge-cert's shape.
+static int DumpCertCmd(string[] args)
+{
+    const string usage =
+        "usage:\n" +
+        "  dforge dump-cert <image.bin> [--key f | --gen-key] [--drive s] [--firmware s] [--settings s]\n" +
+        "                   [--note s] [--sector-size N] [--json]     create <image>.dcert.json\n" +
+        "  dforge dump-cert verify <cert.dcert.json> [image.bin] [--pub keyfile] [--json]\n" +
+        "  dforge dump-cert prove <cert.dcert.json> <image.bin> --sector N [--out proof.json]\n" +
+        "  dforge dump-cert check <cert.dcert.json> <proof.json> <image.bin | slice.bin>\n" +
+        "  A certificate records WHAT was dumped (SHA-256 + a Merkle tree over the sectors) and the\n" +
+        "  context (drive, settings, sidecar counts), signed with ECDSA P-256. `prove` extracts a\n" +
+        "  ~18-hash audit path for one sector; `check` verifies a slice against the signed root\n" +
+        "  WITHOUT the rest of the image. Keys are merge-cert's base64 format (shareable).";
+    if (args.Length < 2) return Fail(usage);
+
+    try
+    {
+        if (args[1] == "verify")
+        {
+            if (args.Length < 3) return Fail(usage);
+            var cert = DiscForge.Core.Preservation.DumpCertificate.Load(args[2]);
+            byte[]? pinned = null;
+            if (OptVal(args, "--pub") is { } pubFile)
+                pinned = System.Convert.FromBase64String(File.ReadAllText(pubFile).Trim());
+            bool sigOk = cert.VerifySignature(pinned);
+            bool? imgOk = null;
+            string? imgArg = args.Skip(3).FirstOrDefault(a => !a.StartsWith("--") && a != OptVal(args, "--pub"));
+            if (imgArg is not null)
+            {
+                if (!File.Exists(imgArg)) return Fail($"'{imgArg}' not found.");
+                using var fs = File.OpenRead(imgArg);
+                imgOk = cert.VerifyImage(fs);
+            }
+            if (args.Contains("--json"))
+            {
+                EmitJson(new { certificate = Path.GetFileName(args[2]), cert.Image, cert.SectorCount,
+                               cert.MerkleRoot, signed = cert.Signed, signatureValid = sigOk, imageValid = imgOk });
+                return (cert.Signed ? sigOk : true) && imgOk != false ? 0 : 2;
+            }
+            Console.WriteLine($"{Path.GetFileName(args[2])}: {cert.Image}, {cert.SectorCount:N0} sector(s) of {cert.SectorSize}, dumped {cert.CreatedUtc}");
+            if (cert.Drive is not null) Console.WriteLine($"  drive:      {cert.Drive}{(cert.Firmware is not null ? $" fw {cert.Firmware}" : "")}");
+            if (cert.Settings is not null) Console.WriteLine($"  settings:   {cert.Settings}");
+            if (cert.AuditGrade is not null) Console.WriteLine($"  audit:      {cert.AuditGrade}");
+            if (cert.UnreadableCount > 0 || cert.BoundaryCount > 0)
+                Console.WriteLine($"  sectors:    {cert.UnreadableCount:N0} unreadable, {cert.BoundaryCount:N0} boundary");
+            Console.WriteLine($"  merkle:     {cert.MerkleRoot}");
+            Console.WriteLine(!cert.Signed ? "  signature:  (unsigned)" : $"  signature:  {(sigOk ? "VALID" : "INVALID")}");
+            if (imgOk is { } io) Console.WriteLine($"  image:      {(io ? "matches the certificate (file hash + Merkle root)" : "DOES NOT match the certificate")}");
+            return (cert.Signed ? sigOk : true) && imgOk != false ? 0 : 2;
+        }
+
+        if (args[1] == "prove")
+        {
+            if (args.Length < 4) return Fail(usage);
+            string certPath = args[2], imgPath = args[3];
+            if (!File.Exists(certPath)) return Fail($"'{certPath}' not found.");
+            if (!File.Exists(imgPath)) return Fail($"'{imgPath}' not found.");
+            if (OptVal(args, "--sector") is not { } secArg || !long.TryParse(secArg, out long sector))
+                return Fail("prove needs --sector N (file-sector index).");
+            var cert = DiscForge.Core.Preservation.DumpCertificate.Load(certPath);
+            using var fs = File.OpenRead(imgPath);
+            var leaves = DiscForge.Core.Preservation.SectorMerkle.LeafHashes(fs, cert.SectorSize);
+            if (sector < 0 || sector >= leaves.Length)
+                return Fail($"--sector must be 0..{leaves.Length - 1} for this image.");
+            var proof = DiscForge.Core.Preservation.SectorProof.Create(leaves, sector, cert.Image);
+            if (!string.Equals(proof.MerkleRoot, cert.MerkleRoot, StringComparison.OrdinalIgnoreCase))
+                return Fail("This image's Merkle root does not match the certificate — wrong or modified image; a proof from it would be meaningless.");
+            string outPath = OptVal(args, "--out") ?? $"{imgPath}.sector{sector}.dproof.json";
+            proof.Save(outPath);
+            Console.WriteLine($"Wrote {Path.GetFileName(outPath)} — sector {sector:N0}, {proof.Path.Count} path step(s) to root {cert.MerkleRoot[..16]}…");
+            Console.WriteLine($"  anyone can now verify that slice with: dforge dump-cert check {Path.GetFileName(certPath)} {Path.GetFileName(outPath)} <slice-or-image>");
+            return 0;
+        }
+
+        if (args[1] == "check")
+        {
+            if (args.Length < 5) return Fail(usage);
+            string certPath = args[2], proofPath = args[3], dataPath = args[4];
+            foreach (var p in new[] { certPath, proofPath, dataPath })
+                if (!File.Exists(p)) return Fail($"'{p}' not found.");
+            var cert = DiscForge.Core.Preservation.DumpCertificate.Load(certPath);
+            var proof = DiscForge.Core.Preservation.SectorProof.Load(proofPath);
+            bool sigOk = cert.VerifySignature();
+
+            byte[] slice;
+            long len = new FileInfo(dataPath).Length;
+            if (len == cert.SectorSize) slice = File.ReadAllBytes(dataPath);
+            else
+            {
+                using var fs = File.OpenRead(dataPath);
+                if (proof.Sector * cert.SectorSize + cert.SectorSize > fs.Length)
+                    return Fail($"'{dataPath}' is too short to hold sector {proof.Sector:N0}.");
+                slice = new byte[cert.SectorSize];
+                fs.Position = proof.Sector * cert.SectorSize;
+                fs.ReadExactly(slice, 0, cert.SectorSize);
+            }
+
+            bool ok = proof.Verify(slice, cert.MerkleRoot);
+            Console.WriteLine($"sector {proof.Sector:N0} of {cert.Image}:");
+            Console.WriteLine($"  merkle proof: {(ok ? "VALID — this slice is byte-identical to the certified dump" : "INVALID — slice, proof and certificate do not agree")}");
+            Console.WriteLine(!cert.Signed ? "  signature:    (certificate unsigned)"
+                                           : $"  signature:    {(sigOk ? "VALID" : "INVALID")}");
+            return ok && (!cert.Signed || sigOk) ? 0 : 2;
+        }
+
+        // ---- create --------------------------------------------------------
+        string imagePath = args[1];
+        if (!File.Exists(imagePath)) return Fail($"'{imagePath}' not found.");
+        int sectorSize = 2352;
+        if (OptVal(args, "--sector-size") is { } ss && (!int.TryParse(ss, out sectorSize) || sectorSize <= 0))
+            return Fail("--sector-size must be positive.");
+
+        DiscForge.Core.Preservation.DumpCertificate cert2;
+        using (var fs = File.OpenRead(imagePath))
+            cert2 = DiscForge.Core.Preservation.DumpCertificate.Create(
+                fs, Path.GetFileName(imagePath), DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"), sectorSize);
+
+        int unreadable = 0, boundary = 0;
+        string sidecar = DiscForge.Core.Preservation.BadSectorMap.SidecarPath(imagePath);
+        if (File.Exists(sidecar))
+        {
+            try
+            {
+                var map = DiscForge.Core.Preservation.BadSectorMap.Load(sidecar);
+                unreadable = map.UnreadableLba.Count - map.BoundaryLba.Count;
+                boundary = map.BoundaryLba.Count;
+            }
+            catch { /* a corrupt sidecar shouldn't block certification */ }
+        }
+
+        cert2 = cert2 with
+        {
+            Drive = OptVal(args, "--drive"),
+            Firmware = OptVal(args, "--firmware"),
+            Settings = OptVal(args, "--settings"),
+            Note = OptVal(args, "--note"),
+            ToolVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3),
+            UnreadableCount = Math.Max(0, unreadable),
+            BoundaryCount = boundary,
+        };
+
+        if (args.Contains("--gen-key") || OptVal(args, "--key") is not null)
+        {
+            System.Security.Cryptography.ECDsa priv;
+            if (args.Contains("--gen-key"))
+            {
+                var (privB64, _) = DiscForge.Core.Preservation.DumpLineageLog.GenerateKey();
+                File.WriteAllText(imagePath + ".key", privB64);
+                priv = DiscForge.Core.Preservation.DumpLineageLog.LoadPrivateKey(privB64);
+            }
+            else priv = DiscForge.Core.Preservation.DumpLineageLog.LoadPrivateKey(File.ReadAllText(OptVal(args, "--key")!).Trim());
+            using (priv) cert2 = cert2.Sign(priv);
+        }
+
+        string certOut = DiscForge.Core.Preservation.DumpCertificate.SidecarPath(imagePath);
+        cert2.Save(certOut);
+
+        if (args.Contains("--json"))
+        {
+            EmitJson(new { certificate = Path.GetFileName(certOut), cert2.Image, cert2.ImageBytes,
+                           cert2.SectorCount, cert2.ImageSha256, cert2.MerkleRoot, signed = cert2.Signed });
+            return 0;
+        }
+        Console.WriteLine($"Wrote {Path.GetFileName(certOut)} — {cert2.SectorCount:N0} sector(s), " +
+                          $"root {cert2.MerkleRoot[..16]}…, {(cert2.Signed ? "SIGNED" : "unsigned")}" +
+                          (args.Contains("--gen-key") ? $" (+ {Path.GetFileName(imagePath)}.key — keep it safe)" : ""));
+        Console.WriteLine($"  verify anytime:  dforge dump-cert verify {Path.GetFileName(certOut)} {Path.GetFileName(imagePath)}");
+        Console.WriteLine($"  prove any slice: dforge dump-cert prove {Path.GetFileName(certOut)} {Path.GetFileName(imagePath)} --sector N");
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
 static int RedumpDiffCmd(string[] args)
 {
     if (args.Length < 3)
@@ -8952,6 +9416,105 @@ static int HealthMapCmd(string[] args)
                                       or DiscForge.Core.Forensics.SectorHealth.Unrecovered);
         Console.WriteLine($"Wrote {Path.GetFileName(outPath)} — {total:N0} sectors, {good:N0} intact, {bad:N0} damaged.");
         return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+// Disc MRI: the health map's evidence, drawn on the physical disc. The spiral
+// unwinding lives in Core (DiscMri); this command wires up the inputs — bin or
+// single-file bin/cue, plus the dump's .badsectors.json sidecar when present.
+static int DiscMriCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge disc-mri <image.bin | image.cue> [out.svg|out.png] [--map <sidecar.json>] [--size N]\n" +
+                    "  Renders per-sector evidence as a polar map of the PHYSICAL disc (real Red Book\n" +
+                    "  spiral geometry), so damage shows its true shape: a radial streak is a scratch,\n" +
+                    "  a ring is a pressing defect, a bloom from the hub is rot, a solid outer band is\n" +
+                    "  a muted/failed read region. A cue supplies per-track audio/data knowledge; the\n" +
+                    "  dump's .badsectors.json sidecar (auto-detected, or --map) overlays recorded holes\n" +
+                    "  and track-boundary sectors. Worst evidence wins per pixel — damage never hides.\n" +
+                    "  Output: .svg (map + legend, default) or .png (bare map). --size sets map pixels (default 1200).");
+
+    string inPath = args[1];
+    if (!File.Exists(inPath)) return Fail($"File not found: {inPath}");
+    string? outArg = args.Length > 2 && !args[2].StartsWith("--") ? args[2] : null;
+    string? mapArg = null;
+    int size = 1200;
+    for (int i = 2; i < args.Length; i++)
+    {
+        if (args[i] == "--map" && i + 1 < args.Length) mapArg = args[++i];
+        else if (args[i] == "--size" && i + 1 < args.Length) int.TryParse(args[++i], out size);
+    }
+
+    try
+    {
+        // Resolve bin + spans. A cue names the bin and tells us which ranges are audio.
+        string binPath = inPath;
+        List<(long Start, long End, bool Audio)>? spans = null;
+        if (Path.GetExtension(inPath).Equals(".cue", StringComparison.OrdinalIgnoreCase))
+        {
+            var cue = DiscForge.Core.Cue.CueSheet.Parse(File.ReadAllText(inPath));
+            if (cue.Tracks.Count == 0) return Fail("The cue lists no tracks.");
+            var files = cue.Tracks.Select(t => t.File).Distinct().ToList();
+            if (files.Count != 1)
+                return Fail("disc-mri needs a single-file cue (one FILE, INDEX-split tracks). " +
+                            "For one-file-per-track sets, run it on the individual bins.");
+            string dir = Path.GetDirectoryName(Path.GetFullPath(inPath))!;
+            binPath = Path.Combine(dir, files[0]);
+            if (!File.Exists(binPath))
+            {
+                string alt = Path.Combine(dir, Path.GetFileNameWithoutExtension(inPath) + Path.GetExtension(files[0]));
+                if (File.Exists(alt)) binPath = alt;
+                else return Fail($"Bin referenced by the cue not found: {files[0]}");
+            }
+
+            long totalSectors = new FileInfo(binPath).Length / 2352;
+            var ordered = cue.Tracks.OrderBy(t => t.Number).ToList();
+            spans = new List<(long, long, bool)>();
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                // A track's extent starts at its earliest index (INDEX 00 pregap included).
+                long start = ordered[i].Indices.Min(x => x.Time.ToSectors());
+                long end = (i + 1 < ordered.Count
+                    ? ordered[i + 1].Indices.Min(x => x.Time.ToSectors()) : totalSectors) - 1;
+                if (end >= start)
+                    spans.Add((start, end, ordered[i].Type == DiscForge.Core.Cue.CueTrackType.Audio));
+            }
+        }
+
+        long imgSectors = new FileInfo(binPath).Length / 2352;
+        if (imgSectors == 0) return Fail($"'{binPath}' holds no 2352-byte sectors.");
+        if (new FileInfo(binPath).Length % 2352 != 0)
+            Console.WriteLine("warning: file length is not a whole number of 2352-byte sectors — trailing bytes ignored.");
+
+        // The dump's own evidence, when it exists.
+        DiscForge.Core.Preservation.BadSectorMap? map = null;
+        string sidecar = mapArg ?? DiscForge.Core.Preservation.BadSectorMap.SidecarPath(binPath);
+        if (File.Exists(sidecar)) map = DiscForge.Core.Preservation.BadSectorMap.Load(sidecar);
+        else if (mapArg is not null) return Fail($"Sidecar not found: {mapArg}");
+
+        using var fs = File.OpenRead(binPath);
+        var evidence = DiscForge.Core.Forensics.DiscMri.Classify(fs, spans, map);
+
+        string outPath = outArg ?? Path.ChangeExtension(binPath, ".mri.svg");
+        bool png = Path.GetExtension(outPath).Equals(".png", StringComparison.OrdinalIgnoreCase);
+        string title = $"Disc MRI — {Path.GetFileName(binPath)}" +
+                       (map is not null ? " (+ dump sidecar)" : "") +
+                       (spans is not null ? $" · {spans.Count} track span(s)" : " · no cue: audio/void ambiguous");
+        if (png)
+            File.WriteAllBytes(outPath, DiscForge.Core.Forensics.DiscMri.RenderPng(evidence, size));
+        else
+            File.WriteAllText(outPath, DiscForge.Core.Forensics.DiscMri.RenderSvg(evidence, title, size));
+
+        var totals = evidence.GroupBy(e => e).ToDictionary(g => g.Key, g => g.LongCount());
+        long damage = totals.Where(kv => kv.Key >= DiscForge.Core.Forensics.DiscMri.Evidence.EdcFailed)
+                            .Sum(kv => kv.Value);
+        Console.WriteLine($"Wrote {Path.GetFileName(outPath)} — {evidence.Length:N0} sectors mapped to the physical spiral" +
+                          (damage > 0 ? $"; {damage:N0} carry damage evidence." : "; no damage evidence."));
+        if (spans is null)
+            Console.WriteLine("note: no cue given — sync-less sectors could be audio OR voids; " +
+                              "run on the .cue (or a --disc dump) for an unambiguous map.");
+        return damage > 0 ? 2 : 0;
     }
     catch (Exception ex) { return Fail(ex.Message); }
 }
