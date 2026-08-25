@@ -127,7 +127,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("                          sectors. addr: LBA, mm:ss:ff, or +fileindex");
     Console.WriteLine("  extract-sectors <img|drive:> <out>  Pull a sector range from an image (--start/--count)");
     Console.WriteLine("                          or LIVE from a drive, CDRWIN-style: --start/--end/--count,");
-    Console.WriteLine("                          --track n[,n…] or --disc; --as raw|mode1|form1|form2|2336|audio;");
+    Console.WriteLine("                          --track n[,n…] or --disc; --as raw|mode1|form1|form2|2336|audio|dvd;");
     Console.WriteLine("                          --recover abort|ignore|replace, --retries N, --no-c2, --sub, --jitter");
     Console.WriteLine("                          --as stored|user|raw2352, --byteswap for audio");
     Console.WriteLine("  inspect-raw <img>       Analyse a raw image: TOC, Q health, CD-TEXT, MCN/ISRC,");
@@ -2554,7 +2554,7 @@ static int ExtractSectors(string[] args)
         return Fail("usage: dforge extract-sectors <image> <out> --start <addr> --count N " +
                     "[--as stored|user|raw2352] [--byteswap]\n" +
                     "       dforge extract-sectors <drive:> <out> (--start <addr> (--count N | --end <addr>) | --track n[,n…] | --disc)\n" +
-                    "           [--as raw|mode1|form1|form2|2336|audio] [--recover abort|ignore|replace]\n" +
+                    "           [--as raw|mode1|form1|form2|2336|audio|dvd] [--recover abort|ignore|replace]\n" +
                     "           [--retries N] [--no-c2] [--sub] [--jitter] [--json]");
     if (!File.Exists(args[1])) return Fail($"'{args[1]}' not found.");
 
@@ -2666,7 +2666,8 @@ static int ExtractSectorsDrive(string[] args)
 {
     const string usage =
         "usage: dforge extract-sectors <drive:> <out> (--start <addr> (--count N | --end <addr>) | --track n[,n…] | --disc)\n" +
-        "  [--as raw|mode1|form1|form2|2336|audio]   datatype written per sector (default raw = 2352)\n" +
+        "  [--as raw|mode1|form1|form2|2336|audio|dvd]   datatype written per sector (default raw = 2352;\n" +
+        "                                            DVD/BD media auto-detects and uses dvd = 2048 regardless)\n" +
         "  [--recover abort|ignore|replace]          what to do with an unrecoverable sector (default abort)\n" +
         "  [--retries N]                             extra read attempts per sector (default 2)\n" +
         "  [--no-c2]                                 don't treat C2-flagged bytes as read failures\n" +
@@ -2714,9 +2715,10 @@ static int ExtractSectorsDrive(string[] args)
         "form2" => ExtractDataType.Mode2Form2_2324,
         "2336" => ExtractDataType.Mode2Mixed_2336,
         "audio" => ExtractDataType.Audio2352,
+        "dvd" => ExtractDataType.DvdUserData2048,
         _ => null,
     };
-    if (dataType is null) return Fail($"Unknown --as '{asArg}'. Use raw, mode1, form1, form2, 2336 or audio.");
+    if (dataType is null) return Fail($"Unknown --as '{asArg}'. Use raw, mode1, form1, form2, 2336, audio or dvd.");
     ExtractErrorRecovery? recovery = recoverArg switch
     {
         "abort" => ExtractErrorRecovery.Abort,
@@ -2736,6 +2738,27 @@ static int ExtractSectorsDrive(string[] args)
         using var reader = new DiscForge.Devices.Reading.DriveExtractionReader(
             letter, audioHint: dataType == ExtractDataType.Audio2352);
         var toc = reader.Toc;
+
+        // DVD/BD has no raw/CD-sync sector form, no C2, no subchannel — READ CD (0xBE)
+        // either fails outright or hands back bytes with no CD structure to check
+        // (the "no sector sync on a data track" abort a CD-only extraction path would
+        // give on EVERY DVD sector, regardless of drive or disc condition). Detected
+        // once via GET CONFIGURATION at reader construction; override whatever --as/
+        // --c2/--sub were asked for, since none of those concepts exist on this media.
+        if (reader.IsDvdOrBd)
+        {
+            if (dataType != ExtractDataType.DvdUserData2048)
+            {
+                if (!json)
+                    Console.WriteLine(args.Contains("--as")
+                        ? $"note: DVD/BD media detected — '--as {asArg}' doesn't apply (no CD sector form on this media); using --as dvd (2048-byte user data via READ(10)) instead."
+                        : "note: DVD/BD media detected — reading 2048-byte user-data sectors via READ(10), not CD raw mode.");
+                asArg = "dvd";
+                dataType = ExtractDataType.DvdUserData2048;
+            }
+            if (useC2) { useC2 = false; if (!json) Console.WriteLine("note: C2 has no meaning on DVD/BD media — disabled."); }
+            if (sub) { sub = false; if (!json) Console.WriteLine("note: --sub (CD subchannel) has no meaning on DVD/BD media — disabled."); }
+        }
 
         // Resolve the extract mode into (label, start, end, audioHint, boundary, outPath) spans.
         // Boundary spans (audio pregaps at data→audio transitions) classify failures as
@@ -3045,7 +3068,7 @@ static int ExtractSectorsDrive(string[] args)
         {
             int certSectorSize = asArg switch
             {
-                "mode1" or "form1" => 2048,
+                "mode1" or "form1" or "dvd" => 2048,
                 "form2" => 2324,
                 "2336" => 2336,
                 _ => 2352,

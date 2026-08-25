@@ -1,9 +1,40 @@
 # DiscForge — what's left (session handoff)
 
-State: v1.67.0 — everything under "Landed" below is committed (2c92b4f +
-3e9f2f1 + 37078ba) and the version is unified at 1.67.0 across all four
-projects. 2,496 tests green. A fresh Claude session can work from this file
-alone; the code comments carry the details.
+State: v1.67.0 — everything under "Landed since v1.66.0" below is committed
+(2c92b4f + 3e9f2f1 + 37078ba) and the version is unified at 1.67.0 across all
+four projects. See "Landed since v1.67.0 (uncommitted)" for what's changed
+since — it's on Andy's machine, tested, NOT yet committed/pushed. A fresh
+Claude session can work from this file alone; the code comments carry the
+details.
+
+## Landed since v1.67.0 (uncommitted — on Andy's machine only)
+
+- **DVD/BD `extract-sectors --disc` fix — a real, previously-unknown gap.**
+  `DriveExtractionReader` unconditionally issued MMC READ CD (0xBE), a CD-only
+  command, for every media type. DVD/BD sectors have no CD sync pattern, so
+  `RequireDataSync` (built for CD data tracks) aborted at LBA 0 on EVERY DVD
+  extraction, on any drive, at any point in this project's history —
+  `extract-sectors`'s DVD support had literally never worked. Root-caused and
+  fixed via live testing with a real PS2 disc (TSSTcorp SH-224DB).
+  Fix: `DriveExtractionReader` now runs GET CONFIGURATION once at construction
+  (`IsDvdOrBd`, via the existing `ConfigurationInfo`/`MmcProfile` parser) and
+  switches to plain READ(10) 2048-byte user-data reads for DVD/BD, batched the
+  same way the CD path is. `SectorExtraction` grew `ExtractDataType.DvdUserData2048`
+  (2048 bytes, no sync/EDC to check — the drive's own Reed–Solomon ECC is the
+  proof). `extract-sectors` auto-detects DVD/BD media and overrides
+  `--as`/`--no-c2`/`--sub` with a printed note, since none of those concepts
+  exist on that media; `--as dvd` also works explicitly.
+  Files: `src/DiscForge.Core/Dumping/SectorExtraction.cs`,
+  `src/DiscForge.Devices/Reading/DriveExtractionReader.cs`,
+  `src/DiscForge.Cli/Program.cs`, `tests/DiscForge.Core.Tests/SectorExtractionTests.cs`
+  (4 new tests). 2,500 tests green (net8.0 AND net8.0-windows both verified —
+  see `build.sh cli-win` for the sandbox's multi-TFM build method).
+  **Confirmed on real hardware**: a PAL Resident Evil 4 PS2 disc extracted
+  clean, 2,228,528/2,228,528 sectors, COMPLETE, no aborts
+  (`ps2game.iso`, MD5 `30255F8E8958A963212CA6455BB29EE0` — pending a redump.org
+  cross-check to confirm bit-perfect, not just non-aborting).
+  **Still needed**: `git add`/commit/push (Claude can't push from the sandbox —
+  do this from Andy's machine), then update the "State" line above once it's in.
 
 ## Landed since v1.66.0
 

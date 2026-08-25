@@ -28,6 +28,12 @@ public enum ExtractDataType
     Mode2Mixed_2336,
     /// <summary>Audio, 2352 bytes/sector, written exactly as read.</summary>
     Audio2352,
+    /// <summary>DVD/BD user data, 2048 bytes/sector, exactly as returned by READ(10/12).
+    /// DVD and BD have no raw/CD-sync sector form at the software layer — the drive's own
+    /// Reed–Solomon product code has already corrected (or failed to correct) the sector
+    /// before it reaches here, so a successful read command IS the proof; there is no
+    /// separate sync/EDC to check on top of it.</summary>
+    DvdUserData2048,
 }
 
 /// <summary>
@@ -173,13 +179,25 @@ public static class SectorExtraction
     public const int RawSectorSize = 2352;
     public const int QBytesPerSector = 16;
 
+    /// <summary>DVD/BD sector size — the only size that exists at the software layer
+    /// for those media; there is no 2352-byte raw form to read.</summary>
+    public const int DvdSectorSize = 2048;
+
     public static int PayloadSize(ExtractDataType t) => t switch
     {
         ExtractDataType.Mode1_2048 or ExtractDataType.Mode2Form1_2048 => 2048,
         ExtractDataType.Mode2Form2_2324 => 2324,
         ExtractDataType.Mode2Mixed_2336 => 2336,
+        ExtractDataType.DvdUserData2048 => DvdSectorSize,
         _ => RawSectorSize,
     };
+
+    /// <summary>What a single successful read attempt's <see cref="SectorReadAttempt.Main"/>
+    /// should be sized at for this data type — <see cref="RawSectorSize"/> for every CD
+    /// form (the raw sector is always read first, then <see cref="Convert"/> cooks it down),
+    /// or <see cref="DvdSectorSize"/> for DVD/BD, which has no raw form to read from.</summary>
+    private static int ExpectedReadLength(ExtractDataType t) =>
+        t == ExtractDataType.DvdUserData2048 ? DvdSectorSize : RawSectorSize;
 
     /// <summary>
     /// Extract sectors [startLba, endLba] inclusive to <paramref name="output"/>.
@@ -358,11 +376,12 @@ public static class SectorExtraction
     private static string? Failure(SectorReadAttempt a, ExtractionOptions o)
     {
         if (!a.Ok) return a.Error is null ? "the read failed" : $"the read failed ({a.Error})";
-        if (a.Main.Length != RawSectorSize)
-            return $"the drive returned {a.Main.Length} bytes, not a raw {RawSectorSize}-byte sector";
+        int expected = ExpectedReadLength(o.DataType);
+        if (a.Main.Length != expected)
+            return $"the drive returned {a.Main.Length} bytes, not the expected {expected}-byte sector";
         if (o.UseC2 && a.C2 is not null && CountC2Bits(a.C2) is int n and > 0)
             return $"C2 flagged {n} unreliable byte(s)";
-        if (o.RequireDataSync && !HasSync(a.Main))
+        if (o.RequireDataSync && o.DataType != ExtractDataType.DvdUserData2048 && !HasSync(a.Main))
             return "no sector sync on a data track — the drive returned unstructured " +
                    "(likely muted/zero-filled) data despite claiming success";
 
@@ -389,6 +408,11 @@ public static class SectorExtraction
                 if (!HasSync(a.Main)) return "no sector sync — not a data sector";
                 if (a.Main[15] != 2) return $"sector is Mode {a.Main[15]}, not Mode 2";
                 break;
+            case ExtractDataType.DvdUserData2048:
+                // No sync/EDC exists to check at this layer for DVD/BD — the drive's own
+                // ECC already proved (or failed to prove) the sector; a successful
+                // READ(10/12) of the right length is everything there is to check.
+                break;
         }
         return null;
     }
@@ -409,7 +433,7 @@ public static class SectorExtraction
     private static byte[] IgnorePayload(SectorReadAttempt? a, ExtractDataType t)
     {
         int size = PayloadSize(t);
-        if (a is { Main.Length: RawSectorSize })
+        if (a is not null && a.Main.Length == ExpectedReadLength(t))
         {
             var c = Convert(a.Main, t);
             return c.Length == size ? c : new byte[size];
