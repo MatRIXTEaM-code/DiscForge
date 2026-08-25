@@ -85,17 +85,54 @@ details.
 
 ## The immediate arc
 
-1. **Canonical re-dump.** With track-aware `--disc` built, one command re-dumps
-   the PS1 game properly (auto-audited, MRI-able). Interim per-track dumps exist
-   on Andy's PC: `data.bin` (track 1, COMPLETE) + `game2.t02..t08.bin` (audio,
-   all COMPLETE). `game.bad.bin` is the old half-void dump — evidence, do not use.
+1. **Canonical re-dump — DONE.** Track-aware `--disc` proven on real hardware
+   for the first time: `ps1-redump.bin` + `ps1-redump.cue` on Andy's PC, all 8
+   tracks COMPLETE, AUDIT PASS (data track sync 153,904/153,904, EDC clean;
+   audio pregaps read as genuine silence, not damage). This supersedes the old
+   scattered interim dumps (`data.bin`, `game2.t02..t08.bin`) and the old
+   half-void `game.bad.bin` — keep those only as prior evidence, don't use them.
 
-2. **Redemption burn + round trip.** Burn the correct mixed-mode cue via
-   `burn-raw --engine spti` on the TSSTcorp SH-224DB (drive letter D:) at 4–8x
-   onto the last Taiyo Yuden CD-R, read back, `compare`/hash. Expect the first
-   fully closed dump→burn→dump round trip. Note: the Samsung's C2 pointers are
-   unreliable (flags the first sector of most read spans) — use `--no-c2` when
-   reading on it; the sync gate + EDC checks carry integrity.
+2. **Redemption burn + round trip — DONE, via ImgBurn (DiscForge's own SPTI raw
+   engine still doesn't work — see below).** `ps1-redump.cue`/`.bin` burned to
+   the last CD-R (a CMC Magnetics disc, not the Taiyo Yuden NEXT.md previously
+   assumed) on the TSSTcorp SH-224DB via ImgBurn 2.5.8.0, SAO write type, then
+   verified by read-back: **289,321/289,322 sectors bit-perfect**. The one
+   miscompare is at LBA 153903 — the LAST sector of the data track, right at
+   the data→audio boundary. ImgBurn's own log: "The drive probably corrected
+   the L-EC Area because it's wrong in the image file" — a well-known
+   boundary-sector ECC quirk in CD preservation, not a systemic dump or burn
+   problem. This is the first fully closed dump→burn→dump round trip this
+   project has ever achieved (99.9997% bit-perfect). Note: the TSSTcorp's C2
+   pointers are unreliable (flags the first sector of most read spans) —
+   `--no-c2` was used reading on it; the sync gate + EDC checks carry integrity.
+
+   **DiscForge's own `burn-raw --engine spti` still does not work** — it was
+   the original goal here, but `--test-cue` was rejected by the real drive
+   (ASC 0x26/0x00, "invalid field in parameter list") through FOUR rounds of
+   fixes this session, all real and now committed: (1) the cue-sheet Data Form
+   byte was wrong (0x10, not a defined MMC code); corrected against cdrdao's
+   GenericMMC::createCueSheet to 0x00/0x10/0x20 by track type — but a PDF-spec
+   extraction along the way suggested 0x08, which was ALSO wrong and rejected,
+   a reminder that the WebFetch summarizer is unreliable for exact byte tables
+   the same way it hallucinated a redump hash match earlier this session; (2)
+   the lead-in structure was sending three Red-Book-style POINT entries
+   (A0/A1/A2) that cdrdao doesn't send at all — replaced with cdrdao's single
+   generic lead-in entry, entry count 14→12; (3) the MODE SELECT Data Block
+   Type was hardcoded to 3 (raw+P-W subchannel) even for the Session-At-Once
+   cue-sheet-test path — cdrdao uses 0 there, only using 3 for the actual Raw
+   write type; fixed. `--test-cue` STILL rejects after all three. The
+   diagnostic that broke the logjam: ImgBurn burning the SAME `ps1-redump.cue`
+   on the SAME drive succeeds completely using **SAO** as the write type for
+   the WHOLE burn (cue sheet included) — not the separate no-cue-sheet Raw
+   mode DiscForge's `Burn()` falls back to. That strongly suggests DiscForge's
+   Raw-mode fallback (added because "the WRITE(10) parks" in SAO — see the
+   comment history in `SptiRawDaoBurnEngine.cs`) was working around the SAME
+   Data Block Type bug just fixed in the test path, not a genuine SAO
+   limitation — meaning `Burn()` itself may need the equivalent fix (SAO +
+   cue sheet + plain-size WRITE(10), matching cdrdao's actual write loop,
+   instead of the current lead-in-composing Raw-mode path) rather than the
+   `--test-cue` cue sheet needing yet another guess. Next session: try that
+   before guessing at cue-sheet bytes again.
 
 ## Hardware track (Plextor PX-W5224TA)
 

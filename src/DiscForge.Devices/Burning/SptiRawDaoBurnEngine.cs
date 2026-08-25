@@ -317,11 +317,22 @@ public static class SptiRawDaoBurnEngine
         // matching write type is Raw (3): the host provides the WHOLE disc, lead-in included, and
         // NO cue sheet. Session-At-Once (2) is a cooked mode where the drive generates the
         // sub-channel/lead-in from a cue sheet — it accepts the setup but will not consume raw-P-W
-        // blocks at write time (the WRITE(10) parks). Caller passes the write type explicitly.
+        // blocks at write time (the WRITE(10) parks).
+        //
+        // The two write types were both using data block type 3 here, which is wrong for
+        // Session-At-Once: cdrdao's GenericMMC::setWriteParameters (dao/GenericMMC.cc) sets it to
+        // 0 (plain raw 2352, no host-supplied sub-channel) for SAO — its own comment reads
+        // "Data Block Type: raw data, block size: 2352 (I think not used for session at once
+        // writing)" — and only uses type 3 as a special case for CD-TEXT lead-in writing, which
+        // DiscForge doesn't do here. A real drive rejected SEND CUE SHEET outright (ASC 0x26/0x00)
+        // with type 3 set for the SAO cue-sheet test; this is the most likely reason, on top of
+        // the cue-sheet content fixes already made. Raw (the real full-disc write in Burn()) still
+        // needs type 3, since it genuinely does supply raw+P-W bytes itself.
+        byte dataBlockType = writeType == CdWriteType.Raw ? DataBlockRawPw : (byte)0;
         var page = new WriteParametersPage
         {
             WriteType = writeType,
-            DataBlockType = DataBlockRawPw,          // raw + raw-interleaved P-W (2448 B/sector)
+            DataBlockType = dataBlockType,
             TrackMode = (byte)((byte)layout.Tracks[0].Control & 0x0F),
             SessionFormat = layout.DiscType,         // 0x00 CD-DA/CD-ROM, 0x20 CD-ROM XA
             TestWrite = testWrite,                   // simulation (laser off) when true

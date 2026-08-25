@@ -14,9 +14,9 @@ namespace DiscForge.Core.Tests;
 
 /// <summary>
 /// The DAO cue-sheet builder (for direct-SPTI RAW writing). These validate the STRUCTURE the
-/// drive is handed — lead-in POINT entries, per-track index positions, lead-out, and the
-/// control/MSF math. Exact byte acceptance of ambiguous fields is confirmed separately against
-/// real hardware via `burn-raw --engine spti --test-cue` (non-destructive).
+/// drive is handed — the single generic lead-in entry, per-track index positions, lead-out, and
+/// the control/MSF math. Exact byte acceptance of ambiguous fields is confirmed separately
+/// against real hardware via `burn-raw --engine spti --test-cue` (non-destructive).
 /// </summary>
 public class DaoCueSheetTests
 {
@@ -34,19 +34,33 @@ public class DaoCueSheetTests
     }
 
     [Fact]
-    public void Lead_in_points_carry_first_last_track_and_lead_out()
+    public void Lead_in_is_a_single_generic_entry_at_zero()
     {
+        // Matches cdrdao's GenericMMC::createCueSheet: ONE lead-in entry (TNO=0, Index=0,
+        // MSF=00:00:00), not the three Red-Book-style POINT (A0/A1/A2) entries an earlier
+        // version of this file sent — those were rejected outright by a real drive.
         var e = DaoCueSheet.BuildEntries(TwoAudioTracks());
 
-        // A0: first track = 1; A1: last track = 2; A2: lead-out at 00:22:00 (150 pregap + 1500).
-        Assert.Equal(0xA0, e[0].IndexOrPoint);
-        Assert.Equal(0x01, e[0].Min);                    // BCD first track
-        Assert.Equal(0x01, e[0].CtlAdr);                 // audio control (0) + ADR 1
-        Assert.Equal(0xA1, e[1].IndexOrPoint);
-        Assert.Equal(0x02, e[1].Min);                    // BCD last track
-        Assert.Equal(0xA2, e[2].IndexOrPoint);
-        Assert.Equal(0x00, e[2].Min);                    // lead-out at 00:22:00 → 0 min, 22 sec
-        Assert.Equal(0x22, e[2].Sec);
+        Assert.Equal(0x00, e[0].TrackNumber);
+        Assert.Equal(0x00, e[0].IndexOrPoint);
+        Assert.Equal(0x01, e[0].DataForm);                // LeadInOutForm(Audio) = 0x01
+        Assert.Equal(0x01, e[0].CtlAdr);                  // audio control (0) + ADR 1
+        Assert.Equal(0x00, e[0].Min);
+        Assert.Equal(0x00, e[0].Sec);
+        Assert.Equal(0x00, e[0].Frame);
+    }
+
+    [Fact]
+    public void Lead_out_lands_at_the_right_absolute_time()
+    {
+        // Lead-out at 00:22:00 (150-sector pregap + 1500 program sectors).
+        var e = DaoCueSheet.BuildEntries(TwoAudioTracks());
+        var leadOut = e.First(x => x.TrackNumber == 0xAA);
+
+        Assert.Equal(0x01, leadOut.IndexOrPoint);
+        Assert.Equal(0x00, leadOut.Min);
+        Assert.Equal(0x22, leadOut.Sec);
+        Assert.Equal(0x01, leadOut.DataForm);             // LeadInOutForm(Audio) = 0x01
     }
 
     [Fact]
@@ -97,5 +111,44 @@ public class DaoCueSheetTests
 
         var t1 = e.First(x => x.TrackNumber == 1 && x.IndexOrPoint == 1);
         Assert.Equal(0x41, t1.CtlAdr);                   // data control (4) + ADR 1
+    }
+
+    [Fact]
+    public void A_mode1_track_uses_cdrdaos_data_form_code_not_the_control_nibble()
+    {
+        // DATA FORM is its own byte, distinct from (and easy to confuse with) the CTL/ADR
+        // control nibble. Two earlier guesses here were both rejected by a real drive with
+        // ASC 0x26/0x00: 0x10-for-everything, then 0x08 (from an unreliable PDF-summary
+        // extraction). This locks in cdrdao's proven value for MODE1: 0x10.
+        var bin = new MemoryStream(new byte[600 * 2048]);
+        const string cue = """
+            FILE "d.bin" BINARY
+              TRACK 01 MODE1/2048
+                INDEX 01 00:00:00
+            """;
+        var layout = DiscLayout.FromCue(CueSheet.Parse(cue), _ => bin);
+        var e = DaoCueSheet.BuildEntries(layout);
+
+        var t1 = e.First(x => x.TrackNumber == 1 && x.IndexOrPoint == 1);
+        Assert.Equal(0x10, t1.DataForm);
+    }
+
+    [Fact]
+    public void A_mode2_track_uses_cdrdaos_xa_data_form_code()
+    {
+        // cdrdao's MODE2_RAW bucket ("assume it contains XA sectors") = 0x20 — DiscForge's
+        // RawTrackMode.Mode2 (raw 2352-byte sectors) maps onto exactly that bucket, since
+        // DiscForge doesn't separately distinguish plain Mode2 from CD-XA Mode2 forms.
+        var bin = new MemoryStream(new byte[600 * 2352]);
+        const string cue = """
+            FILE "d.bin" BINARY
+              TRACK 01 MODE2/2352
+                INDEX 01 00:00:00
+            """;
+        var layout = DiscLayout.FromCue(CueSheet.Parse(cue), _ => bin);
+        var e = DaoCueSheet.BuildEntries(layout);
+
+        var t1 = e.First(x => x.TrackNumber == 1 && x.IndexOrPoint == 1);
+        Assert.Equal(0x20, t1.DataForm);
     }
 }
