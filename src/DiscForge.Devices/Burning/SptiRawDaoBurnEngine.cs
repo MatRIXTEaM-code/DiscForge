@@ -319,25 +319,63 @@ public static class SptiRawDaoBurnEngine
         // sub-channel/lead-in from a cue sheet — it accepts the setup but will not consume raw-P-W
         // blocks at write time (the WRITE(10) parks).
         //
-        // The two write types were both using data block type 3 here, which is wrong for
-        // Session-At-Once: cdrdao's GenericMMC::setWriteParameters (dao/GenericMMC.cc) sets it to
-        // 0 (plain raw 2352, no host-supplied sub-channel) for SAO — its own comment reads
-        // "Data Block Type: raw data, block size: 2352 (I think not used for session at once
-        // writing)" — and only uses type 3 as a special case for CD-TEXT lead-in writing, which
-        // DiscForge doesn't do here. A real drive rejected SEND CUE SHEET outright (ASC 0x26/0x00)
-        // with type 3 set for the SAO cue-sheet test; this is the most likely reason, on top of
-        // the cue-sheet content fixes already made. Raw (the real full-disc write in Burn()) still
-        // needs type 3, since it genuinely does supply raw+P-W bytes itself.
+        // Data block type 0 (not 3) for Session-At-Once: cdrdao's GenericMMC::setWriteParameters
+        // (dao/GenericMMC.cc) sets it to 0 (plain raw 2352, no host-supplied sub-channel) for SAO
+        // — its own comment reads "Data Block Type: raw data, block size: 2352 (I think not used
+        // for session at once writing)" — and only uses type 3 for CD-TEXT lead-in writing, which
+        // DiscForge doesn't do here. Raw (the real full-disc write in Burn()) still needs type 3.
         byte dataBlockType = writeType == CdWriteType.Raw ? DataBlockRawPw : (byte)0;
-        var page = new WriteParametersPage
+
+        // READ-MODIFY-WRITE, not build-from-scratch. This is the other structural difference from
+        // cdrdao that earlier attempts here missed: cdrdao's setWriteParameters starts from
+        // getModePage() — the drive's OWN current Write Parameters page — and flips only the
+        // specific bits it cares about (write type, test-write, data block type, session format),
+        // leaving everything else (vendor/reserved fields, buffer hints, and notably the Track
+        // Mode nibble in byte 3) exactly as the drive reported. DiscForge was building the whole
+        // 52-byte page from a blank record instead, which zeroes fields cdrdao never touches and
+        // unconditionally overwrites Track Mode to the first track's control nibble — a value the
+        // drive was never asked whether it wanted overridden. A real drive rejected SEND CUE SHEET
+        // (ASC 0x26/0x00) through three content/DataBlockType fixes already; this is the next most
+        // concrete, source-grounded difference from a reference implementation known to work on
+        // this exact drive (ImgBurn/SAO succeeded against it — see docs/NEXT.md).
+        var senseBuf = new byte[64];
+        var sense = dev.SendCommand(MmcCommands.ModeSense10(0x05, (ushort)senseBuf.Length),
+                                    senseBuf, SptiDataDirection.In, 20);
+        byte[] mp;
+        if (sense.Success)
         {
-            WriteType = writeType,
-            DataBlockType = dataBlockType,
-            TrackMode = (byte)((byte)layout.Tracks[0].Control & 0x0F),
-            SessionFormat = layout.DiscType,         // 0x00 CD-DA/CD-ROM, 0x20 CD-ROM XA
-            TestWrite = testWrite,                   // simulation (laser off) when true
-        };
-        var paramList = MmcCommands.ModeParameterList(page.Build());
+            // MODE SENSE(10) response: 8-byte header (bytes 6..7 = block descriptor length),
+            // then that many descriptor bytes, then the page itself (byte0 = PS|PageCode,
+            // byte1 = page length N, N further bytes).
+            int blockDescLen = (senseBuf[6] << 8) | senseBuf[7];
+            int pageStart = 8 + blockDescLen;
+            int pageLen = pageStart < senseBuf.Length ? senseBuf[pageStart + 1] : 0;
+            int total = 2 + pageLen;
+            if (pageStart + total <= senseBuf.Length && pageLen > 0)
+            {
+                mp = new byte[total];
+                Array.Copy(senseBuf, pageStart, mp, 0, total);
+            }
+            else
+            {
+                mp = new WriteParametersPage().Build();   // drive's answer didn't parse — fall back
+            }
+        }
+        else
+        {
+            mp = new WriteParametersPage().Build();        // MODE SENSE unsupported — fall back
+        }
+
+        mp[0] &= 0x7F;                                      // clear PS
+        mp[2] &= 0xE0;                                       // clear BUFE stays; write-type+test-write bits cleared
+        mp[2] |= (byte)((byte)writeType & 0x0F);
+        if (testWrite) mp[2] |= 1 << 4;
+        mp[3] &= 0x3F;                                       // clear multi-session bits only — Track Mode
+                                                              // nibble (bits 3:0) is left as the drive reported it
+        mp[4] = (byte)((mp[4] & 0xF0) | (dataBlockType & 0x0F));
+        mp[8] = layout.DiscType;                             // session format: 0x00 CD-DA/CD-ROM, 0x20 CD-ROM XA
+
+        var paramList = MmcCommands.ModeParameterList(mp);
         return dev.SendCommand(MmcCommands.ModeSelect10((ushort)paramList.Length), paramList,
                                SptiDataDirection.Out, 30);
     }

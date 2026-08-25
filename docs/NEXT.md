@@ -106,33 +106,53 @@ details.
    pointers are unreliable (flags the first sector of most read spans) —
    `--no-c2` was used reading on it; the sync gate + EDC checks carry integrity.
 
-   **DiscForge's own `burn-raw --engine spti` still does not work** — it was
-   the original goal here, but `--test-cue` was rejected by the real drive
-   (ASC 0x26/0x00, "invalid field in parameter list") through FOUR rounds of
-   fixes this session, all real and now committed: (1) the cue-sheet Data Form
-   byte was wrong (0x10, not a defined MMC code); corrected against cdrdao's
-   GenericMMC::createCueSheet to 0x00/0x10/0x20 by track type — but a PDF-spec
-   extraction along the way suggested 0x08, which was ALSO wrong and rejected,
-   a reminder that the WebFetch summarizer is unreliable for exact byte tables
-   the same way it hallucinated a redump hash match earlier this session; (2)
-   the lead-in structure was sending three Red-Book-style POINT entries
-   (A0/A1/A2) that cdrdao doesn't send at all — replaced with cdrdao's single
-   generic lead-in entry, entry count 14→12; (3) the MODE SELECT Data Block
-   Type was hardcoded to 3 (raw+P-W subchannel) even for the Session-At-Once
-   cue-sheet-test path — cdrdao uses 0 there, only using 3 for the actual Raw
-   write type; fixed. `--test-cue` STILL rejects after all three. The
-   diagnostic that broke the logjam: ImgBurn burning the SAME `ps1-redump.cue`
-   on the SAME drive succeeds completely using **SAO** as the write type for
-   the WHOLE burn (cue sheet included) — not the separate no-cue-sheet Raw
-   mode DiscForge's `Burn()` falls back to. That strongly suggests DiscForge's
-   Raw-mode fallback (added because "the WRITE(10) parks" in SAO — see the
-   comment history in `SptiRawDaoBurnEngine.cs`) was working around the SAME
-   Data Block Type bug just fixed in the test path, not a genuine SAO
-   limitation — meaning `Burn()` itself may need the equivalent fix (SAO +
-   cue sheet + plain-size WRITE(10), matching cdrdao's actual write loop,
-   instead of the current lead-in-composing Raw-mode path) rather than the
-   `--test-cue` cue sheet needing yet another guess. Next session: try that
-   before guessing at cue-sheet bytes again.
+   **DiscForge's own `burn-raw --engine spti` still does not work — STOP
+   guessing at it without better diagnostics; read this before trying a 6th
+   fix.** It was the original goal here, but `--test-cue` was rejected by the
+   real drive (ASC 0x26/0x00, "invalid field in parameter list") through
+   **FIVE** rounds of fixes this session, all real, source-grounded, committed
+   — and all rejected with the byte-for-byte identical sense code:
+     1. Cue-sheet Data Form byte was 0x10 (not a defined MMC code); corrected
+        against cdrdao's `GenericMMC::createCueSheet` to 0x00/0x10/0x20 by
+        track type. (A PDF-spec extraction along the way suggested 0x08,
+        ALSO wrong and rejected — the WebFetch summarizer is unreliable for
+        exact byte tables, the same failure mode that hallucinated a redump
+        hash match earlier this session. Don't trust it for spec bytes again
+        without a second, independent source.)
+     2. Lead-in was sending three Red-Book-style POINT entries (A0/A1/A2)
+        that cdrdao doesn't send at all; replaced with cdrdao's single
+        generic lead-in entry (14→12 total entries).
+     3. MODE SELECT's Data Block Type was hardcoded to 3 (raw+P-W subchannel)
+        even for the Session-At-Once cue-sheet-test path; cdrdao uses 0
+        there, reserving 3 for the actual Raw write type. Fixed.
+     4. `SetRawDaoWriteParameters` built the whole write-parameters page from
+        a blank record instead of reading the drive's current page first and
+        flipping only specific bits (cdrdao's `getModePage`+selective-bits
+        approach) — notably, cdrdao never touches the Track Mode nibble at
+        all, but DiscForge was unconditionally overwriting it. Rewrote as a
+        genuine MODE SENSE → modify → MODE SELECT read-modify-write. STILL
+        rejected, identical sense code.
+
+   The diagnostic that at least separated "drive limitation" from "DiscForge
+   bug": ImgBurn 2.5.8.0 burning the SAME `ps1-redump.cue` on the SAME drive
+   succeeds completely — real burn AND read-back verify, 289,321/289,322
+   sectors bit-perfect (see above) — using **SAO** as the write type for the
+   whole operation, cue sheet included. So the drive and cue-sheet CONTENT
+   are provably fine; something in exactly how DiscForge issues the SCSI
+   commands (ordering, timing, a CDB field, or something not yet considered)
+   is still wrong, and it's specific enough that five source-grounded content
+   fixes didn't touch it.
+
+   **What did NOT work as a diagnostic**: asking the user to enable ImgBurn's
+   verbose/debug SCSI logging — couldn't find the toggle in the UI in the time
+   available. **What WOULD actually move this forward next time**: getting an
+   actual byte-level capture of what ImgBurn sends (its debug log once
+   enabled, or a USB/SCSI sniffer, or Process Monitor / a kernel-level SPTI
+   trace) to diff directly against DiscForge's bytes, instead of reasoning
+   from reference source code that clearly still misses something
+   drive-specific. Until that capture exists, further attempts here are
+   guessing, not debugging — say so plainly rather than proposing a 6th fix
+   with the same confidence as the first.
 
 ## Hardware track (Plextor PX-W5224TA)
 
