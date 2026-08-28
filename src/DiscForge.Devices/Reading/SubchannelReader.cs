@@ -67,6 +67,23 @@ public static class SubchannelReader
         return r.Success;
     }
 
+    /// <summary>Check whether the drive will return CORRECTED, de-interleaved R-W sub-channel
+    /// (MMC sub-channel selector 100) — the drive's own firmware-corrected reading, in the same
+    /// 96-bytes-per-sector shape <see cref="Core.Raw.RawSubcodeForm.Packed96"/> describes, as
+    /// opposed to the as-physically-read <see cref="Core.Raw.RawSubcodeForm.Interleaved96"/> shape
+    /// <see cref="Read"/> captures. Not every drive supports this selector even when it supports
+    /// raw P-W — worth checking before a long read for the same reason as
+    /// <see cref="SupportsRawSubchannel"/>.</summary>
+    public static bool SupportsCorrectedSubchannel(SptiDevice dev, uint testLba = 0)
+    {
+        var buffer = new byte[MainBytes + SubBytes];
+        var r = dev.SendCommand(
+            MmcCommands.ReadCd(testLba, 1, MmcCommands.ExpectedSectorType.Any,
+                               MmcCommands.SectorFields.Raw, MmcCommands.SubChannel.CorrectedRw),
+            buffer, SptiDataDirection.In, timeoutSeconds: 20);
+        return r.Success;
+    }
+
     /// <summary>
     /// Read sub-channel for a range of sectors.
     ///
@@ -79,6 +96,30 @@ public static class SubchannelReader
     public static ReadResult Read(SptiDevice dev, uint startLba, uint sectorCount,
                                   IProgress<double>? progress = null,
                                   CancellationToken cancel = default)
+        => ReadCore(dev, startLba, sectorCount, MmcCommands.SubChannel.RawPw, progress, cancel);
+
+    /// <summary>
+    /// Read the drive's own CORRECTED, de-interleaved R-W sub-channel (MMC selector 100) for a
+    /// range of sectors — the same firmware-corrected reading <see cref="SupportsCorrectedSubchannel"/>
+    /// probes for. The returned bytes are in the PACKED shape
+    /// (<see cref="Core.Raw.RawSubcodeForm.Packed96"/>: 12 bytes each of P, Q, R, S, T, U, V, W in
+    /// turn), not the interleaved shape <see cref="Read"/> returns — decode with
+    /// <c>SubcodeFrame.ExtractQ(sub, RawSubcodeForm.Packed96, ...)</c> (or ExtractRw) accordingly.
+    ///
+    /// Capturing both this and a raw read of the same range is the "most faithful capture": where
+    /// the two disagree, either the drive's correction altered something a plain re-read would show
+    /// as noise, or the raw capture itself hit a transient error the correction fixed — either way,
+    /// worth a second look rather than trusting one reading blind. See
+    /// <see cref="Core.Raw.RawSubchannel.CompareRawAndCorrected"/>.
+    /// </summary>
+    public static ReadResult ReadCorrected(SptiDevice dev, uint startLba, uint sectorCount,
+                                           IProgress<double>? progress = null,
+                                           CancellationToken cancel = default)
+        => ReadCore(dev, startLba, sectorCount, MmcCommands.SubChannel.CorrectedRw, progress, cancel);
+
+    private static ReadResult ReadCore(SptiDevice dev, uint startLba, uint sectorCount,
+                                       MmcCommands.SubChannel selector,
+                                       IProgress<double>? progress, CancellationToken cancel)
     {
         ArgumentNullException.ThrowIfNull(dev);
         if (sectorCount == 0) throw new ArgumentException("No sectors requested.", nameof(sectorCount));
@@ -98,7 +139,7 @@ public static class SubchannelReader
 
             var r = dev.SendCommand(
                 MmcCommands.ReadCd(startLba + done, chunk, MmcCommands.ExpectedSectorType.Any,
-                                   MmcCommands.SectorFields.Raw, MmcCommands.SubChannel.RawPw),
+                                   MmcCommands.SectorFields.Raw, selector),
                 span, SptiDataDirection.In, timeoutSeconds: 60);
 
             if (r.Success)
@@ -126,7 +167,7 @@ public static class SubchannelReader
                         MmcCommands.ReadCd(startLba + done + i, 1,
                                            MmcCommands.ExpectedSectorType.Any,
                                            MmcCommands.SectorFields.Raw,
-                                           MmcCommands.SubChannel.RawPw),
+                                           selector),
                         one, SptiDataDirection.In, timeoutSeconds: 30);
 
                     long to = (long)(done + i) * SubBytes;

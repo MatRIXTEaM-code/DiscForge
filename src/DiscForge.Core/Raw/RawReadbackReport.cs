@@ -37,6 +37,7 @@ public static class RawReadbackReport
         sb.Append("\"misAddressed\":").Append(r.MisAddressed).Append(',');
         sb.Append("\"protectionLosses\":").Append(r.ProtectionLosses).Append(',');
         sb.Append("\"subTimingOnly\":").Append(r.SubTimingOnly).Append(',');
+        sb.Append("\"subReadNoise\":").Append(r.SubReadNoise).Append(',');
         sb.Append("\"dropouts\":").Append(r.Dropouts).Append(',');
         sb.Append("\"examples\":[");
         for (int i = 0; i < r.Examples.Count; i++)
@@ -110,6 +111,8 @@ public static class RawReadbackReport
         MetricRow(sb, "Mis-addressed sectors", r.MisAddressed, r.MisAddressed == 0);
         MetricRow(sb, "Protection-loss sectors", r.ProtectionLosses, r.ProtectionLosses == 0);
         MetricRow(sb, "Sub-channel timing-only", r.SubTimingOnly, r.SubTimingOnly == 0, warnIfNonZero: true);
+        if (r.SubReadNoise > 0)
+            MetricRow(sb, "Sub-channel read-noise (own CRC failed)", r.SubReadNoise, false, warnIfNonZero: true);
         MetricRow(sb, "Dropouts (missing sectors)", r.Dropouts, r.Dropouts == 0);
         sb.Append("</table>");
 

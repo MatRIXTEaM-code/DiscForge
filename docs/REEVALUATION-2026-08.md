@@ -91,10 +91,12 @@ client-side, nothing uploaded, nothing installed. The community gets DiscForge's
 verification engine as a URL; drives stay native, verification goes universal.
 *On the shelf:* the whole Core; needed: a Blazor WASM shell.
 
-### D. Consensus healing — two broken discs, one proven image
+### D. Consensus healing — two broken discs, one proven image — **DONE, see docs/NEXT.md**
 Given N dumps of the same pressing, reconstruct per-sector from whichever source
 carries proof (EDC-valid, AccurateRip-matched), emitting a certificate that
 records every sector's provenance. Damaged collections heal each other.
+Shipped as `dforge merge-cert` — this list entry undersold it as unbuilt; it
+isn't. Only a GUI view and an AccurateRip-aware audio tie-breaker remain.
 *On the shelf:* RecoverySession, MergeCertificate, C2ConsensusMerge, AccurateRip.
 
 ### E. The Disc Actuary — predicting media death

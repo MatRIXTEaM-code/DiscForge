@@ -50,6 +50,12 @@ public static class RawReadbackCompare
         public required long MisAddressed { get; init; }
         public required long ProtectionLosses { get; init; }
         public required long SubTimingOnly { get; init; }
+        /// <summary>Sectors where the golden Q was fine but the READ-BACK's own Q frame
+        /// failed its own CRC — a transient sub-channel read error (real optical media takes
+        /// the occasional single-frame glitch), not evidence the disc holds a wrong address.
+        /// Distinct from <see cref="MisAddressed"/>, which requires the read-back's Q to be
+        /// internally valid AND decode to the wrong place.</summary>
+        public long SubReadNoise { get; init; }
         public required long Dropouts { get; init; }
         /// <summary>The first handful of each kind of difference, for a readable report.</summary>
         public required IReadOnlyList<Diff> Examples { get; init; }
@@ -64,7 +70,8 @@ public static class RawReadbackCompare
                           "on the disc (main channel + sub-channel).",
             Grade.PassWithNotes => $"PASS (with notes) — user data, addressing and protection are intact " +
                           $"across {SectorsCompared:N0} sectors; benign, drive-introduced differences only " +
-                          $"({SubTimingOnly:N0} sub-timing, {ScrambleNormalized:N0} descrambled-on-read) — see notes.",
+                          $"({SubTimingOnly:N0} sub-timing, {ScrambleNormalized:N0} descrambled-on-read, " +
+                          $"{SubReadNoise:N0} sub-read-noise) — see notes.",
             _ => $"FAIL — {MainMismatches + MisAddressed + ProtectionLosses + Dropouts:N0} defect(s) across " +
                  $"{SectorsCompared:N0} sectors (main {MainMismatches:N0}, mis-addressed {MisAddressed:N0}, " +
                  $"protection-loss {ProtectionLosses:N0}, dropout {Dropouts:N0}).",
@@ -93,10 +100,20 @@ public static class RawReadbackCompare
         long rProg = rForm is null ? 0 : RawImageInspector.FindLeadInLength(readback, rSize, rForm.Value);
 
         // Absolute address at each program start, so we align by disc address
-        // rather than by file offset. Falls back to index-alignment when a
-        // capture has no sub-channel to read an address from.
-        long gBaseAbs = ProgramBaseAbs(golden, gSize, gForm, gSub, gProg, out bool gAddr);
-        long rBaseAbs = ProgramBaseAbs(readback, rSize, rForm, rSub, rProg, out bool rAddr);
+        // rather than by file offset. Prefer the MAIN-CHANNEL sector header
+        // (MM:SS:FF at bytes 12..14) over the Q sub-channel: some real drives
+        // report Q at a small, constant sector skew relative to the main-channel
+        // data it's bundled with in a raw capture (a documented main/sub
+        // read-back misalignment quirk — see MainChannelBaseAbs), and aligning
+        // on a skewed Q address then compares every sector against its neighbour
+        // instead of itself, turning a byte-perfect burn into "everything
+        // differs". The main-channel header has no such cross-channel skew.
+        // Falls back to Q (audio tracks have no header at all) or plain index
+        // alignment when neither source yields an address.
+        long gBaseAbs = MainChannelBaseAbs(golden, gSize, gProg, out bool gAddr);
+        if (!gAddr) gBaseAbs = ProgramBaseAbs(golden, gSize, gForm, gSub, gProg, out gAddr);
+        long rBaseAbs = MainChannelBaseAbs(readback, rSize, rProg, out bool rAddr);
+        if (!rAddr) rBaseAbs = ProgramBaseAbs(readback, rSize, rForm, rSub, rProg, out rAddr);
         bool byAddress = gAddr && rAddr;
         if (!byAddress)
             notes.Add("One capture has no readable sub-channel address; aligned by program offset instead.");
@@ -104,6 +121,28 @@ public static class RawReadbackCompare
         long startAbs = byAddress ? Math.Max(gBaseAbs, rBaseAbs) : 0;
         long gStartIdx = gProg + (byAddress ? startAbs - gBaseAbs : 0);
         long rStartIdx = rProg + (byAddress ? startAbs - rBaseAbs : 0);
+
+        // Q sub-channel vs main-channel skew: some real drives extract the P-W
+        // sub-channel a small, constant number of sectors out of step with the
+        // main-channel data it's bundled with in the same raw capture (the same
+        // quirk MainChannelBaseAbs's doc comment describes — verified on real
+        // hardware: main-channel header a rock-solid 150, Q consistently 151 on
+        // the exact same capture). That's a read-PATH artifact, not a burn
+        // defect, and it would otherwise show up as every single sector's Q
+        // "mis-addressed". Measure each file's own Q-vs-main offset independently
+        // via the Q-based ProgramBaseAbs, and read that file's sub-channel
+        // `skew` sectors away from its main-channel position so both are
+        // compared address-for-address rather than file-position-for-position.
+        long gQBase = ProgramBaseAbs(golden, gSize, gForm, gSub, gProg, out bool gQAddr);
+        long rQBase = ProgramBaseAbs(readback, rSize, rForm, rSub, rProg, out bool rQAddr);
+        long gSkew = gQAddr ? gQBase - gBaseAbs : 0;
+        long rSkew = rQAddr ? rQBase - rBaseAbs : 0;
+        if (gSkew != 0)
+            notes.Add($"Golden's sub-channel is offset {gSkew:+#;-#;0} sector(s) from its main channel; " +
+                      "corrected before comparing (not a burn defect).");
+        if (rSkew != 0)
+            notes.Add($"The read-back's sub-channel is offset {rSkew:+#;-#;0} sector(s) from its main " +
+                      "channel — a drive read-path quirk, not a burn defect; corrected before comparing.");
 
         long gAvail = gTotal - gStartIdx, rAvail = rTotal - rStartIdx;
         long compare = Math.Min(gAvail, rAvail);
@@ -116,6 +155,7 @@ public static class RawReadbackCompare
                   "(truncated capture or a short burn).");
 
         long mainMis = 0, edcBroken = 0, subMis = 0, misAddr = 0, protLoss = 0, timing = 0, dropouts = 0;
+        long subReadNoise = 0;
         long scrambleNorm = 0;
         var examples = new List<Diff>();
         var perCat = new Dictionary<string, int>();
@@ -140,8 +180,18 @@ public static class RawReadbackCompare
             long gIdx = gStartIdx + i, rIdx = rStartIdx + i;
             long abs = byAddress ? startAbs + i : i;
 
-            ReadSector(golden, gSize, gIdx, gMain, gSubBuf, gSub);
-            ReadSector(readback, rSize, rIdx, rMain, rSubBuf, rSub);
+            // Main channel always comes from the address-aligned index. Sub-channel
+            // is read from that SAME file's own skew-corrected index (see gSkew/
+            // rSkew above) — which is usually identical to gIdx/rIdx (skew 0) but
+            // isn't when this capture's Q trails or leads its main channel.
+            long gSubIdx = gIdx - gSkew, rSubIdx = rIdx - rSkew;
+            bool gSubInRange = gSubIdx >= 0 && gSubIdx < gTotal;
+            bool rSubInRange = rSubIdx >= 0 && rSubIdx < rTotal;
+
+            ReadMain(golden, gSize, gIdx, gMain);
+            ReadMain(readback, rSize, rIdx, rMain);
+            if (gSub > 0) { if (gSubInRange) ReadSub(golden, gSize, gSubIdx, gSubBuf, gSub); else Array.Clear(gSubBuf, 0, gSub); }
+            if (rSub > 0) { if (rSubInRange) ReadSub(readback, rSize, rSubIdx, rSubBuf, rSub); else Array.Clear(rSubBuf, 0, rSub); }
 
             // ---- main channel: the exact on-disc 2352 must match -------------
             if (!gMain.AsSpan().SequenceEqual(rMain))
@@ -170,7 +220,11 @@ public static class RawReadbackCompare
             }
 
             // ---- sub-channel: byte-exact, then classify any difference -------
-            if (gSub > 0 && rSub == gSub && !gSubBuf.AsSpan(0, gSub).SequenceEqual(rSubBuf.AsSpan(0, gSub)))
+            // Skipped when a skew-corrected index fell outside the file — there's
+            // no real sub-channel data there to compare (an edge-of-capture
+            // artifact of the correction, not a defect to report).
+            if (gSub > 0 && rSub == gSub && gSubInRange && rSubInRange &&
+                !gSubBuf.AsSpan(0, gSub).SequenceEqual(rSubBuf.AsSpan(0, gSub)))
             {
                 subMis++;
                 ExtractQForm(gSubBuf, gForm!.Value, gq);
@@ -184,6 +238,20 @@ public static class RawReadbackCompare
                     protLoss++;
                     Record(abs, "protection-loss", Severity.Defect,
                         "a deliberately-corrupt (protection) Q frame did not survive the burn byte-for-byte");
+                }
+                else if (!RawSubchannel.QCrcValid(rq))
+                {
+                    // The golden Q is fine, but the READ-BACK's own Q frame fails its own
+                    // CRC — this is a transient sub-channel read error (a bit flipped in
+                    // THIS read pass), not evidence the disc holds a wrong address. Real
+                    // optical media takes the occasional single-frame Q read glitch; that's
+                    // what --reread/--consensus exists to average out. Judging it against
+                    // golden byte-for-byte (which "mis-addressed" does) mislabels ordinary
+                    // read noise as a burn defect.
+                    subReadNoise++;
+                    Record(abs, "sub-read-noise", Severity.Warning,
+                        "the read-back's own Q frame fails its own CRC (a transient sub-channel " +
+                        "read error, not a burn defect) — re-read with --reread/--consensus to confirm");
                 }
                 else if (!SameAddress(gq, rq))
                 {
@@ -222,10 +290,15 @@ public static class RawReadbackCompare
             notes.Add("No overlapping program sectors were compared — the read-back is empty or does " +
                       "not overlap the golden. This is a failed/empty read-back, not a passing burn.");
 
+        if (subReadNoise > 0)
+            notes.Add($"{subReadNoise:N0} sub-channel frame(s) failed their OWN CRC on read-back " +
+                      "(a transient read error on this pass, not an addressing defect) — re-read with " +
+                      "--reread/--consensus to confirm whether they're stable.");
+
         long defects = mainMis + misAddr + protLoss + dropouts;
         Grade grade = compare == 0 ? Grade.Fail
                     : defects > 0 ? Grade.Fail
-                    : (timing > 0 || scrambleNorm > 0) ? Grade.PassWithNotes
+                    : (timing > 0 || scrambleNorm > 0 || subReadNoise > 0) ? Grade.PassWithNotes
                     : Grade.Pass;
 
         return new Report
@@ -239,6 +312,7 @@ public static class RawReadbackCompare
             MisAddressed = misAddr,
             ProtectionLosses = protLoss,
             SubTimingOnly = timing,
+            SubReadNoise = subReadNoise,
             Dropouts = dropouts,
             Examples = examples,
             Notes = notes,
@@ -254,9 +328,33 @@ public static class RawReadbackCompare
         if (subSize > 0) s.ReadExactly(sub, 0, subSize);
     }
 
-    /// <summary>Absolute sector address at the program start, from the first
-    /// readable position Q; <paramref name="haveAddress"/> is false when there
-    /// is no sub-channel to read.</summary>
+    /// <summary>Read just a sector's main-channel 2352 bytes.</summary>
+    private static void ReadMain(Stream s, int size, long idx, byte[] main)
+    {
+        s.Position = idx * size;
+        s.ReadExactly(main, 0, MainSize);
+    }
+
+    /// <summary>Read just a sector's sub-channel bytes, independent of where its
+    /// main channel was read from — see the skew correction in <see cref="Compare"/>.</summary>
+    private static void ReadSub(Stream s, int size, long idx, byte[] sub, int subSize)
+    {
+        s.Position = idx * size + MainSize;
+        s.ReadExactly(sub, 0, subSize);
+    }
+
+    /// <summary>Absolute sector address at the program start, from the readable
+    /// position Q frames near it; <paramref name="haveAddress"/> is false when
+    /// there is no sub-channel to read.
+    ///
+    /// A single sampled Q frame is not trustworthy on its own: a real drive can
+    /// mis-decode one random sector's Q per pass (the same jitter --reread/
+    /// --consensus exists to out-vote on a read-back). Anchoring the WHOLE
+    /// comparison's alignment on one such frame turns a one-sector Q glitch into
+    /// a false "everything mismatches" verdict, because every sector after it is
+    /// then compared one sector off. So this samples every valid position frame
+    /// in the window and returns the MODE (most-agreed-upon base) rather than
+    /// the first hit — one outlier frame no longer skews the alignment.</summary>
     private static long ProgramBaseAbs(Stream s, int size, RawSubcodeForm? form, int subSize,
                                        long progStart, out bool haveAddress)
     {
@@ -266,6 +364,7 @@ public static class RawReadbackCompare
         var sub = new byte[subSize];
         Span<byte> q = stackalloc byte[12];
         long total = s.Length / size;
+        var votes = new Dictionary<long, int>();
         for (long idx = progStart; idx < Math.Min(progStart + 400, total); idx++)
         {
             ReadSector(s, size, idx, main, sub, subSize);
@@ -273,10 +372,91 @@ public static class RawReadbackCompare
             if (!RawSubchannel.QCrcValid(q)) continue;
             if ((q[0] & 0x0F) != 1 || q[1] == 0x00) continue;    // want a program position frame
             long abs = AbsFromQ(q) - (idx - progStart);
-            haveAddress = true;
-            return abs;
+            votes[abs] = votes.GetValueOrDefault(abs) + 1;
+            // Once one candidate has a clear lead (≥3 votes and at least double the
+            // runner-up) it's safe to stop early rather than scanning the whole window.
+            if (votes[abs] >= 3 && votes[abs] >= 2 * votes.Where(kv => kv.Key != abs).Select(kv => kv.Value).DefaultIfEmpty(0).Max())
+                break;
         }
-        return 0;
+        if (votes.Count == 0) return 0;
+        haveAddress = true;
+        return votes.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key).First().Key;
+    }
+
+    /// <summary>Absolute sector address at the program start, derived from the
+    /// MAIN-CHANNEL sector header (MM:SS:FF in BCD at bytes 12..14, mode at 15)
+    /// rather than the Q sub-channel. Data sectors only (audio has no header —
+    /// <paramref name="haveAddress"/> comes back false there, and the caller
+    /// falls back to <see cref="ProgramBaseAbs"/>). The header may be in either
+    /// scramble state depending on where the capture came from, so both are
+    /// tried and whichever decodes to a plausible MSF (seconds &lt; 60, frames
+    /// &lt; 75, mode 1 or 2) wins; implausible/ambiguous sectors are skipped.
+    /// Votes the mode across the window, same rationale as
+    /// <see cref="ProgramBaseAbs"/> — one bad decode shouldn't skew it.</summary>
+    private static long MainChannelBaseAbs(Stream s, int size, long progStart, out bool haveAddress)
+    {
+        haveAddress = false;
+        var main = new byte[MainSize];
+        var flipped = new byte[MainSize];
+        long total = s.Length / size;
+        var votes = new Dictionary<long, int>();
+        for (long idx = progStart; idx < Math.Min(progStart + 400, total); idx++)
+        {
+            s.Position = idx * size;
+            s.ReadExactly(main, 0, MainSize);
+            if (!HasSync(main)) continue;
+
+            if (TryDecodeHeaderAbs(main, out long abs1))
+            {
+                long b = abs1 - (idx - progStart);
+                votes[b] = votes.GetValueOrDefault(b) + 1;
+            }
+            else
+            {
+                Array.Copy(main, flipped, MainSize);
+                CdScrambler.ScrambleInPlace(flipped);
+                if (TryDecodeHeaderAbs(flipped, out long abs2))
+                {
+                    long b = abs2 - (idx - progStart);
+                    votes[b] = votes.GetValueOrDefault(b) + 1;
+                }
+            }
+
+            if (votes.Count > 0)
+            {
+                var top = votes.OrderByDescending(kv => kv.Value).First();
+                if (top.Value >= 3 && top.Value >= 2 * votes.Where(kv => kv.Key != top.Key)
+                        .Select(kv => kv.Value).DefaultIfEmpty(0).Max())
+                    break;
+            }
+        }
+        if (votes.Count == 0) return 0;
+        haveAddress = true;
+        return votes.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key).First().Key;
+    }
+
+    /// <summary>Decode a main-channel header's MM:SS:FF (bytes 12..14, BCD) to an
+    /// absolute sector count, accepting it only when every field is valid BCD,
+    /// the MSF is in a sane range (seconds &lt; 60, frames &lt; 75), and the mode
+    /// byte (offset 15) is 1 or 2 — anything else means this candidate (raw or
+    /// descrambled) isn't actually a decoded header, just noise.</summary>
+    private static bool TryDecodeHeaderAbs(ReadOnlySpan<byte> main, out long abs)
+    {
+        abs = 0;
+        byte mode = main[15];
+        if (mode != 1 && mode != 2) return false;
+        if (!TryBcd(main[12], out int mm) || !TryBcd(main[13], out int ss) || !TryBcd(main[14], out int ff))
+            return false;
+        if (ss >= 60 || ff >= 75) return false;
+        abs = ((long)mm * 60 + ss) * 75 + ff;
+        return true;
+    }
+
+    private static bool TryBcd(byte b, out int value)
+    {
+        int hi = b >> 4, lo = b & 0x0F;
+        value = hi * 10 + lo;
+        return hi <= 9 && lo <= 9;
     }
 
     /// <summary>Extract the 12-byte Q frame honouring the physical sub-channel layout.</summary>

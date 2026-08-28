@@ -615,4 +615,73 @@ public class SectorExtractionTests
         mcn[0] = (byte)((mcn[0] & 0xF0) | 0x02);         // …rebadged ADR-2: CRC no longer matches
         Assert.False(SectorExtraction.QCrcOk(mcn));
     }
+
+    // ---- DVD/BD path ---------------------------------------------------------
+    //
+    // DVD/BD sectors have no raw form, no sync pattern and no C2 — READ(10) hands
+    // back exactly the 2048-byte user data block. These prove the engine accepts
+    // that shape on its own terms (right length is the whole proof) rather than
+    // demanding CD structure that doesn't exist on this media — the bug a live
+    // PS2 disc test surfaced: a CD-only sync-gate check aborted at LBA 0 on every
+    // DVD sector, regardless of drive or disc condition.
+
+    private static byte[] MakeDvdSector(long lba)
+    {
+        var b = new byte[SectorExtraction.DvdSectorSize];
+        for (int i = 0; i < b.Length; i++) b[i] = (byte)((lba * 17 + i * 3) & 0xFF);
+        return b;
+    }
+
+    [Fact]
+    public void DvdUserData_ExtractsCleanly_WithNoSyncOrEdcDemanded()
+    {
+        var d = new FakeDrive();
+        for (long lba = 0; lba < 5; lba++)
+            d.Sectors[lba] = MakeDvdSector(lba);          // plain 2048 bytes — no CD sync anywhere
+
+        var o = new ExtractionOptions { DataType = ExtractDataType.DvdUserData2048 };
+        var r = Run(d, 0, 4, o, out var bytes);
+
+        Assert.Equal("COMPLETE", r.Grade);
+        Assert.True(r.BadSectors.Clean);
+        Assert.Equal(5L * SectorExtraction.DvdSectorSize, r.BytesWritten);
+        for (int i = 0; i < 5; i++)
+            Assert.Equal(MakeDvdSector(i), bytes[(i * SectorExtraction.DvdSectorSize)..((i + 1) * SectorExtraction.DvdSectorSize)]);
+    }
+
+    [Fact]
+    public void DvdUserData_RequireDataSync_IsIgnored_NeverFalselyAborts()
+    {
+        // If a caller mistakenly set RequireDataSync (a CD-only concept) on a DVD
+        // span, it must not matter — DVD user data carries no sync pattern by
+        // definition, so gating on one would fail every sector unconditionally.
+        var d = new FakeDrive();
+        d.Sectors[0] = MakeDvdSector(0);
+
+        var o = new ExtractionOptions { DataType = ExtractDataType.DvdUserData2048, RequireDataSync = true };
+        var r = Run(d, 0, 0, o, out var bytes);
+
+        Assert.Equal("COMPLETE", r.Grade);
+        Assert.Equal(MakeDvdSector(0), bytes);
+    }
+
+    [Fact]
+    public void DvdUserData_DriveReadFailure_IsARealFailure_NotMaskedByLenientChecks()
+    {
+        var d = new FakeDrive();
+        d.Fallback[0] = new SectorReadAttempt { Ok = false, Main = [], Error = "medium error" };
+
+        var o = new ExtractionOptions { DataType = ExtractDataType.DvdUserData2048, ReadRetries = 0 };
+        var r = Run(d, 0, 0, o, out _);
+
+        Assert.Equal(0, r.AbortedAtLba);
+        Assert.Contains("medium error", r.AbortReason);
+    }
+
+    [Fact]
+    public void DvdUserData_PayloadSize_Is2048()
+    {
+        Assert.Equal(2048, SectorExtraction.PayloadSize(ExtractDataType.DvdUserData2048));
+        Assert.Equal(2048, SectorExtraction.DvdSectorSize);
+    }
 }

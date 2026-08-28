@@ -85,12 +85,17 @@ if ($Clean -and (Test-Path $Dest)) {
 }
 
 # --- Publish ------------------------------------------------------------------
+# The Cli project now multi-targets net8.0 (no drive/SPTI support) and
+# net8.0-windows (the real thing — DiscForge.Devices, live drive access).
+# `dotnet publish` on a multi-target project needs an explicit -f or it just
+# errors with NETSDK1129 ("must specify one of the following frameworks").
+# net8.0-windows is always the right one for the installed CLI.
 if ($SelfContained) {
     Write-Host "Publishing dforge (self-contained, win-x64) -> $Dest" -ForegroundColor Cyan
-    dotnet publish $proj -c Release -r win-x64 --self-contained true -o $Dest
+    dotnet publish $proj -c Release -f net8.0-windows -r win-x64 --self-contained true -o $Dest
 } else {
     Write-Host "Publishing dforge (framework-dependent) -> $Dest" -ForegroundColor Cyan
-    dotnet publish $proj -c Release -o $Dest
+    dotnet publish $proj -c Release -f net8.0-windows -o $Dest
 }
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Publish failed (exit $LASTEXITCODE)." -ForegroundColor Red

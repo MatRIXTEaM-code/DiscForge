@@ -57,21 +57,37 @@ disc are in hand.
 Clean-room PS1-specific ideas surfaced from the r/psx orbit (Redump wiki, psx-spx, ODE tooling). All
 identify/verify/preserve — never LibCrypt-patching or region-defeat.
 
-- **CU2 sidecar read/write/verify** — the Cybdyn `.cu2` format (absolute-LBA track map, explicit data-track
-  start + lead-out, rev2 per-track pregap). A dialect-free restatement of a disc's geometry; an excellent
-  independent cross-check against the `.cue`. (github.com/NRGDEAD/Cue2cu2)
-- **Pregap-accuracy check** — flag cue/cu2 sheets relying on the implicit 2-second pregap where the measured
-  pregap differs (silently shifts every later track, breaks audio sync + hash matching).
-- **On-disc region license-string reader** — read the sector-4 licensing string ("Sony Computer Entertainment
-  Inc./Europe/America") + verify the logo/license sectors, as a *second* region signal cross-checked against
-  SYSTEM.CNF (catches rebuilt boot areas / mislabeled region). (psx-spx.consoledev.net/cdromformat)
-- **XA Mode 2 Form 1/2-aware EDC/ECC** — make the health map form-aware: Form 2 (2324 B) carries EDC only and
-  *no* ECC, so validating it against a Form 1 ECC expectation reports false damage. Pick the check per sector
-  from the subheader. Matters for XA-ADPCM/MDEC streaming sectors.
-- **Multi-disc set modeling** — detect multi-disc titles and emit `.m3u` + PSIO `MULTIDISC.LST`, treating the
-  set as one preservation unit with per-disc hashes rolling up to a set manifest.
-- **Full R–W (96-byte) subchannel deinterleave + preservation** — beyond SubQ, capture/deinterleave the
-  complete P–W subchannel (raw + corrected), the most faithful capture. (github.com/hcs64/redumper-extract-rw)
+- ~~**CU2 sidecar read/write/verify**~~ — DONE (already existed, found 2026-08-27, since 2026-08-15). Full
+  `DiscForge.Core.Cue.Cu2` (`Write`/`Parse`/`Verify`) plus `dforge cu2 write|verify`, tested in
+  `Cu2Tests.cs`. Nothing to build.
+- ~~**Pregap-accuracy check**~~ — DONE (already existed, found 2026-08-27). Full `DiscForge.Core.Cue.PregapConformance`
+  plus `dforge pregap-check`. Nothing to build.
+- ~~**On-disc region license-string reader**~~ — DONE (built 2026-08-27). New `DiscForge.Core.PlayStation.LicenseString`
+  (`Parse`/`FromImage`/`CrossCheck`) plus `dforge license-check <image> [--json]`; 17 tests in
+  `LicenseStringTests.cs`. See `docs/NEXT.md` for the layout source and scope notes (padding-pattern check
+  is informational-only — not independently verified against a real disc dump).
+- ~~**XA Mode 2 Form 1/2-aware EDC/ECC**~~ — DONE (verified 2026-08-27, no code change needed). Checked every
+  EDC/health-map consumer in `DiscForge.Core` (`DiscHealthMap`, `DiscMri`, `PremasterGate`, `DumpReconstruct`,
+  `DumpMerge`, `ExtractionAudit`, `RawImageInspector`, `DumpingWizard`, `RawReadbackCompare`): every one already
+  branches on the XA subheader submode byte (`main[18] & 0x20`) and picks Form 1 EDC+ECC vs. Form 2 EDC-only
+  (or skips entirely when the Form 2 EDC field is zero/unused) before validating. `SectorExtraction.cs` is
+  explicitly per-datatype (the caller states which form it expects) so it was never exposed to this. No false
+  Form 2 damage reports exist anywhere in the current codebase — this backlog item pre-dates a fix that's
+  already landed (or was never actually broken; no git-blame trail points to a dedicated fix commit for it).
+- ~~**Multi-disc set modeling**~~ — DONE (built 2026-08-28). `DiscForge.Core.Library.MultiDiscDetector`
+  detects "(Disc N)"/"(Disc N of M)" titles, `MultiDiscManifestBuilder` rolls per-disc hashes into a set
+  manifest, and `OdeExporter.PsioSet` shares one folder across all discs of a title and emits a real
+  PSIO `MULTIDISC.LST` (byte-format verified against the PSIO Systems Manual). CLI: `multidisc-detect`,
+  `multidisc-manifest`, extended `ode-export` (now variadic over cue paths). 20 new tests
+  (`MultiDiscSetTests.cs` + 3 in `OdeExportTests.cs`). See `docs/NEXT.md` for detail.
+- ~~**Full R–W (96-byte) subchannel deinterleave + preservation**~~ — DONE (built 2026-08-28), turned out
+  to be mostly already shipped. `SubcodeFrame` already fully deinterleaved/reinterleaved all 8 channels
+  across all 3 physical layouts, and `read-raw` already captured full raw P-W as the backbone of the whole
+  burn-verify pipeline. The one genuine gap: the MMC CORRECTED (0x04) sub-channel selector was defined but
+  never requested, and `SubchannelReader` had no CLI exposure. Built `SubchannelReader.ReadCorrected` +
+  `SupportsCorrectedSubchannel`, `RawSubchannel.CompareRawAndCorrected` (raw-vs-drive-corrected
+  cross-validation), and `dforge subchannel-dump <drive> <out.sub> [--corrected f] [--compare]`. 4 new
+  tests. **Not yet run against real hardware.** See `docs/NEXT.md` for detail.
 - **PS1 save-container identification/conversion** (adjacency, optional module) — the `.mcr/.mcd/.gme/.vgs/
   .vmp/.psv/.mcs` zoo + PocketStation, mapping each save's product code to a Redump identity.
 - **"Un-capturable protection" honesty field** — a metadata note that a title's wobble-groove/ATIP physical

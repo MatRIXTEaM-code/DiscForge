@@ -62,3 +62,11 @@ errors.txt
 plextor-profile.json
 cdextra.dfp.json
 *.subq
+
+# scratch/debug artifacts - never commit
+*.part
+burn-log*.txt
+*.dcert.json
+*.toc
+apply_fix.ps1
+diag.ps1

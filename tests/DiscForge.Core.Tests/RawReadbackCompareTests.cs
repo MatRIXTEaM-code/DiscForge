@@ -124,13 +124,46 @@ public class RawReadbackCompareTests
         var golden = GoldenDataDisc();
         var readback = (byte[])golden.Clone();
         // Packed Q sits at bytes 12..23; byte 21 is the absolute-frame BCD (q[9]).
-        readback[DataSectorOffset(3) + 2352 + 21] ^= 0x01;
+        // A genuine mis-addressed defect is a Q frame that's internally consistent
+        // (its own CRC still validates) but decodes to the wrong place — as
+        // opposed to a Q frame whose CRC no longer validates at all, which is a
+        // transient read-back glitch (see RawReadbackCompareTests's read-noise
+        // case below) rather than evidence of a real wrong address on disc. So
+        // after perturbing the address byte, recompute the CRC to match — the
+        // read-back drive would do the same if it decoded a genuinely different,
+        // self-consistent Q frame.
+        long qOffset = DataSectorOffset(3) + 2352 + 12;
+        readback[qOffset + 9] ^= 0x01;
+        ushort crc = DiscForge.Core.Util.Crc16.ComputeInverted(readback.AsSpan((int)qOffset, 10));
+        readback[qOffset + 10] = (byte)(crc >> 8);
+        readback[qOffset + 11] = (byte)crc;
 
         var report = RawReadbackCompare.Compare(new MemoryStream(golden), new MemoryStream(readback));
 
         Assert.Equal(RawReadbackCompare.Grade.Fail, report.Result);
         Assert.True(report.MisAddressed >= 1);
+        Assert.Equal(0, report.SubReadNoise);
         Assert.Contains(report.Examples, d => d.Category == "mis-addressed");
+    }
+
+    [Fact]
+    public void A_readback_q_that_fails_its_own_crc_is_read_noise_not_mis_addressed()
+    {
+        // Flip a byte WITHOUT fixing the CRC — this is what a real transient
+        // sub-channel read glitch looks like: the frame the drive handed back
+        // simply doesn't check out on its own terms. That's read noise (the
+        // same class --reread/--consensus exists to average out), not proof
+        // the disc holds a wrong address, and shouldn't fail the whole verify.
+        var golden = GoldenDataDisc();
+        var readback = (byte[])golden.Clone();
+        readback[DataSectorOffset(3) + 2352 + 21] ^= 0x01;   // q[9], CRC left stale
+
+        var report = RawReadbackCompare.Compare(new MemoryStream(golden), new MemoryStream(readback));
+
+        Assert.Equal(RawReadbackCompare.Grade.PassWithNotes, report.Result);
+        Assert.Equal(0, report.MisAddressed);
+        Assert.True(report.SubReadNoise >= 1);
+        Assert.Contains(report.Examples, d => d.Category == "sub-read-noise");
     }
 
     [Fact]

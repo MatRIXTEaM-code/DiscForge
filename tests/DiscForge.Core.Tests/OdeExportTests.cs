@@ -63,4 +63,43 @@ public class OdeExportTests
         var plan = OdeExporter.Psio("GAME.cue", cue, 7500, "G");
         Assert.Equal(1, plan.Ops.Count(o => o.Kind == "copy" && o.DestRelPath.EndsWith("GAME.bin", System.StringComparison.Ordinal)));
     }
+
+    // ---- multi-disc (PsioSet) --------------------------------------------------
+
+    [Fact]
+    public void A_single_disc_set_produces_no_MULTIDISC_LST()
+    {
+        var plan = OdeExporter.PsioSet(new[] { new OdeDiscInput("G.cue", TwoTrack(), 7500) }, "G");
+        Assert.DoesNotContain(plan.Ops, o => o.DestRelPath.EndsWith("MULTIDISC.LST", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_multi_disc_set_shares_one_folder_and_gets_a_MULTIDISC_LST_in_play_order()
+    {
+        var discs = new[]
+        {
+            new OdeDiscInput("Game (Disc 1).cue", TwoTrack(), 7500),
+            new OdeDiscInput("Game (Disc 2).cue", TwoTrack(), 8000),
+        };
+        var plan = OdeExporter.PsioSet(discs, "Game");
+
+        Assert.Equal(2, plan.Ops.Count(o => o.Kind == "copy" && o.DestRelPath.EndsWith(".cue", System.StringComparison.Ordinal)));
+        var lst = Assert.Single(plan.Ops, o => o.DestRelPath.EndsWith("MULTIDISC.LST", System.StringComparison.Ordinal));
+        Assert.Equal("Game (Disc 1).cue\r\nGame (Disc 2).cue", lst.Content);
+        // Every op lands under the same single game folder.
+        Assert.All(plan.Ops, o => Assert.StartsWith(plan.GameFolder, o.DestRelPath));
+    }
+
+    [Fact]
+    public void Two_discs_whose_bins_share_a_file_name_are_refused_not_silently_overwritten()
+    {
+        var cueA = CueSheet.Parse("FILE \"TRACK.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n");
+        var cueB = CueSheet.Parse("FILE \"TRACK.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n");
+        var discs = new[]
+        {
+            new OdeDiscInput("disc1/A.cue", cueA, 1000),
+            new OdeDiscInput("disc2/B.cue", cueB, 1000),
+        };
+        Assert.Throws<System.IO.InvalidDataException>(() => OdeExporter.PsioSet(discs, "Clash"));
+    }
 }
