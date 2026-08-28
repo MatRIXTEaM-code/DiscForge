@@ -20,12 +20,18 @@ namespace DiscForge.Devices.Burning;
 /// This is the path that writes DiscForge's byte-faithful image — exact gaps, ISRC/MCN,
 /// verbatim sub-channel — to the disc.
 ///
-/// STATUS: built from the public MMC write model, validated incrementally on hardware. The
-/// cheap, non-destructive first step is <see cref="TestCue"/> — it does the MODE SELECT and
-/// SEND CUE SHEET only, so the drive validates our write parameters + cue-sheet format (and
-/// returns sense data if they're wrong) WITHOUT writing a disc. The full <see cref="Burn"/>
-/// write path (write start address, chunking, finalise) is refined once the cue sheet is
-/// accepted.
+/// STATUS: built from the public MMC write model, validated incrementally on hardware.
+/// <see cref="Burn"/> is Write Type = Raw — full raw+P-W stream, lead-in included, NO cue
+/// sheet (a cue sheet under Raw is a command-sequence error, ASC 0x2C/0x04) — see its own doc
+/// comment for why. <see cref="TestCue"/> is a LEGACY diagnostic for a different, abandoned
+/// setup (Session-At-Once + SEND CUE SHEET, data block type 0) that <see cref="Burn"/> no
+/// longer uses at all. Five real-hardware attempts across a session (2026-08) to make
+/// <see cref="TestCue"/>'s cue sheet accepted (ASC 0x26/0x00, "invalid field in parameter
+/// list", every time — see docs/NEXT.md for the full history) were all spent hardening a path
+/// the real burn doesn't call — do not resume that debugging without first re-reading NEXT.md.
+/// The actual non-destructive validator for the path <see cref="Burn"/> uses is
+/// <see cref="Burn"/> itself with <c>simulate: true</c> (laser off, full write loop, no disc
+/// written) — that is the real test, and as of 2026-08 it had never actually been run.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class SptiRawDaoBurnEngine
@@ -44,6 +50,7 @@ public static class SptiRawDaoBurnEngine
     public static CueTestResult TestCue(char driveLetter, DiscLayout layout)
     {
         using var dev = new SptiDevice(driveLetter);
+        Verbose = true;   // this diagnostic's whole job is showing the real bytes — always on here.
 
         // The cue-sheet test necessarily uses Session-At-Once (Raw mode forbids a cue sheet).
         var modeResult = SetRawDaoWriteParameters(dev, layout, testWrite: false,
@@ -52,8 +59,37 @@ public static class SptiRawDaoBurnEngine
             return new CueTestResult(false, "MODE SELECT (raw DAO write parameters) rejected: " + modeResult.Describe(),
                                      0, 0);
 
+        // ORDERING FIX (2026-08-25): cdrdao's GenericMMC::startDao() runs MODE SELECT → power
+        // calibration (OPC) → GET NEXT WRITABLE ADDRESS → SEND CUE SHEET, in that order — every
+        // one of this session's five earlier fixes changed cue-sheet/mode-page CONTENT but never
+        // noticed this file skipped straight from MODE SELECT to SEND CUE SHEET with neither OPC
+        // nor an NWA read in between. Some drives won't accept a cue sheet until OPC has run (the
+        // ASC 0x26/0x00 "invalid field in parameter list" this test kept hitting is a plausible,
+        // if imprecise, way for firmware to report "you skipped a required step" too, not only
+        // "a byte is wrong"). Match cdrdao's order here before trusting cue-sheet content is the
+        // problem again.
+        try { dev.SendCommand(MmcCommands.SendOpc(true), Array.Empty<byte>(), SptiDataDirection.None, 90); } catch { }
+        WaitReady(dev, maxSeconds: 90);
+        ReadDriveNwa(dev);   // best-effort, like cdrdao's getNWA(NULL) — result unused here
+
         var cue = DaoCueSheet.Build(layout);
+        if (Verbose)
+        {
+            var entries = DaoCueSheet.BuildEntries(layout);
+            Console.Error.WriteLine($"[diag] cue sheet: {entries.Count} entries, {cue.Length} bytes");
+            Console.Error.WriteLine("[diag] CTL/ADR  TNO  IDX  FORM  SCMS  MIN  SEC  FRM");
+            foreach (var e in entries)
+                Console.Error.WriteLine($"[diag]   0x{e.CtlAdr:X2}   0x{e.TrackNumber:X2} 0x{e.IndexOrPoint:X2}  0x{e.DataForm:X2}  0x{e.Scms:X2}   {e.Min:X2}   {e.Sec:X2}   {e.Frame:X2}");
+            Console.Error.WriteLine($"[diag] SEND CUE SHEET raw bytes: {Hex(cue)}");
+        }
         var r = dev.SendCommand(MmcCommands.SendCueSheet(cue.Length), cue, SptiDataDirection.Out, 30);
+        if (Verbose)
+        {
+            Console.Error.WriteLine($"[diag] SEND CUE SHEET result: success={r.Success} " +
+                $"scsiStatus=0x{r.ScsiStatus:X2} sense=key0x{r.SenseKey:X1}/asc0x{r.Asc:X2}/ascq0x{r.Ascq:X2}");
+            Console.Error.WriteLine($"[diag] full sense buffer ({r.SenseData?.Length ?? 0} bytes): {(r.SenseData is null ? "(none)" : Hex(r.SenseData))}");
+            Console.Error.WriteLine($"[diag] field pointer: {DecodeFieldPointer(r.SenseData)}");
+        }
         if (r.Success)
             return new CueTestResult(true,
                 "MODE SELECT + SEND CUE SHEET accepted — the drive is happy with our raw DAO setup.",
@@ -125,6 +161,10 @@ public static class SptiRawDaoBurnEngine
                             bool simulate = false, int? writeSpeedMultiplier = 4)
     {
         using var dev = new SptiDevice(driveLetter);
+        // Turned on for the active MODE SELECT (Raw) byte-3/8 fix (2026-08-25) so a --simulate run
+        // shows the real bytes/result directly, the same way TestCue() already does — don't need a
+        // second round trip to see whether cdrdao's byte-3/8 values actually got this accepted.
+        Verbose = true;
 
         progress?.Report(new BurnProgress("prepare", 0.02,
             simulate ? "Setting RAW write parameters (SIMULATION — laser off)" : "Setting RAW write parameters"));
@@ -157,34 +197,63 @@ public static class SptiRawDaoBurnEngine
 
         // Ask the drive where the write should begin (READ TRACK INFORMATION) rather than assuming.
         // In Raw mode the next-writable-address should be the lead-in start (our generator's lead-in
-        // begins at LBA −(22500+150) = −22650). If the drive instead reports the program pregap
-        // (−150), it manages the lead-in itself and we must skip ours. Branch on the sign so the
-        // drive stays the authority on the start address.
+        // begins at LBA −(22500+150) = −22650).
+        //
+        // SKIPPED-LEAD-IN BUG (2026-08-27, found after two full hardware burns that both reported
+        // success yet read back as a completely blank disc on every drive tried — including a
+        // second, unrelated drive, ruling out a read-back quirk). The code used to believe that a
+        // non-deeply-negative NWA (this drive reports a flat 0, even AFTER Write Type = Raw mode
+        // select succeeds — the "the mode changes the answer" assumption below turned out false on
+        // real hardware) meant "the drive manages the lead-in itself", and would then SKIP writing
+        // our composed lead-in entirely, sending only the program area. Nothing else ever supplies
+        // a lead-in in this raw+no-cue-sheet design (see the class doc comment: no SEND CUE SHEET
+        // in Raw mode, the lead-in sub-channel IS the TOC) — so on a drive that reports NWA=0, the
+        // disc's actual physical lead-in was NEVER transmitted at all. The visible symptoms matched
+        // exactly: a full, real burn (dye genuinely changed across the whole program area) that
+        // every drive — including one that had just proven itself capable of fresh reads by reading
+        // a different disc in between — reported back as blank, because the one place a TOC lives
+        // was empty. Real cdrdao's own raw driver (GenericMMCraw::startDao) has no such branch at
+        // all: it unconditionally writes its own full lead-in every time, using an ATIP-derived
+        // start address, never trusting NWA to mean "skip it". Match that here: a genuinely useful
+        // negative NWA (<= -151) is honoured as the drive's own authority on the start address;
+        // anything else (0, not-valid, or the read failing outright) now falls back to composing
+        // and sending our OWN full lead-in from the safe default start (-22650) instead of ever
+        // skipping it — never assume some other mechanism already supplied a TOC.
         var (nwaOk, driveNwa, nwaDetail) = ReadDriveNwa(dev);
-        uint FirstWriteLba = nwaOk ? driveNwa
-                                   : unchecked((uint)(-(RawImageGenerator.LeadInSectors + 150)));  // −22650
-        progress?.Report(new BurnProgress("prepare", 0.05, "Next-writable-address: " + nwaDetail));
-
-        long nwaSigned = (int)FirstWriteLba;                  // signed view of the start LBA
+        long nwaSigned = nwaOk ? (int)driveNwa : 0;
+        uint FirstWriteLba;
         int leadInSectors;
         long writeSectors;
-        long skipBytes;
         if (nwaSigned <= -151)
         {
-            // Drive gave its ATIP lead-in start: size the lead-in so the program lands at LBA 0
+            // Drive gave its own ATIP lead-in start: size the lead-in so the program lands at LBA 0
             // (lead-in spans NWA..−150), then write the WHOLE image (lead-in + program) from here.
+            FirstWriteLba = driveNwa;
             leadInSectors = (int)(-150 - nwaSigned);
             writeSectors = RawImageGenerator.TotalSectors(layout, leadInSectors);
-            skipBytes = 0;
         }
         else
         {
-            // Drive manages the lead-in (NWA at the program pregap −150 or later): write only the
-            // program area, skipping our composed (default-length) lead-in.
-            leadInSectors = RawImageGenerator.LeadInSectors;
-            writeSectors = RawImageGenerator.ProgramSectors(layout);
-            skipBytes = (long)leadInSectors * RawSectorBytes;
+            // No usable negative NWA. Three consecutive real burns on this drive all failed at the
+            // SAME LBA (−22300, ~5 seconds of media time into a 1x write) — deterministic, not
+            // hardware flakiness. −22650 is a FIXED GUESS at where the lead-in should start; it was
+            // never checked against this disc's real recordable-area boundary. If the true boundary
+            // (the end of the Power Calibration Area) sits closer to LBA 0 than −22650, writing our
+            // guessed start puts thousands of sectors of the "lead-in" INSIDE the reserved PCA the
+            // drive won't let anything write to — a hard medium error at a fixed offset is exactly
+            // what that looks like. Read the disc's own ATIP (READ TOC/PMA/ATIP format 4) for its
+            // real lead-in start — the same field cdrdao's raw driver uses for this exact purpose
+            // (GenericMMCraw::getMultiSessionInfo → atipLeadinStart) — instead of trusting a fixed
+            // number that was only ever a placeholder.
+            var (atipOk, atipLba, atipDetail) = ReadAtipLeadInLba(dev);
+            FirstWriteLba = atipOk ? atipLba
+                                   : unchecked((uint)(-(RawImageGenerator.LeadInSectors + 150)));  // −22650 fallback
+            leadInSectors = (int)(-150 - (int)FirstWriteLba);
+            if (leadInSectors < 1) leadInSectors = RawImageGenerator.LeadInSectors;  // sane fallback
+            writeSectors = RawImageGenerator.TotalSectors(layout, leadInSectors);
+            progress?.Report(new BurnProgress("prepare", 0.045, "ATIP lead-in start: " + atipDetail));
         }
+        progress?.Report(new BurnProgress("prepare", 0.05, "Next-writable-address: " + nwaDetail));
 
         string tmp = Path.Combine(Path.GetTempPath(), "df_sptiraw_" + Guid.NewGuid().ToString("N") + ".img");
         try
@@ -197,7 +266,7 @@ public static class SptiRawDaoBurnEngine
             progress?.Report(new BurnProgress("burn", 0.30,
                 simulate ? "Simulating raw write (laser off)" : "Writing raw image (Write Type = Raw) — cannot be cancelled safely"));
             using var fs = File.OpenRead(tmp);
-            fs.Position = skipBytes;                          // lead-in included (0) or skipped
+            fs.Position = 0;                                  // always the full image — lead-in included, never skipped
 
             const int chunkSectors = 25;                     // 25 × 2448 = 61,200 B (< 64 KiB)
             var buf = new byte[chunkSectors * RawSectorBytes];
@@ -211,29 +280,72 @@ public static class SptiRawDaoBurnEngine
 
                 SptiResult w;
                 int readyTries = 0;
+                int timeoutTries = 0;
                 while (true)
                 {
+                    // TIMEOUT FIX (2026-08-27, found live on a real lead-in write — the FIRST time
+                    // this engine ever actually wrote one; see the skipped-lead-in bug above): a
+                    // 40-second per-command timeout is too tight for this drive during lead-in
+                    // writing at slow speed — it deterministically failed at the exact same LBA on
+                    // two separate real burns with `win32=121` (ERROR_SEM_TIMEOUT) and NO sense data
+                    // at all, meaning the OS gave up on the IOCTL before the drive ever answered, not
+                    // that the drive reported a real error. Give it much more room (180s).
                     w = dev.SendCommand(MmcCommands.Write10(lba, (ushort)want), buf.AsSpan(0, bytes),
-                                        SptiDataDirection.Out, 40);
+                                        SptiDataDirection.Out, 180);
                     if (w.Success) break;
 
-                    var (key, asc, ascq) = ReadSenseCodes(dev);
-                    // ASC 0x04 = "logical unit not ready" (0x04/0x01 = becoming ready): the drive
-                    // is still finishing write calibration / spin-up. The spec-defined initiator
+                    // BUG FIX (2026-08-25, found live via --simulate): this used to re-query sense
+                    // with a SEPARATE REQUEST SENSE (ReadSenseCodes(dev)) after the failure. On this
+                    // drive that came back (0,0,0) every time — the auto-sense the drive returned
+                    // WITH the failing WRITE(10) itself (visible in the SPTI result's own sense
+                    // buffer, and in the exception text below) was "Not ready: ASC 0x04 ASCQ 0x08"
+                    // (LONG WRITE IN PROGRESS — the drive is mid buffer-flush and wants a retry), but
+                    // by the time a follow-up REQUEST SENSE CDB was issued the contingent-allegiance
+                    // condition had already cleared, so it legitimately reported "no sense". Read the
+                    // sense straight off THIS command's own SptiResult instead of re-asking the drive.
+                    byte key = w.SenseKey, asc = w.Asc, ascq = w.Ascq;
+                    // ASC 0x04 = "logical unit not ready" (0x01 = becoming ready, 0x08 = long write
+                    // in progress, etc.): the drive is transiently busy. The spec-defined initiator
                     // response is to wait and reissue the SAME command, not to fail. Do that a
-                    // bounded number of times before giving up (mostly the first block only).
-                    if (asc == 0x04 && readyTries < 6)
+                    // bounded number of times before giving up.
+                    if (asc == 0x04 && readyTries < 10)
                     {
                         readyTries++;
                         progress?.Report(new BurnProgress("burn", 0.30 + 0.6 * written / writeSectors,
-                            $"drive becoming ready (key 0x{key:X1}, ASC 0x04/0x{ascq:X2}); waiting, retry {readyTries}/6"));
+                            $"drive becoming ready (key 0x{key:X1}, ASC 0x04/0x{ascq:X2}); waiting, retry {readyTries}/10"));
                         System.Threading.Thread.Sleep(2000);
                         continue;
                     }
+                    // TIMEOUT RETRY (2026-08-27): a driver-level failure with NO sense data at all
+                    // (IsDriverLevelFailure — ScsiStatus 0, a Win32 error, e.g. 121/ERROR_SEM_TIMEOUT)
+                    // means the OS gave up waiting, not that the drive reported a real failure — the
+                    // spec-defined "not ready, reissue the same command" response applies just as much
+                    // here as it does to an explicit ASC 0x04. Retry the SAME write a bounded number
+                    // of times before giving up, same as the not-ready path above.
+                    if (w.IsDriverLevelFailure && timeoutTries < 5)
+                    {
+                        timeoutTries++;
+                        progress?.Report(new BurnProgress("burn", 0.30 + 0.6 * written / writeSectors,
+                            $"drive did not answer in time (win32={w.Win32Error}); retrying, attempt {timeoutTries}/5"));
+                        System.Threading.Thread.Sleep(2000);
+                        continue;
+                    }
+                    // CLEANUP FIX (2026-08-25): cdrdao's abortDao() flushes the drive's write
+                    // cache whenever a DAO write fails partway through — a half-open DAO session
+                    // left completely unacknowledged, as this used to do (the exception just
+                    // propagated straight out), can leave the drive's OWN internal negotiation
+                    // state stuck in a way that a later fresh MODE SELECT — for an entirely new
+                    // attempt, on a different or freshly reset disc — then rejects, looking like a
+                    // content bug when it's really leftover state from the LAST failure never being
+                    // acknowledged to the drive. Best-effort; failure here must never mask the real
+                    // WRITE(10) failure being thrown below.
+                    try { dev.SendCommand(MmcCommands.SynchronizeCache(), Array.Empty<byte>(), SptiDataDirection.None, 60); } catch { }
+
                     throw new IOException($"WRITE(10) failed at LBA {(int)lba} ({want} blocks × {RawSectorBytes} B, {bytes} B): "
                                           + w.Describe()
                                           + $"  [win32={w.Win32Error} scsiStatus=0x{w.ScsiStatus:X2} senseLen={w.SenseData?.Length ?? 0}]"
-                                          + $"  REQUEST SENSE → key 0x{key:X1}, ASC 0x{asc:X2}, ASCQ 0x{ascq:X2}.");
+                                          + $"  auto-sense → key 0x{key:X1}, ASC 0x{asc:X2}, ASCQ 0x{ascq:X2}"
+                                          + (readyTries > 0 ? $" (gave up after {readyTries} not-ready retries)." : "."));
                 }
 
                 lba += (uint)want;
@@ -298,6 +410,36 @@ public static class SptiRawDaoBurnEngine
         return (true, lba, $"drive reports NWA = {nwa} (0x{lba:X8})");
     }
 
+    /// <summary>
+    /// Read the disc's own ATIP lead-in start (READ TOC/PMA/ATIP, format 4) and convert it to the
+    /// negative WRITE(10) LBA our raw stream should start at — the same field cdrdao's raw driver
+    /// uses for this exact purpose (GenericMMCraw::getMultiSessionInfo → atipLeadinStart), instead
+    /// of trusting a fixed guess. ATIP's M/S/F fields are plain binary (not BCD), measured from the
+    /// disc's absolute MSF origin; converting to the negative-LBA-before-track-1 convention this
+    /// engine uses elsewhere is `(M*60+S)*75+F - 150 - 450000` (450000 = the 100:00:00 MSF wrap;
+    /// 150 = the standard 2-second pregap constant baked into all CD LBA math).
+    /// </summary>
+    private static (bool ok, uint lba, string detail) ReadAtipLeadInLba(SptiDevice dev)
+    {
+        var buf = new byte[32];
+        var r = dev.SendCommand(MmcCommands.ReadTocFormat(MmcCommands.TocFormat.Atip, 32),
+                                buf, SptiDataDirection.In, 15);
+        if (!r.Success)
+            return (false, 0, "READ TOC/PMA/ATIP (format 4) failed (" + r.Describe() + ") — falling back to the fixed default");
+
+        if (buf.Length < 11 || (buf[8] == 0 && buf[9] == 0 && buf[10] == 0))
+            return (false, 0, "ATIP lead-in start reads all-zero (pressed media, or the drive didn't answer meaningfully) — falling back to the fixed default");
+
+        int min = buf[8], sec = buf[9], frame = buf[10];
+        long frames = ((long)min * 60 + sec) * 75 + frame;
+        long lbaSigned = frames - 150 - 450_000;
+        if (lbaSigned > -151)
+            return (false, 0, $"ATIP lead-in start {min:00}:{sec:00}:{frame:00} converts to a non-negative/too-small LBA ({lbaSigned}) — falling back to the fixed default");
+
+        uint lba = unchecked((uint)lbaSigned);
+        return (true, lba, $"disc's own ATIP lead-in start = {min:00}:{sec:00}:{frame:00} → LBA {lbaSigned} (0x{lba:X8})");
+    }
+
     /// <summary>Poll TEST UNIT READY until the drive reports ready (it sits "becoming ready"
     /// while it spins up / calibrates after OPC).</summary>
     private static void WaitReady(SptiDevice dev, int maxSeconds)
@@ -338,10 +480,20 @@ public static class SptiRawDaoBurnEngine
         // (ASC 0x26/0x00) through three content/DataBlockType fixes already; this is the next most
         // concrete, source-grounded difference from a reference implementation known to work on
         // this exact drive (ImgBurn/SAO succeeded against it — see docs/NEXT.md).
-        var senseBuf = new byte[64];
+        // BUFFER-SIZE FIX (2026-08-25, found by re-reading this function, not by guessing):
+        // the reply is an 8-byte MODE SENSE(10) header, then the block-descriptor bytes (commonly
+        // 8 for a CD-ROM device), then the 2+50 = 52-byte page itself — 8+8+52 = 68 bytes, over
+        // the OLD 64-byte buffer. The bounds check below (`pageStart + total <= senseBuf.Length`)
+        // then silently fell back to a blank default page instead of the drive's real one, on
+        // EVERY call, on every drive that returns a block descriptor — nobody noticed because the
+        // fallback page still let MODE SELECT through in five earlier attempts (a blank page can
+        // still be structurally acceptable), so this never surfaced as the visible failure. Fixed
+        // by giving the reply room to actually fit.
+        var senseBuf = new byte[192];
         var sense = dev.SendCommand(MmcCommands.ModeSense10(0x05, (ushort)senseBuf.Length),
                                     senseBuf, SptiDataDirection.In, 20);
         byte[] mp;
+        bool usedFallback;
         if (sense.Success)
         {
             // MODE SENSE(10) response: 8-byte header (bytes 6..7 = block descriptor length),
@@ -355,28 +507,126 @@ public static class SptiRawDaoBurnEngine
             {
                 mp = new byte[total];
                 Array.Copy(senseBuf, pageStart, mp, 0, total);
+                usedFallback = false;
             }
             else
             {
                 mp = new WriteParametersPage().Build();   // drive's answer didn't parse — fall back
+                usedFallback = true;
             }
         }
         else
         {
             mp = new WriteParametersPage().Build();        // MODE SENSE unsupported — fall back
+            usedFallback = true;
+        }
+
+        if (Verbose)
+        {
+            Console.Error.WriteLine($"[diag] MODE SENSE(0x05): success={sense.Success} " +
+                $"scsiStatus=0x{sense.ScsiStatus:X2} sense=key0x{sense.SenseKey:X1}/asc0x{sense.Asc:X2}/ascq0x{sense.Ascq:X2} " +
+                $"usedFallbackPage={usedFallback}");
+            Console.Error.WriteLine($"[diag] MODE SENSE raw reply: {Hex(senseBuf)}");
+            Console.Error.WriteLine($"[diag] write-parameters page BEFORE modification: {Hex(mp)}");
         }
 
         mp[0] &= 0x7F;                                      // clear PS
         mp[2] &= 0xE0;                                       // clear BUFE stays; write-type+test-write bits cleared
         mp[2] |= (byte)((byte)writeType & 0x0F);
         if (testWrite) mp[2] |= 1 << 4;
-        mp[3] &= 0x3F;                                       // clear multi-session bits only — Track Mode
-                                                              // nibble (bits 3:0) is left as the drive reported it
-        mp[4] = (byte)((mp[4] & 0xF0) | (dataBlockType & 0x0F));
-        mp[8] = layout.DiscType;                             // session format: 0x00 CD-DA/CD-ROM, 0x20 CD-ROM XA
+        // TRACK MODE FIX (2026-08-25, found from the actual bytes, not more source-reading): the
+        // "leave Track Mode exactly as the drive reported it" policy (matching cdrdao's own code)
+        // silently assumes the drive's reported value is sane for the disc actually loaded. A real
+        // capture on this drive showed it reporting Track Mode = 0x5 (binary 0101: bit3=0 → AUDIO
+        // track, bit0=1 → four-channel, bit2=1 → copy permitted) — nonsense for this PS1 disc,
+        // whose first track is DATA. cdrdao gets away with blind preservation because ITS callers
+        // apparently always see a sane value; this drive/session doesn't. DiscForge already knows
+        // the real first-track control nibble from the layout (DaoCueSheet.CtlAdr(tracks[0]) uses
+        // exactly this) — use it here too instead of trusting stale/wrong drive state.
+        // RAW-MODE BYTE 3/8 FIX (2026-08-25, from a real cdrdao build on this exact drive): a real
+        // cdrdao (dao/GenericMMCraw.cc, GenericMMCraw::setWriteParameters) got its own MODE SELECT
+        // + SEND CUE SHEET accepted on this SH-224DB using the "generic-mmc-raw" driver — proof
+        // this drive DOES support raw writing, just not the way TestCue()'s Session-At-Once path
+        // asks for it. Its raw driver does NOT preserve or compute Track Mode into byte 3 at all —
+        // it hardcodes byte 3 to 0 (no multi-session pointer, no FP/Copy, no Track Mode nibble) —
+        // and hardcodes byte 8 (session format) to 0 as well, unconditionally, even for this XA
+        // disc. That's a real, structural difference from the Track-Mode-preservation policy below,
+        // which was reasoned out for the SAO path (TestCue) and may simply not apply to Raw: in
+        // raw+P-W mode the drive gets track/mode information from the P-W sub-channel bytes
+        // themselves, not from this mode page. Branch on write type so TestCue()'s SAO behavior is
+        // unchanged and only Burn()'s Raw path adopts cdrdao's proven-on-this-drive byte 3/8 values.
+        if (writeType == CdWriteType.Raw)
+        {
+            mp[3] = 0;
+            mp[4] = (byte)((mp[4] & 0xF0) | (dataBlockType & 0x0F));
+            mp[8] = 0;
+        }
+        else
+        {
+            byte firstTrackControl = (byte)layout.Tracks[0].Control;
+            // MASK FIX: 0x3F keeps bits 5:0, which INCLUDES the Track Mode nibble (3:0) — ORing the
+            // real value on top of stale bits that are already a superset does nothing (verified
+            // live: the drive's stale 0x05 has bits 0 and 2 set, and Data=0x04 only adds bit 2,
+            // already set, so the byte silently stayed 0x05). Must clear bits 5:0 down to just
+            // FP/Copy (5:4) first.
+            mp[3] = (byte)((mp[3] & 0x30) | (firstTrackControl & 0x0F));   // clear multi-session
+                                                                            // (7:6) AND Track Mode
+                                                                            // (3:0); set Track Mode
+                                                                            // from the layout
+            mp[4] = (byte)((mp[4] & 0xF0) | (dataBlockType & 0x0F));
+            mp[8] = layout.DiscType;                         // session format: 0x00 CD-DA/CD-ROM, 0x20 CD-ROM XA
+        }
 
         var paramList = MmcCommands.ModeParameterList(mp);
-        return dev.SendCommand(MmcCommands.ModeSelect10((ushort)paramList.Length), paramList,
+
+        if (Verbose)
+        {
+            Console.Error.WriteLine($"[diag] write-parameters page AFTER modification (writeType={writeType}, testWrite={testWrite}, dataBlockType={dataBlockType}, sessionFormat=0x{layout.DiscType:X2}): {Hex(mp)}");
+            Console.Error.WriteLine($"[diag] MODE SELECT(10) parameter list ({paramList.Length} bytes): {Hex(paramList)}");
+        }
+
+        var result = dev.SendCommand(MmcCommands.ModeSelect10((ushort)paramList.Length), paramList,
                                SptiDataDirection.Out, 30);
+
+        if (Verbose)
+        {
+            Console.Error.WriteLine($"[diag] MODE SELECT(10) result: success={result.Success} " +
+                $"scsiStatus=0x{result.ScsiStatus:X2} sense=key0x{result.SenseKey:X1}/asc0x{result.Asc:X2}/ascq0x{result.Ascq:X2}");
+            if (!result.Success)
+                Console.Error.WriteLine($"[diag] field pointer: {DecodeFieldPointer(result.SenseData)}");
+        }
+
+        return result;
+    }
+
+    /// <summary>Set true (by <see cref="TestCue"/>) to print raw MODE SENSE/MODE SELECT bytes to
+    /// stderr — the real byte-level capture this file's history kept saying was needed, without
+    /// any external tooling.</summary>
+    public static bool Verbose { get; set; }
+
+    private static string Hex(byte[] b) => Convert.ToHexString(b);
+
+    /// <summary>Decode the SCSI Sense Key Specific field (fixed-format sense, bytes 15–17): when
+    /// SKSV (byte15 bit7) is set and the sense key is ILLEGAL REQUEST, this is a FIELD POINTER —
+    /// the exact byte offset (bytes 16–17, big-endian, low 11 bits) of the invalid field in the
+    /// command (C/D=1, byte15 bit6) or the parameter data (C/D=0) the drive just rejected, plus
+    /// which BIT within that byte (BPV set, bits 2:0) if it's bit-granular. This is the real,
+    /// drive-reported "which byte is wrong" this investigation kept saying it needed — no sniffer
+    /// required, it was already coming back in the sense data, just never decoded.</summary>
+    private static string DecodeFieldPointer(byte[]? sense)
+    {
+        if (sense is not { Length: > 17 }) return "(sense buffer too short to carry one)";
+        byte b15 = sense[15];
+        if ((b15 & 0x80) == 0) return "(SKSV not set — drive didn't report a field pointer)";
+        bool cd = (b15 & 0x40) != 0;              // 1 = error in the CDB, 0 = error in parameter data (our cue sheet)
+        bool bpv = (b15 & 0x08) != 0;              // bit pointer valid
+        int fieldByte = (sense[16] << 8) | sense[17];
+        string where = cd ? "the CDB" : "the parameter data (our cue-sheet payload)";
+        string bit = bpv ? $", bit {b15 & 0x07}" : "";
+        string entryHint = !cd && fieldByte >= 0
+            ? $"  → cue-sheet byte {fieldByte} is entry #{fieldByte / 8 + 1}, offset {fieldByte % 8} within it "
+              + "(0=CTL/ADR,1=TNO,2=IDX,3=FORM,4=SCMS,5=MIN,6=SEC,7=FRAME)"
+            : "";
+        return $"SKSV set — byte {fieldByte}{bit} of {where} is what the drive rejected.{entryHint}";
     }
 }

@@ -149,4 +149,87 @@ public static class RawSubchannel
                 $"{trackSectors:N0} sectors, needing {trackSectors * FrameSize:N0} " +
                 "(96 bytes per sector). Wrong file, or a different dump format.");
     }
+
+    /// <summary>What comparing a raw (as-physically-read, interleaved) capture against the
+    /// drive's own corrected (de-interleaved) capture of the same sectors found.</summary>
+    public sealed record RwCaptureComparison
+    {
+        public required long SectorsCompared { get; init; }
+        public required int QAgree { get; init; }
+        public required int QDisagree { get; init; }
+        /// <summary>Q was CRC-valid in the raw capture but not the corrected one, or vice versa —
+        /// the more actionable half of a disagreement (a byte-level mismatch that leaves both
+        /// CRC-valid is usually just which of two legitimate re-reads happened to land).</summary>
+        public required int ValidityFlips { get; init; }
+        public required int RawQValid { get; init; }
+        public required int CorrectedQValid { get; init; }
+        /// <summary>Sector indices (relative to the capture start) where the two disagreed,
+        /// capped at 1,000 for a report that stays readable.</summary>
+        public required IReadOnlyList<long> DisagreeingSectors { get; init; }
+
+        public string Summary => QDisagree == 0
+            ? $"raw and corrected agree on all {SectorsCompared:N0} sector(s) — one faithful reading, not two guesses."
+            : $"{QDisagree:N0} of {SectorsCompared:N0} sector(s) disagree between raw and corrected " +
+              $"({ValidityFlips:N0} of those flip whether Q's CRC even validates) — worth a closer look " +
+              "before trusting either capture alone.";
+    }
+
+    /// <summary>
+    /// Compare a raw interleaved capture (<see cref="RawSubcodeForm.Interleaved96"/> —
+    /// <c>SubchannelReader.Read</c>) against the drive's own corrected capture of the same LBA
+    /// range (<see cref="RawSubcodeForm.Packed96"/> — <c>SubchannelReader.ReadCorrected</c>),
+    /// sector by sector, on their decoded Q content. This is the "most faithful capture" check:
+    /// a drive's on-the-fly correction can mask a transient read error (harmless) or it can quietly
+    /// paper over content a protection scheme deliberately corrupted (not harmless — see this
+    /// class's LibCrypt note) — the two captures agreeing is itself the evidence either way.
+    /// </summary>
+    public static RwCaptureComparison CompareRawAndCorrected(
+        ReadOnlySpan<byte> rawInterleaved, ReadOnlySpan<byte> correctedPacked, long sectors)
+    {
+        if (rawInterleaved.Length != sectors * FrameSize)
+            throw new ArgumentException(
+                $"Raw capture is {rawInterleaved.Length:N0} bytes, expected {sectors * FrameSize:N0} " +
+                $"for {sectors:N0} sector(s).", nameof(rawInterleaved));
+        if (correctedPacked.Length != sectors * FrameSize)
+            throw new ArgumentException(
+                $"Corrected capture is {correctedPacked.Length:N0} bytes, expected {sectors * FrameSize:N0} " +
+                $"for {sectors:N0} sector(s).", nameof(correctedPacked));
+
+        Span<byte> qRaw = stackalloc byte[12];
+        Span<byte> qCorrected = stackalloc byte[12];
+        int agree = 0, disagree = 0, flips = 0, rawValid = 0, correctedValid = 0;
+        var mismatches = new List<long>();
+
+        for (long i = 0; i < sectors; i++)
+        {
+            var rawFrame = rawInterleaved.Slice((int)(i * FrameSize), FrameSize);
+            var correctedFrame = correctedPacked.Slice((int)(i * FrameSize), FrameSize);
+            SubcodeFrame.ExtractQ(rawFrame, RawSubcodeForm.Interleaved96, qRaw);
+            SubcodeFrame.ExtractQ(correctedFrame, RawSubcodeForm.Packed96, qCorrected);
+
+            bool rawOk = QCrcValid(qRaw);
+            bool correctedOk = QCrcValid(qCorrected);
+            if (rawOk) rawValid++;
+            if (correctedOk) correctedValid++;
+
+            if (qRaw.SequenceEqual(qCorrected)) agree++;
+            else
+            {
+                disagree++;
+                if (rawOk != correctedOk) flips++;
+                if (mismatches.Count < 1000) mismatches.Add(i);
+            }
+        }
+
+        return new RwCaptureComparison
+        {
+            SectorsCompared = sectors,
+            QAgree = agree,
+            QDisagree = disagree,
+            ValidityFlips = flips,
+            RawQValid = rawValid,
+            CorrectedQValid = correctedValid,
+            DisagreeingSectors = mismatches,
+        };
+    }
 }

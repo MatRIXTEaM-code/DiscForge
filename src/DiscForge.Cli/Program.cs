@@ -222,6 +222,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  coverage-proof <image.iso>  Prove every sector is accounted for exactly once — reports silent gaps and overlapping claims");
     Console.WriteLine("  pregap-check <cue> [--json]  Audit a cue's pregaps vs PlayStation/Redump convention (2s data/audio boundary, no negative gaps)");
     Console.WriteLine("  subq-map <disc.sub> [--json] [--form packed|interleaved|pq16]  Recover each track's real INDEX 00/01 and pregap from a captured subchannel");
+    Console.WriteLine("  subchannel-dump <drive> <out.sub> [--track N] [--corrected f] [--compare]  Capture the raw (and optionally drive-corrected) P-W sub-channel standalone");
     Console.WriteLine("  redump-cue <in.cue> <disc.sub> <out.cue> [--snap-pregap]  Re-cut a split bin/cue at the subchannel's INDEX 00 boundaries (Redump-conformant, byte-preserving)");
     Console.WriteLine("  bad-sectors <map.badsectors.json> [--json]  Show a dump's unreadable-sector map: counts, coalesced runs, and per-track positions");
     Console.WriteLine("  redump-diff <cue> <dat> [--game \"name\"] [--json]  Explain WHY a dump doesn't match Redump: per-file verdict + the cause (split, padding, offset, bad sector)");
@@ -233,7 +234,10 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  disc-diff <a> <b> [--json]  Compare two disc images at the file level: what was added, removed, changed (by content), or moved/renamed — for two pressings, patched vs original, or revisions");
     Console.WriteLine("  redump-prep <in.cue> <out-dir> [--sub f] [--snap-pregap] [--dat f --game \"n\"] [--offset N] [--json]  One-step submission prep: re-cut + carry holes + checks + submission text");
     Console.WriteLine("  cu2 <write|verify> <cue> [file.cu2]  Generate or cross-check a Cybdyn CU2 track map (PSIO/xStation) from a cue");
-    Console.WriteLine("  ode-export psio <cue> <out-dir> [--name N]  Lay a PS1 dump out for a PSIO/xStation ODE: game folder + bin/cue + generated CU2");
+    Console.WriteLine("  license-check <image> [--json]  Read the on-disc \"Licensed by...\" text (sector 4) and cross-check its region against SYSTEM.CNF");
+    Console.WriteLine("  ode-export psio <cue> [cue2 ...] <out-dir> [--name N]  Lay a PS1 dump out for a PSIO/xStation ODE: game folder + bin/cue + CU2 (+ MULTIDISC.LST for 2+ cues)");
+    Console.WriteLine("  multidisc-detect <folder> [--recursive] [--json]  Group a folder's disc images into multi-disc titles by the \"(Disc N)\" naming convention");
+    Console.WriteLine("  multidisc-manifest <folder> [--recursive] [--json]  Hash every disc of each detected multi-disc title and roll the results into one set manifest");
     Console.WriteLine("  ode-layout <gdemu|rhea|phoebe|mode> <games-dir> <out-dir>  Arrange a set of converted games into an ODE SD-card layout (numbered folders + sidecars; menu built by the device tool)");
     Console.WriteLine("  disc-bom <iso>          Technical bill-of-materials: engine, middleware, runtime, build date");
     Console.WriteLine("  ring-code \"<runout>\" | group <json>  Parse IFPI ring codes; group discs by plant/master");
@@ -597,7 +601,10 @@ return args[0].ToLowerInvariant() switch
     "read-stability" => ReadStabilityCmd(args),
     "redump-prep" => RedumpPrepCmd(args),
     "cu2" => Cu2Cmd(args),
+    "license-check" => LicenseCheckCmd(args),
     "ode-export" => OdeExportCmd(args),
+    "multidisc-detect" => MultiDiscDetectCmd(args),
+    "multidisc-manifest" => MultiDiscManifestCmd(args),
     "ode-layout" => OdeLayoutCmd(args),
     "disc-bom" => DiscBomCmd(args),
     "ring-code" => RingCodeCmd(args),
@@ -730,6 +737,8 @@ return args[0].ToLowerInvariant() switch
     "read-benchmark" => ReadBenchmarkCmd(args),
     "read-disc" => ReadDiscCmd(args),
     "read-raw" => ReadRawCmd(args),
+    "subchannel-dump" => SubchannelDumpCmd(args),
+    "prove" => ProveCmd(args),
     "blank" => BlankCmd(args),
     "raw-dump" => RawDumpCmd(args),
     "fat-extract" => FatExtractCmd(args),
@@ -3401,7 +3410,7 @@ static int RawVerifyReadback(string[] args)
         Console.WriteLine($"Compared:    {r.SectorsCompared:N0} program sectors");
         Console.WriteLine($"Main channel:{(r.MainMismatches == 0 ? " all identical" : $" {r.MainMismatches:N0} mismatch(es), {r.EdcBroken:N0} with broken EDC")}" +
             (r.ScrambleNormalized > 0 ? $"  ({r.ScrambleNormalized:N0} descrambled-on-read, content byte-identical)" : ""));
-        Console.WriteLine($"Sub-channel: {(r.SubMismatches == 0 ? "all identical" : $"{r.SubMismatches:N0} differ — {r.MisAddressed:N0} mis-addressed, {r.ProtectionLosses:N0} protection-loss, {r.SubTimingOnly:N0} timing-only")}");
+        Console.WriteLine($"Sub-channel: {(r.SubMismatches == 0 ? "all identical" : $"{r.SubMismatches:N0} differ — {r.MisAddressed:N0} mis-addressed, {r.ProtectionLosses:N0} protection-loss, {r.SubTimingOnly:N0} timing-only, {r.SubReadNoise:N0} read-noise")}");
         if (r.Dropouts > 0) Console.WriteLine($"Dropouts:    {r.Dropouts:N0} program sector(s) missing from the read-back");
         if (r.Examples.Count > 0)
         {
@@ -6056,6 +6065,55 @@ static int Cu2Cmd(string[] args)
     catch (Exception ex) { return Fail(ex.Message); }
 }
 
+static int LicenseCheckCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge license-check <image.cue|image.bin|image.iso> [--json]\n" +
+                    "  Reads sector 4 of the data track — the fixed \"Licensed by Sony Computer\n" +
+                    "  Entertainment...\" text Sony's own mastering tools wrote ahead of the ISO 9660\n" +
+                    "  volume descriptors — and reports which region it names. When SYSTEM.CNF is also\n" +
+                    "  present, cross-checks the two: a disagreement (rebuilt boot area, relabelled\n" +
+                    "  image, mismatched bin/cue pairing) is flagged. Read-only identification.");
+    string path = args[1];
+    if (!File.Exists(path)) return Fail($"'{path}' not found.");
+    try
+    {
+        var license = DiscForge.Core.PlayStation.LicenseString.FromImage(path);
+        if (license is null)
+            return Fail("Could not read sector 4 — the image has no data track, is too short, " +
+                        "or could not be opened as a .cue/.bin/.iso.");
+
+        var id = DiscForge.Core.PlayStation.SystemCnf.FromImage(path);
+        string? crossCheck = id is not null
+            ? DiscForge.Core.PlayStation.LicenseString.CrossCheck(license, id.Region)
+            : null;
+
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                file = Path.GetFileName(path),
+                region = license.Region.ToString(),
+                license.Line1Matches,
+                license.Line2Matches,
+                license.PaddingLooksStandard,
+                license.Line2Text,
+                license.Issues,
+                systemCnfRegion = id?.Region,
+                crossCheck,
+            });
+            return license.WellFormed && crossCheck is null ? 0 : 2;
+        }
+
+        Console.WriteLine($"{Path.GetFileName(path)}: {license.Summary()}");
+        if (id is not null) Console.WriteLine($"  SYSTEM.CNF region: {id.Region} (serial {(id.GameId.Length > 0 ? id.GameId : "non-standard boot file")})");
+        else Console.WriteLine("  SYSTEM.CNF: not found — nothing to cross-check against.");
+        if (crossCheck is not null) Console.WriteLine($"  MISMATCH: {crossCheck}");
+        return license.WellFormed && crossCheck is null ? 0 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
 // Total playable sectors implied by a cue's data file(s): bytes ÷ the tracks' sector size.
 static long TotalCueSectors(DiscForge.Core.Cue.CueSheet cue, string cuePath, out string? error)
 {
@@ -6077,25 +6135,42 @@ static long TotalCueSectors(DiscForge.Core.Cue.CueSheet cue, string cuePath, out
 static int OdeExportCmd(string[] args)
 {
     if (args.Length < 4)
-        return Fail("usage: dforge ode-export <target> <cue> <out-dir> [--name NAME]\n" +
+        return Fail("usage: dforge ode-export <target> <cue> [cue2 cue3 ...] <out-dir> [--name NAME]\n" +
                     "  Lays a preserved disc out the way an ODE expects, so it can be played on real hardware.\n" +
                     "  Targets: psio  (PSIO / xStation — PlayStation)\n" +
-                    "  Produces <out-dir>/<name>/ with the track bin(s), the cue, and a generated CU2 track map.");
+                    "  One cue: produces <out-dir>/<name>/ with the track bin(s), the cue, and a generated CU2.\n" +
+                    "  Two or more cues (in play order, disc 1 first): all discs share ONE <out-dir>/<name>/\n" +
+                    "  folder plus a generated MULTIDISC.LST, exactly as the PSIO Systems Manual lays it out.");
     string target = args[1].ToLowerInvariant();
-    string cuePath = args[2];
-    string outDir = args[3];
-    if (!File.Exists(cuePath)) return Fail($"'{cuePath}' not found.");
     if (target != "psio") return Fail($"unknown target '{target}'. Supported: psio.");
+
+    string? name = null;
+    var positional = new List<string>();
+    for (int i = 2; i < args.Length; i++)
+    {
+        if (args[i] == "--name" && i + 1 < args.Length) { name = args[++i]; continue; }
+        positional.Add(args[i]);
+    }
+    if (positional.Count < 2)
+        return Fail("Provide at least one cue and an output directory.");
+    string outDir = positional[^1];
+    var cuePaths = positional[..^1];
+    foreach (var c in cuePaths)
+        if (!File.Exists(c)) return Fail($"'{c}' not found.");
 
     try
     {
-        var cue = DiscForge.Core.Cue.CueSheet.Parse(File.ReadAllText(cuePath));
-        long total = TotalCueSectors(cue, cuePath, out string? err);
-        if (err is not null) return Fail(err);
+        var discs = new List<DiscForge.Core.Convert.OdeDiscInput>();
+        foreach (var cuePath in cuePaths)
+        {
+            var cue = DiscForge.Core.Cue.CueSheet.Parse(File.ReadAllText(cuePath));
+            long total = TotalCueSectors(cue, cuePath, out string? err);
+            if (err is not null) return Fail(err);
+            discs.Add(new DiscForge.Core.Convert.OdeDiscInput(cuePath, cue, total));
+        }
 
-        string name = args.SkipWhile(a => a != "--name").Skip(1).FirstOrDefault()
-                      ?? Path.GetFileNameWithoutExtension(cuePath);
-        var plan = DiscForge.Core.Convert.OdeExporter.Psio(cuePath, cue, total, name);
+        name ??= Path.GetFileNameWithoutExtension(cuePaths[0]);
+        var plan = DiscForge.Core.Convert.OdeExporter.PsioSet(discs, name);
 
         foreach (var op in plan.Ops)
         {
@@ -6118,6 +6193,148 @@ static int OdeExportCmd(string[] args)
         return 0;
     }
     catch (Exception ex) { return Fail(ex.Message); }
+}
+
+// Scan a folder for disc images by the "(Disc N)" naming convention. .cue wins over a
+// same-named .bin/.iso/.img (the same disc named two ways) so a set isn't double-counted.
+static IReadOnlyList<string> ScanDiscImages(string folder, bool recursive)
+{
+    var opt = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+    var cues = Directory.GetFiles(folder, "*.cue", opt);
+    var others = new[] { "*.bin", "*.iso", "*.img" }.SelectMany(pat => Directory.GetFiles(folder, pat, opt));
+    var cueKeys = new HashSet<string>(cues.Select(DiscImageKey), StringComparer.OrdinalIgnoreCase);
+    return cues.Concat(others.Where(p => !cueKeys.Contains(DiscImageKey(p)))).ToList();
+}
+
+static string DiscImageKey(string path) =>
+    (Path.GetDirectoryName(Path.GetFullPath(path)) ?? "") + "|" + Path.GetFileNameWithoutExtension(path).ToUpperInvariant();
+
+static int MultiDiscDetectCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge multidisc-detect <folder> [--recursive] [--json]\n" +
+                    "  Groups disc images into multi-disc titles by the Redump/No-Intro \"(Disc N)\" or\n" +
+                    "  \"(Disc N of M)\" naming convention. Read-only cataloguing — a set is reported as\n" +
+                    "  incomplete when a disc number is missing from the sequence (or from a declared total).");
+    string folder = args[1];
+    if (!Directory.Exists(folder)) return Fail($"'{folder}' not found.");
+    bool recursive = args.Contains("--recursive");
+
+    var images = ScanDiscImages(folder, recursive);
+    var titles = DiscForge.Core.Library.MultiDiscDetector.Detect(images);
+
+    if (args.Contains("--json"))
+    {
+        EmitJson(new
+        {
+            folder,
+            titleCount = titles.Count,
+            titles = titles.Select(t => new
+            {
+                t.Title,
+                t.Complete,
+                discs = t.Discs.OrderBy(d => d.DiscNumber).Select(d => new { d.DiscNumber, d.Path }),
+                t.MissingDiscNumbers,
+            }),
+        });
+        return titles.All(t => t.Complete) ? 0 : 2;
+    }
+
+    if (titles.Count == 0)
+    {
+        Console.WriteLine($"No multi-disc titles found under '{folder}'" + (recursive ? " (recursive)." : "."));
+        return 0;
+    }
+    foreach (var t in titles)
+    {
+        Console.WriteLine($"{t.Title}  [{(t.Complete ? "complete" : "INCOMPLETE")}]");
+        foreach (var d in t.Discs.OrderBy(d => d.DiscNumber))
+            Console.WriteLine($"    Disc {d.DiscNumber}: {d.Path}");
+        if (!t.Complete)
+            Console.WriteLine($"    missing: disc(s) {string.Join(", ", t.MissingDiscNumbers)}");
+    }
+    return titles.All(t => t.Complete) ? 0 : 2;
+}
+
+static int MultiDiscManifestCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge multidisc-manifest <folder> [--recursive] [--json]\n" +
+                    "  Detects multi-disc titles (see multidisc-detect) and hashes every disc — CRC-32,\n" +
+                    "  MD5, SHA-1, SHA-256, one streaming pass per file — rolling the results into one\n" +
+                    "  manifest per title: the set as a preservation unit, with its own completeness.\n" +
+                    "  A .cue with a single data file hashes that file; a split (multi-file) cue hashes\n" +
+                    "  only its largest track and says so — full multi-file rollup isn't done yet.");
+    string folder = args[1];
+    if (!Directory.Exists(folder)) return Fail($"'{folder}' not found.");
+    bool recursive = args.Contains("--recursive");
+    bool json = args.Contains("--json");
+
+    var images = ScanDiscImages(folder, recursive);
+    var titles = DiscForge.Core.Library.MultiDiscDetector.Detect(images);
+    if (titles.Count == 0)
+    {
+        Console.WriteLine($"No multi-disc titles found under '{folder}'" + (recursive ? " (recursive)." : "."));
+        return 0;
+    }
+
+    var manifests = new List<DiscForge.Core.Library.MultiDiscManifest>();
+    var allNotes = new List<string>();
+    foreach (var t in titles)
+    {
+        try
+        {
+            var manifest = DiscForge.Core.Library.MultiDiscManifestBuilder.Build(t, path =>
+            {
+                var (target, note) = ResolveDiscHashTarget(path);
+                if (note is not null) allNotes.Add($"{t.Title}, disc at '{path}': {note}");
+                if (!File.Exists(target)) throw new FileNotFoundException($"data file not found: {target}", target);
+                return File.OpenRead(target);
+            });
+            manifests.Add(manifest);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"warning: skipping '{t.Title}' — {ex.Message}");
+        }
+    }
+
+    if (json)
+    {
+        EmitJson(new { folder, manifests, notes = allNotes });
+        return manifests.All(m => m.Complete) ? 0 : 2;
+    }
+
+    foreach (var m in manifests)
+    {
+        Console.WriteLine($"{m.Title}  [{(m.Complete ? "complete" : "INCOMPLETE")}]");
+        foreach (var d in m.Discs)
+            Console.WriteLine($"    Disc {d.DiscNumber}: {d.Path}  sha1={d.Sha1}  crc32={d.Crc32}  ({d.Bytes:N0} bytes)");
+        if (!m.Complete)
+            Console.WriteLine($"    missing: disc(s) {string.Join(", ", m.MissingDiscNumbers)}");
+    }
+    foreach (var n in allNotes) Console.WriteLine($"  note: {n}");
+    return manifests.All(m => m.Complete) ? 0 : 2;
+}
+
+// Resolve what to actually hash for a detected disc path: the path itself for a bare
+// image, or a .cue's data file (the largest track when the cue splits across several).
+static (string target, string? note) ResolveDiscHashTarget(string discPath)
+{
+    if (!discPath.EndsWith(".cue", StringComparison.OrdinalIgnoreCase))
+        return (discPath, null);
+
+    var cue = DiscForge.Core.Cue.CueSheet.Parse(File.ReadAllText(discPath));
+    string dir = Path.GetDirectoryName(Path.GetFullPath(discPath)) ?? ".";
+    var files = cue.Tracks.Select(t => t.File).Where(f => !string.IsNullOrWhiteSpace(f))
+                          .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    if (files.Count == 0) return (discPath, "cue has no data files — hashed the cue text itself");
+    if (files.Count == 1) return (Path.Combine(dir, files[0]), null);
+
+    string largest = files.Select(f => Path.Combine(dir, f))
+                          .OrderByDescending(p => File.Exists(p) ? new FileInfo(p).Length : -1)
+                          .First();
+    return (largest, $"multi-file cue ({files.Count} tracks) — hashed the largest track only ({Path.GetFileName(largest)})");
 }
 
 // Dump-completeness certificate: reconcile cue layout, data-file size and subchannel coverage.
@@ -11685,12 +11902,15 @@ static int BurnRawCmd(string[] args)
                     "  --subcode cooked|raw|pq   force the raw subcode mode instead of auto-negotiating\n" +
                     "                     (cooked = IS_COOKED/96 de-interleaved, IMAPI2's default; raw = IS_RAW/96\n" +
                     "                     interleaved; pq = PQ_ONLY/16). Match `build-raw --subcode` for verify.\n" +
-                    "  --engine spti      use the direct-SPTI raw DAO-96 engine (ImgBurn's approach) instead of\n" +
-                    "                     IMAPI2 — writes our exact bytes via MODE SELECT + SEND CUE SHEET + WRITE(10).\n" +
-                    "  --test-cue         (with --engine spti) non-destructively validate the write parameters +\n" +
-                    "                     cue sheet against the drive — no disc is written.\n" +
-                    "  --simulate         (with --engine spti) run the FULL write path with the laser off\n" +
-                    "                     (drive test-write) — validates addressing/sequence, no disc written.");
+                    "  --engine spti      use the direct-SPTI raw DAO-96 engine instead of IMAPI2 — writes our\n" +
+                    "                     exact bytes via MODE SELECT (Write Type = Raw) + WRITE(10), lead-in included.\n" +
+                    "  --simulate         (with --engine spti) THE non-destructive check to run: the FULL real\n" +
+                    "                     write path (MODE SELECT, NWA, chunked WRITE(10), finalise) with the\n" +
+                    "                     laser off — validates addressing/sequence end-to-end, no disc is written.\n" +
+                    "  --test-cue         (with --engine spti) LEGACY diagnostic only — validates a different,\n" +
+                    "                     abandoned Session-At-Once + SEND CUE SHEET setup that Burn() no longer\n" +
+                    "                     uses (Raw mode forbids a cue sheet by spec). A --test-cue rejection does\n" +
+                    "                     NOT mean the real burn will fail; use --simulate to test the real path.");
 #if WINDOWS
     if (!File.Exists(args[1])) return Fail($"'{args[1]}' not found.");
     if (Path.GetExtension(args[1]).ToLowerInvariant() != ".cue")
@@ -12499,6 +12719,235 @@ static int ReadRawCmd(string[] args)
 #else
     _ = (outPath, start, length, track, reread);
     return Fail("`read-raw` uses the Windows SPTI READ CD path; run it on Windows with the drive attached.");
+#endif
+}
+
+static int SubchannelDumpCmd(string[] args)
+{
+    if (args.Length < 3)
+        return Fail("usage: dforge subchannel-dump <drive> <out.sub> [--start LBA] [--length N] [--track N]\n" +
+                    "                              [--corrected out-corrected.sub] [--compare]\n" +
+                    "  Captures the raw interleaved P-W sub-channel (96 bytes/sector, CloneCD .sub-compatible)\n" +
+                    "  straight from the drive via READ CD, without dumping the whole disc's main-channel data —\n" +
+                    "  the standalone capture that feeds subq-map, cdg-extract, cdtext-read, and LibCrypt-style\n" +
+                    "  Q-CRC analysis (subch) when you just need the sub-channel.\n" +
+                    "  --start LBA / --length N   the range to capture (both required unless --track is given).\n" +
+                    "  --track N          capture exactly track N's range, from the disc's own TOC.\n" +
+                    "  --corrected FILE   also capture the drive's own CORRECTED, de-interleaved R-W reading of\n" +
+                    "                     the same range (MMC sub-channel selector 100) into a second file — not\n" +
+                    "                     every drive supports this selector even when it supports raw P-W.\n" +
+                    "  --compare          with --corrected, also compare the two captures' decoded Q content\n" +
+                    "                     sector by sector and print where they disagree — the \"most faithful\n" +
+                    "                     capture\" check: agreement is itself evidence neither capture missed\n" +
+                    "                     something; disagreement is worth a closer look before trusting either.");
+    string outPath = args[2];
+    int start = int.TryParse(OptVal(args, "--start"), out var st) ? st : 0;
+    long? length = long.TryParse(OptVal(args, "--length"), out var ln) && ln > 0 ? ln : null;
+    int? track = int.TryParse(OptVal(args, "--track"), out var tk) && tk > 0 ? tk : null;
+    string? correctedPath = OptVal(args, "--corrected");
+    bool compare = args.Contains("--compare");
+    if (compare && correctedPath is null)
+        return Fail("--compare needs --corrected FILE — there's nothing to compare the raw capture against.");
+
+#if WINDOWS
+    string spec = args[1].TrimEnd(':', '\\', '/');
+    if (spec.Length == 0) return Fail("Give the optical drive letter, e.g. `dforge subchannel-dump D: disc.sub --track 1`.");
+    char letter = char.ToUpperInvariant(spec[0]);
+    try
+    {
+        using var dev = new DiscForge.Devices.Spti.SptiDevice(letter);
+
+        if (track is int trackNo)
+        {
+            var toc = DiscForge.Devices.Reading.DiscReader.ReadToc(dev);
+            var t = toc.Tracks.FirstOrDefault(x => x.Number == trackNo);
+            if (t is null)
+                return Fail($"Track {trackNo} is not on this disc (it has tracks " +
+                            $"{toc.FirstTrack}–{toc.LastTrack}).");
+            start = (int)t.StartLba;
+            length = t.LengthSectors;
+            Console.WriteLine($"Track {trackNo}: LBA {start}, {length:N0} sectors (from TOC).");
+        }
+        if (length is null)
+            return Fail("Give a bounded range: --length N, or --track N to take it from the TOC.");
+
+        if (!DiscForge.Devices.Reading.SubchannelReader.SupportsRawSubchannel(dev, (uint)start))
+            return Fail("This drive refused a raw P-W sub-channel read — it may not support the selector at all.");
+
+        Console.WriteLine($"Reading raw sub-channel from {letter}: ({length:N0} sectors) starting LBA {start}…");
+        var progress = new Progress<double>(p => Console.Write($"\r  {p * 100,5:0.0}%    "));
+        var raw = DiscForge.Devices.Reading.SubchannelReader.Read(dev, (uint)start, (uint)length.Value, progress);
+        Console.WriteLine();
+        File.WriteAllBytes(outPath, raw.Subcode);
+        Console.WriteLine($"  Read {raw.SectorsRead:N0}/{length:N0} sectors → {raw.Subcode.Length:N0} bytes ({Path.GetFileName(outPath)})");
+        if (raw.SectorsRefused > 0)
+            Console.WriteLine($"  {raw.SectorsRefused:N0} sector(s) refused ({raw.RefusalReason}) — left zeroed (fails Q-CRC, visible as invalid).");
+
+        if (correctedPath is not null)
+        {
+            if (!DiscForge.Devices.Reading.SubchannelReader.SupportsCorrectedSubchannel(dev, (uint)start))
+                return Fail("This drive refused a corrected R-W sub-channel read (selector 100) — the raw " +
+                            $"capture above ({Path.GetFileName(outPath)}) is still valid; this drive just " +
+                            "doesn't support the separate corrected reading.");
+
+            Console.WriteLine($"Reading corrected sub-channel from {letter}…");
+            var cProgress = new Progress<double>(p => Console.Write($"\r  {p * 100,5:0.0}%    "));
+            var corrected = DiscForge.Devices.Reading.SubchannelReader.ReadCorrected(dev, (uint)start, (uint)length.Value, cProgress);
+            Console.WriteLine();
+            File.WriteAllBytes(correctedPath, corrected.Subcode);
+            Console.WriteLine($"  Read {corrected.SectorsRead:N0}/{length:N0} sectors → {corrected.Subcode.Length:N0} bytes ({Path.GetFileName(correctedPath)})");
+            if (corrected.SectorsRefused > 0)
+                Console.WriteLine($"  {corrected.SectorsRefused:N0} sector(s) refused ({corrected.RefusalReason}) — left zeroed.");
+
+            if (compare)
+            {
+                var cmp = DiscForge.Core.Raw.RawSubchannel.CompareRawAndCorrected(raw.Subcode, corrected.Subcode, length.Value);
+                Console.WriteLine($"  Compare: {cmp.Summary}");
+                Console.WriteLine($"    raw Q-valid: {cmp.RawQValid:N0}/{length:N0}   corrected Q-valid: {cmp.CorrectedQValid:N0}/{length:N0}");
+                if (cmp.QDisagree > 0)
+                {
+                    int shown = Math.Min(20, cmp.DisagreeingSectors.Count);
+                    Console.WriteLine($"    first {shown} disagreeing sector(s) (relative to LBA {start}): " +
+                                      string.Join(", ", cmp.DisagreeingSectors.Take(shown)));
+                }
+            }
+        }
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+#else
+    _ = (outPath, start, length, track, correctedPath, compare);
+    return Fail("`subchannel-dump` uses the Windows SPTI READ CD path; run it on Windows with the drive attached.");
+#endif
+}
+
+static int ProveCmd(string[] args)
+{
+    if (args.Length < 3)
+        return Fail("usage: dforge prove <disc.cue> <drive> [--speed N] [--subcode raw|cooked|pq]\n" +
+                    "                     [--report out.html] [--keep-temp]\n" +
+                    "  The round trip, one verb, one verdict. Burns <disc.cue> to <drive> via the direct-SPTI\n" +
+                    "  RAW DAO-96 engine (the same path as `burn-raw --engine spti`), then reads every track\n" +
+                    "  back off the disc and verifies each one byte-for-byte against the exact image that was\n" +
+                    "  burned — main channel, EDC/ECC, and every Q sub-channel frame, not just an MD5. Prints\n" +
+                    "  ONE final verdict: PROVEN or FAILED.\n" +
+                    "  This productizes the burn half of the round trip in docs/HARDWARE_RUNBOOK.md §4\n" +
+                    "  (burn-raw + read-raw + raw-verify-readback, looped over every track and merged into one\n" +
+                    "  verdict, using each track's own TOC start/length/field so mixed-mode discs read back\n" +
+                    "  correctly with no manual --track juggling). It starts from a .cue you already trust —\n" +
+                    "  it does not (yet) do that runbook's dump/score/audit/merge/convert front half; this\n" +
+                    "  proves the BURN, not the whole preservation chain end to end.\n" +
+                    "  --speed N        write speed multiplier (default 1 — the speed that held up under\n" +
+                    "                   testing; higher speeds have failed on aged media in practice).\n" +
+                    "  --subcode raw|cooked|pq   sub-channel form for the golden image (default raw/\n" +
+                    "                   Interleaved96, matching the burn engine's own on-wire format).\n" +
+                    "  --report out.html   write one HTML certificate per track (out-trackNN.html).\n" +
+                    "  --keep-temp      keep the golden image and per-track read-back captures\n" +
+                    "                   (<cue-basename>.prove-golden.img / .prove-trackNN.bin) instead of\n" +
+                    "                   deleting them once the verdict is in.");
+    string cuePath = args[1];
+    if (!File.Exists(cuePath)) return Fail($"'{cuePath}' not found.");
+    if (Path.GetExtension(cuePath).ToLowerInvariant() != ".cue")
+        return Fail("prove currently takes a .cue (mixed/audio/data). For a .cdi, convert to cue first.");
+    string spec = args[2].TrimEnd(':', '\\', '/');
+    if (spec.Length == 0) return Fail("Give the target drive letter, e.g. `dforge prove disc.cue D:`.");
+    char letter = char.ToUpperInvariant(spec[0]);
+    int speed = int.TryParse(OptVal(args, "--speed"), out var sp) ? sp : 1;
+    var form = (OptVal(args, "--subcode")?.ToLowerInvariant()) switch
+    {
+        "pq" => RawSubcodeForm.Pq16,
+        "cooked" or "packed" => RawSubcodeForm.Packed96,
+        "raw" or "interleaved" or null => RawSubcodeForm.Interleaved96,
+        var other => throw new ArgumentException($"--subcode must be raw|cooked|pq, not '{other}'."),
+    };
+    bool keepTemp = args.Contains("--keep-temp");
+    string? reportBase = OptVal(args, "--report");
+
+#if WINDOWS
+    try
+    {
+        var caps = DiscForge.Devices.DriveDetector.Detect(letter);
+        if (!caps.CdWrite) return Fail($"Drive {letter}: ({caps.Vendor} {caps.Model}) is not a CD writer.");
+
+        Console.WriteLine($"=== dforge prove: {Path.GetFileName(cuePath)} -> {letter}: ({caps.Vendor} {caps.Model}) ===");
+
+        // ---- 1. compose the golden image --------------------------------------
+        string baseName = Path.GetFileNameWithoutExtension(cuePath);
+        string goldenPath = baseName + ".prove-golden.img";
+        Console.WriteLine("[1] composing golden image…");
+        using (var layoutForGolden = DiscForge.Core.Raw.DiscLayout.FromCueFile(cuePath))
+        {
+            Console.WriteLine($"    {layoutForGolden.Tracks.Count} track(s), " +
+                              $"{RawImageGenerator.ProgramSectors(layoutForGolden):N0} program sectors");
+            using var goldenOut = File.Create(goldenPath);
+            RawImageGenerator.Generate(layoutForGolden, form, goldenOut);
+        }
+        Console.WriteLine($"    wrote {goldenPath}");
+
+        // ---- 2. burn ------------------------------------------------------------
+        Console.WriteLine($"[2] burning (RAW DAO-96, direct SPTI, speed {speed}x)…");
+        var layoutForBurn = DiscForge.Core.Raw.DiscLayout.FromCueFile(cuePath);
+        var burnProgress = new Progress<DiscForge.Core.Burning.BurnProgress>(p =>
+            Console.WriteLine($"    [{p.Phase}] {p.Fraction * 100,5:0.0}%{(p.Detail is null ? "" : "  " + p.Detail)}"));
+        DiscForge.Devices.Burning.SptiRawDaoBurnEngine.Burn(letter, layoutForBurn, burnProgress, simulate: false,
+            writeSpeedMultiplier: speed);
+        Console.WriteLine("    burn complete.");
+
+        // ---- 3. read every track back and verify it against the golden ----------
+        using var dev = new DiscForge.Devices.Spti.SptiDevice(letter);
+        var toc = DiscForge.Devices.Reading.DiscReader.ReadToc(dev);
+        var verdicts = new List<(int Track, bool Ok, string Summary)>();
+        foreach (var t in toc.Tracks)
+        {
+            Console.WriteLine($"[3] track {t.Number} ({(t.IsData ? "data" : "audio")}): reading back…");
+            var fieldSel = t.IsData ? DiscForge.Devices.Reading.RawDiscReader.FieldSelect.Data
+                                     : DiscForge.Devices.Reading.RawDiscReader.FieldSelect.Audio;
+            string rbPath = $"{baseName}.prove-track{t.Number:D2}.bin";
+            var readProgress = new Progress<double>(p => Console.Write($"\r    {p * 100,5:0.0}%    "));
+            using (var fs = File.Create(rbPath))
+                DiscForge.Devices.Reading.RawDiscReader.Read(dev, (int)t.StartLba, t.LengthSectors, fs, readProgress, fieldSel);
+            Console.WriteLine();
+
+            RawReadbackCompare.Report r;
+            long goldenLen, rbLen;
+            using (var golden = File.OpenRead(goldenPath))
+            using (var readback = File.OpenRead(rbPath))
+            {
+                goldenLen = golden.Length; rbLen = readback.Length;
+                r = RawReadbackCompare.Compare(golden, readback, partial: true);
+            }
+            bool ok = r.Result != RawReadbackCompare.Grade.Fail;
+            verdicts.Add((t.Number, ok, r.Summary));
+            Console.WriteLine($"    {(ok ? "OK" : "FAIL")} — {r.Summary}");
+
+            if (reportBase is not null)
+            {
+                string trackReport = Path.Combine(
+                    Path.GetDirectoryName(reportBase) is { Length: > 0 } d ? d : ".",
+                    Path.GetFileNameWithoutExtension(reportBase) + $"-track{t.Number:D2}" + Path.GetExtension(reportBase));
+                File.WriteAllText(trackReport, RawReadbackReport.Html(
+                    r, Path.GetFileName(goldenPath), Path.GetFileName(rbPath), goldenLen, rbLen,
+                    DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")));
+                Console.WriteLine($"    wrote {trackReport}");
+            }
+
+            if (!keepTemp) File.Delete(rbPath);
+        }
+        if (!keepTemp) File.Delete(goldenPath);
+
+        Console.WriteLine();
+        bool proven = verdicts.Count > 0 && verdicts.All(v => v.Ok);
+        Console.WriteLine(proven
+            ? $"=== PROVEN — all {verdicts.Count} track(s) verified byte-for-byte. ==="
+            : $"=== FAILED — {verdicts.Count(v => !v.Ok)}/{verdicts.Count} track(s) did not verify. ===");
+        foreach (var v in verdicts.Where(v => !v.Ok))
+            Console.WriteLine($"  track {v.Track}: {v.Summary}");
+        return proven ? 0 : 1;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+#else
+    _ = (cuePath, letter, speed, form, keepTemp, reportBase);
+    return Fail("`prove` needs the Windows build (build -f net8.0-windows) — it drives the SPTI burn/read path.");
 #endif
 }
 
