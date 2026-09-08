@@ -37,57 +37,83 @@ internal sealed class BurnView : UserControl
         Width = 420, ReadOnly = true, Font = Theme.Ui, Location = new Point(70, 13),
     };
 
+    // Escape hatch for burns DiscForge's own engines can't do (or that a user would simply
+    // rather run through a tool they already trust) — the burn-side counterpart to Read's own
+    // external-tool row. These three specifically moved here FROM ReadView: they're burn/mount
+    // tools first (ImgBurn's whole purpose is writing an image to disc; Alcohol 120% and DAEMON
+    // Tools are burning/mounting suites, not rippers), so they belong on the screen that burns,
+    // not the screen that reads. Each remembers its own path via Settings, and all three share
+    // ExternalToolLauncher — the same launch logic (WorkingDirectory fix, path normalization,
+    // clear-on-failure) ReadView's rip-tool buttons already use, pulled out once both views
+    // needed it rather than copied a second time. DiscForge never bundles, inspects, or knows
+    // anything else about what these tools do.
+    private readonly Button _externalBurnImgBurn = new()
+    {
+        Text = "ImgBurn…", Location = new Point(12, 42), Width = 100, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    private readonly Button _externalBurnAlcohol120 = new()
+    {
+        Text = "Alcohol 120%…", Location = new Point(120, 42), Width = 140, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    private readonly Button _externalBurnDaemonTools = new()
+    {
+        Text = "DAEMON Tools…", Location = new Point(268, 42), Width = 140, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+
     private readonly ListView _destinations = new()
     {
-        Location = new Point(12, 60), Size = new Size(712, 92),
+        Location = new Point(12, 90), Size = new Size(712, 92),
         View = View.Details, CheckBoxes = true, FullRowSelect = true,
         HeaderStyle = ColumnHeaderStyle.Nonclickable, Font = Theme.Ui, BackColor = Color.White,
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
     };
 
     // Actions
-    private readonly CheckBox _test = new() { Text = "Test", AutoSize = true, Location = new Point(24, 184), Font = Theme.Ui };
-    private readonly CheckBox _write = new() { Text = "Write", AutoSize = true, Location = new Point(24, 206), Checked = true, Font = Theme.Ui };
-    private readonly CheckBox _verify = new() { Text = "Verify", AutoSize = true, Location = new Point(24, 228), Font = Theme.Ui };
+    private readonly CheckBox _test = new() { Text = "Test", AutoSize = true, Location = new Point(24, 214), Font = Theme.Ui };
+    private readonly CheckBox _write = new() { Text = "Write", AutoSize = true, Location = new Point(24, 236), Checked = true, Font = Theme.Ui };
+    private readonly CheckBox _verify = new() { Text = "Verify", AutoSize = true, Location = new Point(24, 258), Font = Theme.Ui };
     private readonly NumericUpDown _copies = new()
     {
         Minimum = 1, Maximum = 99, Value = 1, Width = 52,
-        Location = new Point(96, 252), Font = Theme.Ui,
+        Location = new Point(96, 282), Font = Theme.Ui,
     };
 
     // Methods
-    private readonly RadioButton _auto = new() { Text = "DAO/SAO", AutoSize = true, Location = new Point(200, 184), Checked = true, Font = Theme.Ui };
-    private readonly RadioButton _tao = new() { Text = "TAO", AutoSize = true, Location = new Point(200, 206), Font = Theme.Ui };
-    private readonly RadioButton _raw = new() { Text = "RAW", AutoSize = true, Location = new Point(200, 228), Font = Theme.Ui };
+    private readonly RadioButton _auto = new() { Text = "DAO/SAO", AutoSize = true, Location = new Point(200, 214), Checked = true, Font = Theme.Ui };
+    private readonly RadioButton _tao = new() { Text = "TAO", AutoSize = true, Location = new Point(200, 236), Font = Theme.Ui };
+    private readonly RadioButton _raw = new() { Text = "RAW", AutoSize = true, Location = new Point(200, 258), Font = Theme.Ui };
 
     // Speed. Items are (label, sectors/sec) pairs; index 0 is always "Max"
     // (null = let the drive run at its default). Populated per-media on detect.
     private readonly ComboBox _speed = new()
     {
-        Location = new Point(420, 181), Width = 160, Font = Theme.Ui,
+        Location = new Point(420, 211), Width = 160, Font = Theme.Ui,
         DropDownStyle = ComboBoxStyle.DropDownList,
     };
 
     private readonly Button _erase = new()
     {
-        Text = "Erase disc…", Location = new Point(420, 218), Width = 110, Height = 26,
+        Text = "Erase disc…", Location = new Point(420, 248), Width = 110, Height = 26,
         FlatStyle = FlatStyle.System, Enabled = false,
     };
 
     private readonly Button _start = new()
     {
-        Text = "Start", Location = new Point(12, 278), Width = 100, Height = 28,
+        Text = "Start", Location = new Point(12, 308), Width = 100, Height = 28,
         FlatStyle = FlatStyle.System, Enabled = false,
     };
     private readonly ProgressBar _progress = new()
     {
-        Location = new Point(124, 281), Size = new Size(600, 22), Minimum = 0, Maximum = 100,
+        Location = new Point(124, 311), Size = new Size(600, 22), Minimum = 0, Maximum = 100,
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
     };
 
     private readonly EventLogView _log = new()
     {
-        Location = new Point(12, 316), Size = new Size(712, 144),
+        Location = new Point(12, 346), Size = new Size(712, 144),
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
     };
 
@@ -99,11 +125,18 @@ internal sealed class BurnView : UserControl
     /// <summary>True when the source is a CUE sheet. A CUE burns via RAW DAO —
     /// exact indexes, gaps, flags, ISRC/MCN and CD-TEXT are the point of it.</summary>
     private bool _sourceIsCue;
+    /// <summary>Set when the opened image was a CloneCD .ccd — the burn engines only know
+    /// CUE/ISO/raw-CDI, not CloneCD's own .ccd+.img+.sub layout, so <see cref="OpenCdi"/>
+    /// converts it to a BIN/CUE pair in this temp directory first (via the same
+    /// <see cref="DiscConverter"/> hub — and the CloneCD reader it already uses for
+    /// Convert/Interop — so nothing new was taught to the burn engines themselves) and burns
+    /// that instead. Cleaned up the next time a new image is opened, and on Dispose.</summary>
+    private string? _ccdTempDir;
 
     public BurnView()
     {
         // Establish a realistic size before adding anchored children (see InspectView).
-        Size = new Size(736, 470);
+        Size = new Size(736, 500);
         BackColor = Color.White;
         Padding = new Padding(12);
 
@@ -111,18 +144,18 @@ internal sealed class BurnView : UserControl
         var open = new Button { Text = "Open…", Location = new Point(498, 12), Width = 80, FlatStyle = FlatStyle.System };
         open.Click += (_, _) => OpenCdi();
 
-        Controls.Add(new Label { Text = "Destination:", AutoSize = true, Location = new Point(12, 42), Font = Theme.UiBold });
+        Controls.Add(new Label { Text = "Destination:", AutoSize = true, Location = new Point(12, 72), Font = Theme.UiBold });
 
         var detect = new Button
         {
-            Text = "Detect drives", Location = new Point(536, 38), Width = 100, FlatStyle = FlatStyle.System,
+            Text = "Detect drives", Location = new Point(536, 68), Width = 100, FlatStyle = FlatStyle.System,
             Anchor = AnchorStyles.Top | AnchorStyles.Right,
         };
         detect.Click += async (_, _) => await DetectAsync();
 
         var addFile = new Button
         {
-            Text = "Image file…", Location = new Point(642, 38), Width = 82, FlatStyle = FlatStyle.System,
+            Text = "Image file…", Location = new Point(642, 68), Width = 82, FlatStyle = FlatStyle.System,
             Anchor = AnchorStyles.Top | AnchorStyles.Right,
         };
         addFile.Click += (_, _) => AddImageDestination();
@@ -133,14 +166,14 @@ internal sealed class BurnView : UserControl
         // whole point of a checkbox list.
         _destinations.ItemChecked += (_, _) => UpdateStartEnabled();
 
-        Controls.Add(GroupLabel("Actions", new Point(12, 164)));
-        Controls.Add(GroupLabel("Methods", new Point(188, 164)));
-        Controls.Add(GroupLabel("Speed / Media", new Point(408, 164)));
-        Controls.Add(new Label { Text = "Copies:", AutoSize = true, Location = new Point(24, 254), Font = Theme.Ui });
+        Controls.Add(GroupLabel("Actions", new Point(12, 194)));
+        Controls.Add(GroupLabel("Methods", new Point(188, 194)));
+        Controls.Add(GroupLabel("Speed / Media", new Point(408, 194)));
+        Controls.Add(new Label { Text = "Copies:", AutoSize = true, Location = new Point(24, 284), Font = Theme.Ui });
         Controls.Add(new Label
         {
             Text = "DAO/SAO is used unless TAO or RAW is chosen.",
-            AutoSize = true, Location = new Point(200, 254), Font = Theme.Ui, ForeColor = Color.Gray,
+            AutoSize = true, Location = new Point(200, 284), Font = Theme.Ui, ForeColor = Color.Gray,
         });
 
         _speed.Items.Add(new SpeedItem("Max (drive default)", null));
@@ -151,7 +184,12 @@ internal sealed class BurnView : UserControl
         _start.Click += async (_, _) => await StartAsync();
         foreach (var cb in new[] { _test, _write, _verify }) cb.CheckedChanged += (_, _) => UpdateStartEnabled();
 
+        _externalBurnImgBurn.Click += (_, _) => LaunchExternalBurnerImgBurn();
+        _externalBurnAlcohol120.Click += (_, _) => LaunchExternalBurnerAlcohol120();
+        _externalBurnDaemonTools.Click += (_, _) => LaunchExternalBurnerDaemonTools();
+
         Controls.Add(_cdiPath); Controls.Add(open);
+        Controls.Add(_externalBurnImgBurn); Controls.Add(_externalBurnAlcohol120); Controls.Add(_externalBurnDaemonTools);
         Controls.Add(detect); Controls.Add(addFile);
         Controls.Add(_destinations);
         Controls.Add(_test); Controls.Add(_write); Controls.Add(_verify); Controls.Add(_copies);
@@ -174,23 +212,59 @@ internal sealed class BurnView : UserControl
     {
         using var dlg = new OpenFileDialog
         {
-            Filter = "Disc images (*.cdi;*.iso;*.cue)|*.cdi;*.iso;*.cue|CDI images (*.cdi)|*.cdi|" +
-                     "ISO images (*.iso)|*.iso|CUE sheets (*.cue)|*.cue|All files (*.*)|*.*",
+            Filter = "Disc images (*.cdi;*.iso;*.cue;*.ccd)|*.cdi;*.iso;*.cue;*.ccd|" +
+                     "CDI images (*.cdi)|*.cdi|ISO images (*.iso)|*.iso|CUE sheets (*.cue)|*.cue|" +
+                     "CloneCD images (*.ccd)|*.ccd|All files (*.*)|*.*",
         };
         if (dlg.ShowDialog() != DialogResult.OK) return;
 
-        _openCdi = dlg.FileName;
-        var ext = Path.GetExtension(dlg.FileName);
+        // A previous open may have left a CCD->CUE staging directory behind — done with it now.
+        CleanupCcdTempDir();
+
+        var originalPath = dlg.FileName;
+        var pickedPath = originalPath;
+        var pickedExt = Path.GetExtension(pickedPath);
+        var displayName = Path.GetFileName(originalPath);
+
+        if (pickedExt.Equals(".ccd", StringComparison.OrdinalIgnoreCase))
+        {
+            // The burn engines below only understand a CUE sheet or a raw ISO/CDI stream — they
+            // have no notion of CloneCD's three-file .ccd+.img+.sub layout, and adding one to
+            // RawDaoBurnEngine/SptiRawDaoBurnEngine directly would mean teaching live-burn code
+            // a new format. Converting first through DiscConverter — the same hub Convert and
+            // Interop already use, and which already fully understands CloneCD on the read side
+            // — sidesteps that: the burn engines never see anything but the CUE sheet they
+            // already handle, unchanged.
+            try
+            {
+                _ccdTempDir = Path.Combine(Path.GetTempPath(), "DiscForge_ccd_" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(_ccdTempDir);
+                var cuePath = Path.Combine(_ccdTempDir, Path.GetFileNameWithoutExtension(pickedPath) + ".cue");
+                DiscConverter.Convert(pickedPath, cuePath);
+                _log.Add($"Converted {displayName} (CloneCD) to a BIN/CUE for burning.");
+                pickedPath = cuePath;
+                pickedExt = ".cue";
+            }
+            catch (Exception ex)
+            {
+                _log.Add($"Could not read '{displayName}' as a CloneCD image: {ex.Message}", EventLogView.Level.Error);
+                CleanupCcdTempDir();
+                return;
+            }
+        }
+
+        _openCdi = pickedPath;
+        var ext = pickedExt;
         _sourceIsIso = ext.Equals(".iso", StringComparison.OrdinalIgnoreCase);
         _sourceIsCue = ext.Equals(".cue", StringComparison.OrdinalIgnoreCase);
-        _cdiPath.Text = dlg.FileName;
+        _cdiPath.Text = originalPath;
 
         if (_sourceIsCue)
         {
             try
             {
-                var cue = CueSheet.Parse(File.ReadAllText(dlg.FileName));
-                _log.Add($"Image: {Path.GetFileName(dlg.FileName)} — CUE sheet, " +
+                var cue = CueSheet.Parse(File.ReadAllText(pickedPath));
+                _log.Add($"Image: {displayName} — CUE sheet, " +
                          $"{cue.Tracks.Count} track(s)" +
                          (cue.Catalog is not null ? ", MCN" : "") +
                          (cue.Title is not null ? ", CD-TEXT" : ""));
@@ -202,19 +276,71 @@ internal sealed class BurnView : UserControl
                 _log.Add("Could not parse the CUE sheet: " + ex.Message, EventLogView.Level.Error);
                 _openCdi = null;
                 _sourceIsCue = false;
+                CleanupCcdTempDir();
             }
             UpdateStartEnabled();
             return;
         }
 
-        var size = new FileInfo(dlg.FileName).Length;
-        _log.Add($"Image: {Path.GetFileName(dlg.FileName)} " +
+        var size = new FileInfo(pickedPath).Length;
+        _log.Add($"Image: {displayName} " +
                  $"({size / (1024.0 * 1024.0):N1} MB, {(_sourceIsIso ? "ISO" : "CDI")})");
         if (_sourceIsIso && size % 2048 != 0)
             _log.Add($"This file is {size:N0} bytes — not a whole number of 2048-byte sectors. " +
                      "It may be truncated, or a raw BIN rather than an ISO.", EventLogView.Level.Warn);
 
         UpdateStartEnabled();
+    }
+
+    /// <summary>
+    /// Launch ImgBurn — a general-purpose CD/DVD/BD burning tool whose "create image from disc"
+    /// mode some also use as a lightweight ripper, but whose whole reason for being on THIS
+    /// screen rather than Read's is that burning is its primary job. Delegates to
+    /// <see cref="ExternalToolLauncher"/>, the shared logic ReadView's rip-tool buttons use too.
+    /// </summary>
+    private void LaunchExternalBurnerImgBurn() => ExternalToolLauncher.Launch(
+        () => Settings.ExternalDumperPathImgBurn,
+        p => Settings.ExternalDumperPathImgBurn = p,
+        "Locate ImgBurn",
+        "Use it to burn your image — DiscForge did not perform this burn.",
+        _log);
+
+    /// <summary>Same idea again, for Alcohol 120% — a CD/DVD imaging AND burning/mounting suite,
+    /// still in use by some. Same reasoning as <see cref="LaunchExternalBurnerImgBurn"/> for why
+    /// it lives here rather than on Read.</summary>
+    private void LaunchExternalBurnerAlcohol120() => ExternalToolLauncher.Launch(
+        () => Settings.ExternalDumperPathAlcohol120,
+        p => Settings.ExternalDumperPathAlcohol120 = p,
+        "Locate Alcohol 120%",
+        "Use it to burn your image — DiscForge did not perform this burn.",
+        _log);
+
+    /// <summary>Same idea again, for DAEMON Tools — primarily a virtual-drive/mounting tool with
+    /// burning as a secondary feature, which still puts it closer to Burn than to Read (it
+    /// doesn't rip discs at all). Same reasoning as
+    /// <see cref="LaunchExternalBurnerImgBurn"/>.</summary>
+    private void LaunchExternalBurnerDaemonTools() => ExternalToolLauncher.Launch(
+        () => Settings.ExternalDumperPathDaemonTools,
+        p => Settings.ExternalDumperPathDaemonTools = p,
+        "Locate DAEMON Tools",
+        "Use it to burn or mount your image — DiscForge did not perform this burn.",
+        _log);
+
+    /// <summary>Best-effort delete of the CCD-&gt;CUE staging directory from a previous open, if
+    /// any. Never throws — a leftover temp directory is harmless clutter, not a reason to fail
+    /// whatever the caller was doing.</summary>
+    private void CleanupCcdTempDir()
+    {
+        if (_ccdTempDir is null) return;
+        try { if (Directory.Exists(_ccdTempDir)) Directory.Delete(_ccdTempDir, recursive: true); }
+        catch (Exception ex) { AppLog.Write($"could not delete CCD staging dir '{_ccdTempDir}': {ex.Message}"); }
+        _ccdTempDir = null;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) CleanupCcdTempDir();
+        base.Dispose(disposing);
     }
 
     private async Task DetectAsync()

@@ -53,28 +53,112 @@ private readonly CheckBox _captureSub = new()
         Text = "Also capture sub-channel to a .sub sidecar", AutoSize = true,
         Location = new Point(12, 114), Font = Theme.Ui,
     };
+    // Escape hatch for discs DiscForge's own read path cannot get past (a GameCube disc on
+    // an unmodified PC DVD drive is the known real case — its sector encoding needs
+    // drive-vendor-specific commands that are reverse-engineered per drive chipset, which
+    // isn't something to implement here without that exact hardware to develop against).
+    // DiscForge never bundles or ships any such tool — this just remembers the path to one
+    // the user already has, launches it, and can bring its finished image into the library
+    // afterward. See docs/NEXT.md for the real diagnostic history behind this. There's a
+    // second, identically-shaped button below (_externalDumpPs1) for PS1 discs via CloneCD.
+    private readonly Button _externalDump = new()
+    {
+        Text = "Wii/GameCube discs (Rawdump2)…", Location = new Point(12, 140), Width = 220, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    // Same escape hatch as _externalDump, for the other console family this project has seen
+    // it asked for: PS1 discs via CloneCD (an established tool in the PS1 preservation
+    // community, not something DiscForge bundles or knows anything about). Kept as a separate
+    // button and a separate remembered path (Settings.ExternalDumperPathPs1) rather than
+    // reusing _externalDump's, so having both tools set up doesn't make one overwrite the other.
+    private readonly Button _externalDumpPs1 = new()
+    {
+        Text = "PS1 discs (CloneCD)…", Location = new Point(240, 140), Width = 170, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    // Same shape again, for DVD via Xreveal (also known as DVD-Xreveal) — a CSS-aware DVD
+    // backup tool, which is exactly the kind of thing DiscForge's own clean-room reading path
+    // has no business reimplementing (see the clean-room provenance note on
+    // ExternalDumperPathBluray below; the same reasoning applies here). Own remembered path
+    // (ExternalDumperPathDvd), same reason as PS1/GameCube: one tool's setting shouldn't
+    // clobber another's.
+    private readonly Button _externalDumpDvd = new()
+    {
+        Text = "DVD discs (Xreveal)…", Location = new Point(418, 140), Width = 160, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    // General-purpose disc utility, not tied to one console/format the way the buttons above
+    // are — nobody reported DiscForge failing to read anything IsoBuster is aimed at, it's just
+    // a tool the user already has and asked to wire up the same way. Tucked onto the end of
+    // row 1 since it's a small button and there's room; see ExternalToolLauncher for the shared
+    // launch logic every button on this view (and Burn's own external-tool row) now uses.
+    private readonly Button _externalDumpIsoBuster = new()
+    {
+        Text = "IsoBuster…", Location = new Point(586, 140), Width = 110, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    // Same shape again, for Blu-ray via CloneBD. Neither Xreveal nor CloneBD is bundled,
+    // inspected, or understood by DiscForge — same posture as every other button on this row:
+    // DiscForge starts the process the user points it at and nothing more. Deliberately not
+    // something to reimplement here: both commercial tools exist specifically to handle
+    // industry copy protection (CSS/AACS-class schemes) that this project's clean-room,
+    // detect-but-never-circumvent design explicitly stays out of.
+    private readonly Button _externalDumpBluray = new()
+    {
+        Text = "Blu-ray discs (CloneBD)…", Location = new Point(12, 170), Width = 190, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    private readonly Button _importExternal = new()
+    {
+        Text = "Import from external tool…", Location = new Point(210, 170), Width = 190, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    // DVDFab: the all-in-one version of what Xreveal and CloneBD already do separately — its
+    // main job is ripping/copying protected DVDs AND Blu-rays to an image, covering both formats
+    // in one tool rather than two. Added alongside those two, not in place of them, since someone
+    // may still prefer a lighter single-purpose tool for a specific disc. Own remembered path
+    // (ExternalDumperPathDvdFab) for the same reason every other button here has one: so setting
+    // up one tool never clobbers another's.
+    private readonly Button _externalDumpDvdFab = new()
+    {
+        Text = "DVDFab…", Location = new Point(408, 170), Width = 110, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    // Fills the gap right after _externalDump's job ends: Rawdump2 pulls a raw Wii dump off the
+    // drive, but DiscForge's own Wii support only reads the header/partition table — it never
+    // decrypts a Wii disc — so it can't turn that raw dump into a scrubbed, verifiable ISO the
+    // way Wiimms ISO Tools can. Sits on row 2 since there's room after DVDFab; own remembered
+    // path (ExternalDumperPathWit) for the same reason every button here has one.
+    private readonly Button _externalDumpWit = new()
+    {
+        Text = "Wiimms ISO Tools…", Location = new Point(530, 170), Width = 180, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    // ImgBurn, Alcohol 120%, and DAEMON Tools used to live here too, but they're burn/mount
+    // tools rather than rippers — burning is Burn's job, not Read's — so as of the version that
+    // added this comment they moved to BurnView's own external-tool row instead. See BurnView.cs.
     private readonly ListView _tracks = new()
     {
-        // Sits below the four option checkboxes (the last ends near Y=133); a
-        // grid any higher overlaps the "capture sub-channel" row.
-        Location = new Point(12, 140), Size = new Size(712, 100),
+        // Sits below the four option checkboxes and the two external-tool rows (which end near
+        // Y=196); a grid any higher overlaps them.
+        Location = new Point(12, 206), Size = new Size(712, 100),
         View = View.Details, FullRowSelect = true, HeaderStyle = ColumnHeaderStyle.Nonclickable,
         Font = Theme.Ui, BackColor = Color.White,
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
     };
     private readonly Button _rip = new()
     {
-        Text = "Read to CDI…", Location = new Point(12, 250), Width = 110, Height = 28,
+        Text = "Read to CDI…", Location = new Point(12, 316), Width = 110, Height = 28,
         FlatStyle = FlatStyle.System, Enabled = false,
     };
     private readonly ProgressBar _progress = new()
     {
-        Location = new Point(132, 253), Size = new Size(592, 22), Minimum = 0, Maximum = 100,
+        Location = new Point(132, 319), Size = new Size(592, 22), Minimum = 0, Maximum = 100,
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
     };
     private readonly EventLogView _log = new()
     {
-        Location = new Point(12, 286), Size = new Size(712, 170),
+        Location = new Point(12, 352), Size = new Size(712, 170),
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
     };
 
@@ -91,7 +175,7 @@ private readonly CheckBox _captureSub = new()
     public ReadView()
     {
         // Establish a realistic size before adding anchored children (see InspectView).
-        Size = new Size(736, 470);
+        Size = new Size(736, 536);
         BackColor = Color.White;
         Padding = new Padding(12);
 
@@ -112,12 +196,24 @@ private readonly CheckBox _captureSub = new()
             _tracks.Columns.Add(name, w);
 
         _rip.Click += async (_, _) => await RipAsync();
+        _externalDump.Click += (_, _) => LaunchExternalDumper();
+        _externalDumpPs1.Click += (_, _) => LaunchExternalDumperPs1();
+        _externalDumpDvd.Click += (_, _) => LaunchExternalDumperDvd();
+        _externalDumpBluray.Click += (_, _) => LaunchExternalDumperBluray();
+        _externalDumpIsoBuster.Click += (_, _) => LaunchExternalDumperIsoBuster();
+        _externalDumpDvdFab.Click += (_, _) => LaunchExternalDumperDvdFab();
+        _externalDumpWit.Click += (_, _) => LaunchExternalDumperWit();
+        _importExternal.Click += async (_, _) => await ImportExternalDumpAsync();
 
         Controls.Add(_drives); Controls.Add(detect); Controls.Add(readToc);
         Controls.Add(_raw);
         Controls.Add(_continueOnError);
         Controls.Add(_jitter);
         Controls.Add(_captureSub);
+        Controls.Add(_externalDump); Controls.Add(_externalDumpPs1);
+        Controls.Add(_externalDumpDvd); Controls.Add(_externalDumpIsoBuster);
+        Controls.Add(_externalDumpBluray); Controls.Add(_importExternal); Controls.Add(_externalDumpDvdFab);
+        Controls.Add(_externalDumpWit);
         Controls.Add(_tracks);
         Controls.Add(_rip); Controls.Add(_progress);
         Controls.Add(_log);
@@ -534,6 +630,145 @@ private readonly CheckBox _captureSub = new()
         {
             dlg.Finish(ok);
             _rip.Enabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Launch a user-supplied external dumping tool (asked for once, then remembered) — the
+    /// escape hatch for discs whose sector encoding no generic SCSI/MMC command DiscForge issues
+    /// can get past on this drive (a GameCube disc on an unmodified PC DVD drive is the known
+    /// real case: two separate, legitimate recovery attempts were tried here and neither got
+    /// past it — see docs/NEXT.md). DiscForge does not bundle, invoke undocumented commands
+    /// for, or know anything about what the external tool does; it only starts the process the
+    /// user points it at and lets that tool's own window take it from there.
+    /// </summary>
+    private void LaunchExternalDumper() => LaunchExternalTool(
+        () => Settings.ExternalDumperPath,
+        p => Settings.ExternalDumperPath = p,
+        "Locate Rawdump2 (or your Wii/GameCube dumping tool)");
+
+    /// <summary>
+    /// Same idea as <see cref="LaunchExternalDumper"/>, for PS1 discs via CloneCD (or whatever
+    /// the user actually points this at — DiscForge doesn't check or care which tool it is,
+    /// same as the GameCube button). Kept as its own method/remembered path rather than folded
+    /// into <see cref="LaunchExternalDumper"/> so the two tools don't clobber each other's
+    /// setting when a user has both configured.
+    /// </summary>
+    private void LaunchExternalDumperPs1() => LaunchExternalTool(
+        () => Settings.ExternalDumperPathPs1,
+        p => Settings.ExternalDumperPathPs1 = p,
+        "Locate CloneCD (or your PS1 dumping tool)");
+
+    /// <summary>
+    /// Same idea again, for DVD discs via Xreveal — a commercial tool built specifically to
+    /// handle CSS-protected DVDs, which this project's clean-room, detect-but-never-circumvent
+    /// design deliberately does not reimplement itself. DiscForge treats it exactly like every
+    /// other button here: launch what the user points it at, know nothing else about it.
+    /// </summary>
+    private void LaunchExternalDumperDvd() => LaunchExternalTool(
+        () => Settings.ExternalDumperPathDvd,
+        p => Settings.ExternalDumperPathDvd = p,
+        "Locate Xreveal (or your DVD dumping tool)");
+
+    /// <summary>
+    /// Same idea again, for Blu-ray discs via CloneBD — same reasoning as
+    /// <see cref="LaunchExternalDumperDvd"/>, one rung up the copy-protection ladder (AACS-class
+    /// schemes instead of CSS). Kept as its own remembered path
+    /// (<see cref="Settings.ExternalDumperPathBluray"/>) so configuring it doesn't disturb the
+    /// GameCube/PS1/DVD paths, same as every other tool on this row.
+    /// </summary>
+    private void LaunchExternalDumperBluray() => LaunchExternalTool(
+        () => Settings.ExternalDumperPathBluray,
+        p => Settings.ExternalDumperPathBluray = p,
+        "Locate CloneBD (or your Blu-ray dumping tool)");
+
+    /// <summary>
+    /// Same idea again, for IsoBuster — a general-purpose optical-disc utility (CD/DVD/BD and
+    /// several less common formats), not tied to one console/format the way the four buttons
+    /// above are. Nothing here diagnosed a DiscForge failure IsoBuster is working around; it's
+    /// wired up the same way purely so a user who already trusts it can reach for it from here.
+    /// </summary>
+    private void LaunchExternalDumperIsoBuster() => LaunchExternalTool(
+        () => Settings.ExternalDumperPathIsoBuster,
+        p => Settings.ExternalDumperPathIsoBuster = p,
+        "Locate IsoBuster (or your general disc-dumping tool)");
+
+    /// <summary>
+    /// Same idea again, for DVDFab — the all-in-one version of what <see cref="LaunchExternalDumperDvd"/>
+    /// (Xreveal) and <see cref="LaunchExternalDumperBluray"/> (CloneBD) already do separately:
+    /// ripping/copying protected DVDs AND Blu-rays to an image, one tool covering both formats.
+    /// Added alongside those two rather than replacing either — someone may still prefer a
+    /// lighter single-purpose tool for a specific disc. Own remembered path
+    /// (<see cref="Settings.ExternalDumperPathDvdFab"/>) so configuring it doesn't disturb them.
+    /// </summary>
+    private void LaunchExternalDumperDvdFab() => LaunchExternalTool(
+        () => Settings.ExternalDumperPathDvdFab,
+        p => Settings.ExternalDumperPathDvdFab = p,
+        "Locate DVDFab (or your general DVD/Blu-ray dumping tool)");
+
+    /// <summary>
+    /// Same idea again, for Wiimms ISO Tools (WIT) — the natural next step after
+    /// <see cref="LaunchExternalDumper"/> (Rawdump2) for a Wii disc: DiscForge's own Wii support
+    /// only reads the header/partition table and never decrypts a disc, so WIT is what actually
+    /// turns a raw Rawdump2 dump into a scrubbed, verifiable ISO. Own remembered path
+    /// (<see cref="Settings.ExternalDumperPathWit"/>) so configuring it doesn't disturb Rawdump2's.
+    /// </summary>
+    private void LaunchExternalDumperWit() => LaunchExternalTool(
+        () => Settings.ExternalDumperPathWit,
+        p => Settings.ExternalDumperPathWit = p,
+        "Locate Wiimms ISO Tools (wit.exe)");
+
+    /// <summary>
+    /// Launch a user-supplied external dumping tool (asked for once via <paramref name="getPath"/>/
+    /// <paramref name="setPath"/>, then remembered) — the escape hatch for discs whose sector
+    /// encoding no generic SCSI/MMC command DiscForge issues can get past on this drive (a
+    /// GameCube disc on an unmodified PC DVD drive is the known real case: two separate,
+    /// legitimate recovery attempts were tried here and neither got past it — see
+    /// docs/NEXT.md). Delegates to <see cref="ExternalToolLauncher"/>, the same shared logic
+    /// BurnView's own external-tool row uses — DiscForge does not bundle, invoke undocumented
+    /// commands for, or know anything about what the external tool does; it only starts the
+    /// process the user points it at and lets that tool's own window take it from there.
+    /// </summary>
+    private void LaunchExternalTool(Func<string?> getPath, Action<string?> setPath, string pickerTitle) =>
+        ExternalToolLauncher.Launch(getPath, setPath, pickerTitle,
+            "Run the dump in its own window; when it's done, come back here and use " +
+            "\"Import from external tool…\" to bring the finished image into your library.",
+            _log);
+
+    /// <summary>
+    /// Copy an image an external tool produced into wherever the user keeps their library.
+    /// DiscForge did not read or verify this image itself — it's a plain file copy, not a rip —
+    /// so the log says as much rather than implying the same verification a real read gets.
+    /// </summary>
+    private async Task ImportExternalDumpAsync()
+    {
+        using var open = new OpenFileDialog
+        {
+            Title = "Select the image the external tool produced",
+            Filter = "Disc image (*.iso;*.cdi;*.bin;*.img)|*.iso;*.cdi;*.bin;*.img|All files (*.*)|*.*",
+        };
+        if (open.ShowDialog() != DialogResult.OK) return;
+
+        using var save = new SaveFileDialog
+        {
+            Title = "Save into your library as",
+            Filter = "Same as source (*.*)|*.*",
+            FileName = Path.GetFileName(open.FileName),
+        };
+        if (save.ShowDialog() != DialogResult.OK) return;
+
+        try
+        {
+            _log.Add($"Copying {Path.GetFileName(open.FileName)} into your library…");
+            await Task.Run(() => File.Copy(open.FileName, save.FileName, overwrite: true));
+            _log.Add($"Imported {Path.GetFileName(save.FileName)}. This came from an external " +
+                     "tool, not a DiscForge read, so nothing here has verified it yet — run " +
+                     "Inspect ▸ Verify on it before relying on it.", EventLogView.Level.Good);
+        }
+        catch (Exception ex)
+        {
+            _log.Add($"Import failed: {ex.Message}", EventLogView.Level.Error);
+            AppLog.WriteException("import external dump", ex);
         }
     }
 

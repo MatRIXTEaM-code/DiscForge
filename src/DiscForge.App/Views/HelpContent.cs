@@ -96,6 +96,75 @@ internal static class HelpContent
             "and re-checked, so a sector no single copy had whole can be reassembled from several. Unrecoverable " +
             "sectors are reported. The multi-read companion to Recovery."),
 
+        new("mergecert", "🔏", "Merge + Certify", "Merge rips with a signed provenance certificate",
+            "The same multi-read merge as Merge Rips, plus a checkable, optionally-signed certificate " +
+            "recording exactly how every sector was decided (agreement / EDC / vote / single-source) and " +
+            "which copy supplied it. Also honours a \"<source>.badsectors.json\" sidecar next to each rip, " +
+            "excluding its known-unreadable sectors from the vote instead of counting a zero-filled read as " +
+            "evidence. Use this over plain Merge Rips whenever the reconstruction needs to be auditable."),
+
+        new("dumpcert", "📜", "Dump Certificate", "Certify or verify a single dump",
+            "Records a signed, machine-readable account of ONE dump event: the image's SHA-256, a Merkle " +
+            "root over every sector (so any single sector can later be proven byte-identical without " +
+            "rehashing the whole image), and the drive/settings/firmware context. Unlike Merge + Certify " +
+            "(several rips reconciled into one), this certifies a single already-finished image as-is. " +
+            "Verify re-checks a certificate's signature and, if the image is still alongside it, its hash " +
+            "and Merkle root too."),
+
+        new("prove", "🔥", "Prove", "Burn, read back, and verify byte-for-byte — one verdict",
+            "The round trip, one verb, one verdict. Burns a .cue to the chosen drive via the direct-SPTI " +
+            "RAW DAO-96 engine, then reads every track back off the disc and compares it byte-for-byte " +
+            "against the exact image that was burned — main channel, EDC/ECC, and every Q sub-channel " +
+            "frame, not just an MD5. Prints ONE final verdict: PROVEN or FAILED. This is a REAL burn, not " +
+            "a simulation — it consumes a blank disc and cannot be undone once started. Proves the burn " +
+            "itself, not the whole preservation chain end to end."),
+
+        new("pressingdna", "🧬", "Pressing DNA", "Fingerprint a pressing offline; compare two",
+            "Fingerprints a PRESSING from a .cue: exact track geometry and pregap lengths, where the " +
+            "audio actually sits inside each track (write-offset artifacts), and the cue's MCN/ISRC " +
+            "identity — the offline cousin of reading the ring code. With one cue, shows that pressing's " +
+            "own fingerprint. With two, says SAME PRESSING (every trait agrees) / same title but a " +
+            "DIFFERENT PRESSING (each differing trait named, including the constant-shift write-offset " +
+            "signature) / different discs entirely. A pure local-file analysis — no live drive."),
+
+        new("drivedossier", "📋", "Drive Dossier", "Per-drive memory: quirks accumulate into warnings",
+            "The institutional memory a session's terminal scrollback used to eat: a per-drive dossier " +
+            "that accumulates observed behaviour across every operation on THIS physical drive — mute " +
+            "signatures (audio-as-data reads that zero-fill but report success), C2 pointers crying " +
+            "wolf on the opening sector, an offset a real AccurateRip confirmation pinned, how deep its " +
+            "overread reaches. Distils into warnings the next dump can see before it repeats a hard " +
+            "lesson. Detect a drive (or type its vendor/model) to load or start its dossier, then " +
+            "optionally add an observation by hand. Stored as local JSON under %AppData%\\DiscForge\\" +
+            "drives by default — the community reference data (drive-db) is separate and fixed; this " +
+            "is what THIS drive, on THIS bench, actually did."),
+
+        new("discactuary", "⏳", "Disc Actuary", "How long a disc has left, from its scan history",
+            "A quality scan says how a disc is TODAY; the actuary keeps every scan as a time series and " +
+            "fits a first-order decay model per disc, so it can say how long it has LEFT — and, across " +
+            "a whole collection, which discs to re-dump first because they're dying fastest. Record a " +
+            "scan by typing its tier1/tier2/uncorrectable maxima (CD: C1/C2/CU, DVD: PIE/PIF/POF) or by " +
+            "importing a scan file (Nero DiscSpeed, opti-drive, csv, and more). A trend needs 3+ scans " +
+            "on record — fewer than that, it says so rather than guessing. Optionally condition the fit " +
+            "on the shelf's storage temperature/humidity. Prioritisation only: it schedules rescues, it " +
+            "performs none. Local JSON under %AppData%\\DiscForge\\actuary by default, one file per disc."),
+
+        new("discmri", "🩻", "Disc MRI", "Polar damage map on the physical disc",
+            "Renders per-sector evidence as a polar map of the PHYSICAL disc (real Red Book spiral " +
+            "geometry), so damage shows its true shape: a radial streak is a scratch, a ring is a " +
+            "pressing defect, a bloom from the hub is rot, a solid outer band is a muted/failed read " +
+            "region. Open a raw image (.bin) or a single-file .cue (a cue supplies per-track audio/data " +
+            "knowledge, so sync-less sectors aren't ambiguous); a dump's .badsectors.json sidecar is " +
+            "auto-detected next to the image, or pick one explicitly. Worst evidence wins per pixel — " +
+            "damage never hides. Save As writes either a .svg (map + legend) or a bare .png, matching " +
+            "dforge disc-mri's own two output modes."),
+
+        new("secureripplan", "🗺", "Secure-Rip Plan", "Grade rip evidence and plan re-reads",
+            "Grades a rip's per-sector evidence (clean / C2-flagged / pass-mismatch / unreadable, across " +
+            "however many passes were made) into VERIFIED / CONSISTENT / SUSPECT / FAILED per track — " +
+            "VERIFIED only when an independent AccurateRip match corroborates it, CONSISTENT being the " +
+            "honest ceiling from self-agreement alone — and plans exactly which sector ranges still need a " +
+            "targeted re-read. The EAC-style secure-rip depth, done offline against a saved evidence file."),
+
         new("vobdemux", "✂", "VOB Demux", "Split a VOB/MPG into streams",
             "Splits an unencrypted MPEG program stream (a VOB or MPG) into its elementary video, audio and " +
             "DVD private (AC3/DTS/LPCM/subpicture) streams. A CSS-scrambled VOB stays scrambled — DiscForge " +
@@ -208,6 +277,12 @@ internal static class HelpContent
             "save it as a filtered DAT, and rebuild a messy folder into a clean, canonically-named set with a " +
             "missing/unknown report."),
 
+        new("datbuild", "🏷", "DAT Build", "Hash a folder into a Redump-style DAT",
+            "Hashes every file in a folder and writes a Redump-style DAT — the reference file other " +
+            "tools (rebuild, dat-verify, 1G1R, library scan) check dumps against. For turning a " +
+            "collection you already trust into a DAT other tools can verify against, when no public " +
+            "one exists yet or you're cataloguing something bespoke."),
+
         new("memcard", "💳", "Memory Cards", "Read console saves",
             "Reads and lists the saves on a PlayStation 1 (.mcr), PlayStation 2 (.ps2) or Dreamcast VMU " +
             "memory-card image. For extracting individual saves out to files, use the Extract tile."),
@@ -215,6 +290,11 @@ internal static class HelpContent
         new("psxasset", "🎨", "PSX Assets", "TIM/VAG/TMD/PS-EXE",
             "Pulls PlayStation assets into standard formats: TIM images to PNG, VAG audio to WAV, TMD models " +
             "to DXF, and reads PS-EXE executables. For working with the media inside a PS1 game."),
+
+        new("textures", "🖼", "Textures", "Decode GameCube/Wii TPL textures",
+            "Opens a GameCube/Wii TPL texture archive, lists every texture inside (size, GX pixel " +
+            "format), and decodes any of them — or all of them at once — to PNG. For pulling art " +
+            "assets out of a GameCube/Wii disc's files for reference or reuse."),
 
         new("compimg", "🗜", "Compressed", "CSO/ZSO ↔ ISO, identify CHD",
             "Compresses an ISO to CSO/ZSO and decompresses it back, and identifies CHD images and their " +
@@ -239,6 +319,31 @@ internal static class HelpContent
         new("dcid", "🔷", "Identify DC", "Read a Dreamcast boot header",
             "Reads a Dreamcast disc's IP.BIN boot header and reports the title, product number, region and " +
             "release info. A quick identity check for a Dreamcast image."),
+
+        new("floppy", "💾", "Floppy", "Image a floppy, or launch flux-capture hardware's own tool",
+            "DiscForge images an ordinary floppy from a standard drive itself (the CLI's floppy-image " +
+            "command), and already reads a KryoFlux or SuperCard Pro flux file once one exists. Capturing " +
+            "that flux from real KryoFlux or Greaseweazle hardware over USB needs each board's own vendor " +
+            "software, so this tile is an escape hatch that launches KryoFlux's DTC or Greaseweazle's gw " +
+            "client — DiscForge doesn't bundle either or reimplement a USB driver for them."),
+
+        new("psp", "🎮", "PSP", "Launch UMDGen to edit a PSP ISO",
+            "DiscForge already reads a PSP UMD's filesystem and PARAM.SFO without decrypting anything, but " +
+            "has no ISO editor of its own — a physical UMD is dumped by homebrew running on the PSP itself, " +
+            "not by anything a PC talks to, so this tile is for editing an image you already have rather " +
+            "than acquiring one. Launches UMDGen; DiscForge doesn't bundle or inspect it."),
+
+        new("cart", "🕹", "Cartridges", "Launch GBxCart RW/FlashGBX or Cart Reader to dump a cartridge",
+            "DiscForge reads N64, SNES, Genesis, GB/GBC, GBA and NES ROM dumps once you have them, but has " +
+            "no cartridge-reading hardware of its own — that's always a flashcart's job. There's no single " +
+            "dominant tool the way there is for optical discs, so this tile offers both major community " +
+            "options: GBxCart RW/FlashGBX for the Game Boy family, Cart Reader for N64/SNES/Genesis/NES."),
+
+        new("verify", "✓", "Verify & Lint", "Structural and filesystem conformance checks",
+            "Runs the right structural check for whatever image you give it: ISO 9660/UDF/FAT/HFS " +
+            "conformance, a filesystem cross-check against the raw sectors, CHD internal integrity, " +
+            "or a PlayStation 2 memory-card's per-page ECC. For catching a structurally broken image " +
+            "before it causes confusing failures somewhere else."),
 
         new("settings", "🛠", "Settings", "Preferences and diagnostics",
             "Application preferences and diagnostic options, including where DiscForge writes its log. Open " +

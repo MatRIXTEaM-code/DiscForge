@@ -44,9 +44,36 @@ internal sealed class MemoryCardView : UserControl
         Text = "Format new PS1 card…", Location = new Point(12, 84), Width = 150, Height = 26,
         FlatStyle = FlatStyle.System,
     };
+    // Escape hatch for the one thing this view can't do: DiscForge reads and extracts PS1/PS2
+    // cards fully but cannot write a save back onto one (Dreamcast VMU is the only format this
+    // project's own code can write) — injecting or editing a PS1 save is exactly the gap
+    // MemcardRex fills. DiscForge never bundles or ships it; same launch-what-you-point-it-at
+    // contract as every other external-tool button in the app.
+    private readonly Button _memcardRex = new()
+    {
+        Text = "MemcardRex (edit/inject saves)…", Location = new Point(174, 84), Width = 220, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    // Same missing-writer gap as MemcardRex, one console family over: DiscForge extracts PS2
+    // saves fully but has no writer for that format either. Own row (row 1 was already full)
+    // and own remembered path so configuring it doesn't disturb MemcardRex's.
+    private readonly Button _ps2SaveBuilder = new()
+    {
+        Text = "PS2 Save Builder…", Location = new Point(12, 118), Width = 160, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    // Same idea again, for GameCube: DiscForge reads/decodes .gci saves but never writes one
+    // back onto a card — GCMM is the established tool for that step. Own remembered path.
+    private readonly Button _gcmm = new()
+    {
+        Text = "GCMM…", Location = new Point(184, 118), Width = 90, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
     private readonly ListView _saves = new()
     {
-        Location = new Point(12, 118), Size = new Size(712, 322),
+        // Sits below both button rows (row 2 added for PS2 Save Builder/GCMM ends near Y=144);
+        // a grid any higher overlaps them.
+        Location = new Point(12, 152), Size = new Size(712, 322),
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
         View = View.Details, FullRowSelect = true, HeaderStyle = ColumnHeaderStyle.Nonclickable,
         Font = Theme.Ui, BackColor = Color.White,
@@ -58,7 +85,7 @@ internal sealed class MemoryCardView : UserControl
 
     public MemoryCardView()
     {
-        Size = new Size(736, 452);
+        Size = new Size(736, 486);
         BackColor = Color.White;
         Padding = new Padding(12);
 
@@ -67,12 +94,16 @@ internal sealed class MemoryCardView : UserControl
         open.Click += (_, _) => Open();
         _extractAll.Click += (_, _) => ExtractAll();
         _newCard.Click += (_, _) => FormatNewCard();
+        _memcardRex.Click += (_, _) => LaunchExternalMemcardRex();
+        _ps2SaveBuilder.Click += (_, _) => LaunchExternalPs2SaveBuilder();
+        _gcmm.Click += (_, _) => LaunchExternalGcmm();
 
         foreach (var (name, w) in new[] { ("Save", 300), ("Type", 90), ("Size", 100), ("Detail", 210) })
             _saves.Columns.Add(new ColumnHeader { Text = name, Width = w });
 
         Controls.Add(_path); Controls.Add(open); Controls.Add(_summary);
-        Controls.Add(_extractAll); Controls.Add(_newCard); Controls.Add(_saves);
+        Controls.Add(_extractAll); Controls.Add(_newCard); Controls.Add(_memcardRex);
+        Controls.Add(_ps2SaveBuilder); Controls.Add(_gcmm); Controls.Add(_saves);
 
         _summary.Text = "Open a PS1 (.mcr), PS2 (.ps2) or Dreamcast VMU memory-card image.";
     }
@@ -276,6 +307,49 @@ internal sealed class MemoryCardView : UserControl
         }
         if (skipped > 0) AppLog.Write($"  VMU extract: {skipped} copy-protected save(s) skipped");
         return n;
+    }
+
+    /// <summary>
+    /// Launch a user-supplied MemcardRex (asked for once, then remembered) — the escape hatch
+    /// for the one thing this view can't do: write a save back onto a card. Delegates to
+    /// <see cref="ExternalToolLauncher"/>, the same shared logic every other external-tool button
+    /// in the app uses; this view has no event log, so it reports through <see cref="_summary"/>
+    /// instead. DiscForge does not bundle, invoke undocumented commands for, or know anything
+    /// about what the tool does; it only starts the process the user points it at.
+    /// </summary>
+    private void LaunchExternalMemcardRex() => ExternalToolLauncher.Launch(
+        () => Settings.ExternalDumperPathMemcardRex,
+        p => Settings.ExternalDumperPathMemcardRex = p,
+        "Locate MemcardRex",
+        "Use it to edit or inject saves — DiscForge did not write to the card.",
+        ReportToSummary);
+
+    /// <summary>Same idea as <see cref="LaunchExternalMemcardRex"/>, for PS2 saves — the same
+    /// missing-writer gap, one console family over. Own remembered path so configuring it
+    /// doesn't disturb MemcardRex's.</summary>
+    private void LaunchExternalPs2SaveBuilder() => ExternalToolLauncher.Launch(
+        () => Settings.ExternalDumperPathPs2SaveBuilder,
+        p => Settings.ExternalDumperPathPs2SaveBuilder = p,
+        "Locate a PS2 save-editing tool (e.g. PS2 Save Builder)",
+        "Use it to build or inject a save — DiscForge did not write to the card.",
+        ReportToSummary);
+
+    /// <summary>Same idea again, for GameCube: DiscForge reads/decodes .gci saves but never
+    /// writes one back onto a card. GCMM is the established tool for that step.</summary>
+    private void LaunchExternalGcmm() => ExternalToolLauncher.Launch(
+        () => Settings.ExternalDumperPathGcmm,
+        p => Settings.ExternalDumperPathGcmm = p,
+        "Locate GCMM (GameCube Memory Manager)",
+        "Use it to write the save onto a card or SD adapter — DiscForge did not write to it.",
+        ReportToSummary);
+
+    /// <summary>Shared report sink for this view's external-tool buttons — this screen has no
+    /// event log the way Read/Burn do, so every one of them reports through <see cref="_summary"/>.</summary>
+    private void ReportToSummary(string message, bool isError)
+    {
+        _summary.Text = message;
+        _summary.ForeColor = isError ? Color.FromArgb(0xA0, 0x20, 0x20) : Color.FromArgb(0x20, 0x70, 0x20);
+        if (!isError) StatusBus.Report(message);
     }
 
     private static string Safe(string name, string fallback)

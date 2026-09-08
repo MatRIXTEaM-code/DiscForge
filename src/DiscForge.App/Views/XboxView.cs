@@ -45,6 +45,26 @@ internal sealed class XboxView : UserControl
         FlatStyle = FlatStyle.System,
         Anchor = AnchorStyles.Top | AnchorStyles.Right,
     };
+    // Escape hatch for the one thing this view can't do: DiscForge's own Xbox support only
+    // understands the XDVDFS filesystem once you already have an image — it never reads an
+    // Xbox/Xbox 360 disc's security sectors, which live outside that filesystem and need
+    // drive-specific handling this project doesn't reimplement (same posture as the CSS/AACS
+    // tools on ReadView). Xbox Backup Creator is the established community tool for that step.
+    // DiscForge never bundles or ships it — same launch-what-you-point-it-at contract as every
+    // other external-tool button in the app.
+    private readonly Button _externalXbc = new()
+    {
+        Text = "Xbox Backup Creator…", Location = new Point(258, 84), Width = 150, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    // Companion to _externalXbc, not a replacement: abgx360 verifies/repairs the Xbox 360 ISO
+    // that XBC produces against known-good hashes, and can rebuild its header. Own remembered
+    // path so configuring it doesn't disturb XBC's.
+    private readonly Button _externalAbgx360 = new()
+    {
+        Text = "abgx360…", Location = new Point(414, 84), Width = 90, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
     private readonly ListView _files = new()
     {
         Location = new Point(12, 118), Size = new Size(712, 296),
@@ -86,9 +106,12 @@ internal sealed class XboxView : UserControl
         _extractSelected.Click += async (_, _) => await ExtractSelectedAsync();
         _extractAll.Click += async (_, _) => await ExtractAllAsync();
         _create.Click += (_, _) => CreateFromFolder();
+        _externalXbc.Click += (_, _) => LaunchExternalXbc();
+        _externalAbgx360.Click += (_, _) => LaunchExternalAbgx360();
 
         Controls.Add(_path); Controls.Add(open); Controls.Add(_summary);
         Controls.Add(_extractSelected); Controls.Add(_extractAll); Controls.Add(_create);
+        Controls.Add(_externalXbc); Controls.Add(_externalAbgx360);
         Controls.Add(_files); Controls.Add(_progress); Controls.Add(_status);
 
         _status.Text = "Open an Xbox game image (XDVDFS / XISO), or build one from a folder.";
@@ -243,6 +266,42 @@ internal sealed class XboxView : UserControl
             RetroMessageBox.Show(ex.Message);
             AppLog.WriteException("xbox create", ex);
         }
+    }
+
+    /// <summary>
+    /// Launch a user-supplied Xbox Backup Creator (asked for once, then remembered) — the
+    /// escape hatch for the one thing this view can't do itself: read an Xbox/Xbox 360 disc's
+    /// security sectors. Delegates to <see cref="ExternalToolLauncher"/>, the same shared logic
+    /// Read's and Burn's own external-tool rows use; this view has no event log, so it reports
+    /// through <see cref="_status"/> instead. DiscForge does not bundle, invoke undocumented
+    /// commands for, or know anything about what the tool does; it only starts the process the
+    /// user points it at.
+    /// </summary>
+    private void LaunchExternalXbc() => ExternalToolLauncher.Launch(
+        () => Settings.ExternalDumperPathXbc,
+        p => Settings.ExternalDumperPathXbc = p,
+        "Locate Xbox Backup Creator",
+        "Run the dump in its own window; when it's done, open the resulting image from here.",
+        ReportToStatus);
+
+    /// <summary>Same idea as <see cref="LaunchExternalXbc"/>, for abgx360 — a companion
+    /// verification/repair step for the Xbox 360 ISO XBC produces, not a replacement for it.
+    /// Own remembered path so configuring it doesn't disturb XBC's.</summary>
+    private void LaunchExternalAbgx360() => ExternalToolLauncher.Launch(
+        () => Settings.ExternalDumperPathAbgx360,
+        p => Settings.ExternalDumperPathAbgx360 = p,
+        "Locate abgx360",
+        "Use it to verify or repair the ISO — DiscForge did not check it.",
+        ReportToStatus);
+
+    /// <summary>Shared report sink for this view's external-tool buttons: this screen has no
+    /// event log the way Read/Burn do, so success and failure both surface through the same
+    /// status label the rest of the view already uses.</summary>
+    private void ReportToStatus(string message, bool isError)
+    {
+        _status.Text = message;
+        _status.ForeColor = isError ? Color.FromArgb(0xA0, 0x20, 0x20) : Color.FromArgb(0x20, 0x70, 0x20);
+        if (!isError) StatusBus.Report(message);
     }
 
     private static IReadOnlyList<XdvdfsBuilder.Node> WalkFolder(string folder)
