@@ -334,17 +334,20 @@ preservation tool touches. All clean-room modelling, all Core-tested.
 - **EFM channel codec** (`Efm`) — Eight-to-Fourteen Modulation: each byte → a 14-bit channel word obeying
   the run-length rule (3T..11T pit/land lengths), with 3 merging bits between words chosen to hold that
   rule across the boundary *and* keep the Digital Sum Value (the DC balance the servo depends on) near
-  zero. Encode/decode round-trip, run-length validation, DSV measurement. (The byte→codeword assignment
-  is a canonical enumeration of the valid words, not the licensed ECMA table; the run-length/DSV physics
-  it models — which is what governs readability — is faithful.)
+  zero. Encode/decode round-trip, run-length validation, DSV measurement. The byte→codeword assignment is
+  now the authoritative ECMA-130 table itself (landed as the flux/RF moonshot's data swap — see
+  docs/DIFFERENTIATORS.md), not a modelled stand-in, so this and everything built on it (the flux
+  demodulator, weak-sector prediction below) decodes/measures a real disc's actual physics.
 - **Weak-sector prediction** (`weak-sectors`) — models copy protection at the layer where it actually
   lives. A SafeDisc-style weak sector is data whose *scrambled* form (ECMA-130 CD scrambler), once EFM-
-  encoded, yields a channel stream with too few transitions and a wandering DSV — so drives read it
-  unreliably. This runs scramble → EFM → DSV for each sector and flags the outliers: the deliberately-weak
-  sectors, predicted from the data alone. (Cross-validated end to end: content equal to the scramble
-  sequence collapses to all-zeros and is correctly flagged; an independent Python reimplementation of the
-  scrambler LFSR reproduces the same weak sector.) Pure modelling and detection — it explains the physics
-  and defeats nothing.
+  encoded, yields a channel stream that stresses the servo — either too few transitions or (the dominant
+  real signature, confirmed once the authoritative table landed) a wildly excessive DSV excursion — so
+  drives read it unreliably. This runs scramble → EFM → density/DSV for each sector and flags either kind
+  of outlier: the deliberately-weak sectors, predicted from the data alone. (Cross-validated end to end:
+  content equal to the scramble sequence collapses to all-zeros and is correctly flagged, via a DSV
+  excursion 50-100x any ordinary sector's rather than a density collapse; an independent Python
+  reimplementation of the scrambler LFSR reproduces the same weak sector.) Pure modelling and detection —
+  it explains the physics and defeats nothing.
 - **Reed-Solomon GF(256) codec** (`ReedSolomonGf256`) — a general errors-and-erasures RS(n,k) decoder
   (primitive poly 0x11D, Berlekamp-Massey → Chien → Forney) — the maths core of CD error correction.
   Rigorously tested: corrects up to (n−k)/2 errors, up to (n−k) known erasures, mixed, and reports the

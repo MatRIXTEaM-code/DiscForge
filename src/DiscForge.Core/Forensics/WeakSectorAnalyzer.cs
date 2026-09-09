@@ -30,19 +30,33 @@ public sealed record WeakSectorReport
 /// <summary>
 /// Weak-sector prediction — model copy protection at the physical layer where it actually lives. A
 /// SafeDisc-style "weak sector" is not corrupt data; it is data whose <i>scrambled</i> form, once EFM-
-/// encoded, yields a channel stream with too few transitions and a wandering DC balance, so different
+/// encoded, yields a channel stream that stresses the servo — either too few transitions or (the
+/// dominant real signature, see below) a Digital Sum Value that wanders far from zero — so different
 /// drives read it differently or not at all. This runs that pipeline — CD scramble (ECMA-130) then EFM
 /// (<see cref="Efm"/>) — for each sector and measures the result: transition density, DSV excursion, run
-/// lengths. Sectors whose channel is a stark outlier (far below the disc's typical transition density)
-/// are exactly the deliberately-weak ones, predicted from the data alone. Pure modelling and detection;
-/// it explains and flags the physics, and defeats nothing.
+/// lengths. Sectors whose channel is a stark outlier on either axis are exactly the deliberately-weak
+/// ones, predicted from the data alone. Pure modelling and detection; it explains and flags the physics,
+/// and defeats nothing.
 ///
-/// (Uses <see cref="Efm"/>'s canonical codeword enumeration; the run-length/DSV mechanics it depends on
-/// are faithful. Encoding every sector is heavy, so callers can bound how many are analysed.)
+/// Uses <see cref="Efm"/>'s authoritative ECMA-130 codebook (landed once the flux/RF moonshot's data
+/// swap was done — see docs/DIFFERENTIATORS.md). That swap changed which signature actually dominates:
+/// content chosen to defeat scrambling (e.g. data equal to the scramble sequence, so scrambling recovers
+/// all-zero) turns out, under the real table, to have an almost <i>normal</i> transition density but a
+/// Digital Sum Value dozens of times any ordinary sector's — DSV excursion, not density collapse, is
+/// the real tell. Both are still checked, since either one independently means a stressed channel.
+/// Encoding every sector is heavy, so callers can bound how many are analysed.
 /// </summary>
 public static class WeakSectorAnalyzer
 {
     private const int RawSectorSize = 2352;
+
+    /// <summary>Below this fraction of the disc's mean transition density, or above this multiple of
+    /// its mean DSV excursion, a sector's channel is a stark enough outlier to call weak. The DSV
+    /// multiple has the wide margin it does because genuinely weak content (see the class doc comment)
+    /// is not a marginal outlier on this axis — it is 50-100x the population's typical excursion — so a
+    /// generous threshold still comfortably separates it from a disc's ordinary sector-to-sector noise.</summary>
+    private const double DensityFactor = 0.6;
+    private const double DsvFactor = 5.0;
 
     /// <summary>Measure one stored (unscrambled) raw sector's on-disc channel health.</summary>
     public static SectorChannel Measure(int lba, ReadOnlySpan<byte> stored2352)
@@ -74,9 +88,12 @@ public static class WeakSectorAnalyzer
             return new WeakSectorReport { SectorsAnalyzed = 0, MeanTransitionDensity = 0, Weak = System.Array.Empty<SectorChannel>() };
 
         double mean = metrics.Average(m => m.TransitionDensity);
-        // A weak sector's transition density collapses well below the disc's norm.
-        double threshold = mean * 0.6;
-        var weak = metrics.Where(m => m.TransitionDensity < threshold)
+        double meanDsv = metrics.Average(m => m.MaxAbsDsv);
+        // Weak either way: transition density collapsed well below the disc's norm, or the DC balance
+        // wandered far past it — see the class doc comment for why DSV is the more common real tell.
+        double densityThreshold = mean * DensityFactor;
+        double dsvThreshold = meanDsv * DsvFactor;
+        var weak = metrics.Where(m => m.TransitionDensity < densityThreshold || m.MaxAbsDsv > dsvThreshold)
                           .OrderBy(m => m.TransitionDensity)
                           .ToList();
 

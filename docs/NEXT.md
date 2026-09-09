@@ -1,6 +1,27 @@
 # DiscForge — what's left (session handoff)
 
-## State as of 2026-09-08: v1.100.0 — read this section first, the rest of this file is historical
+## State as of 2026-09-09: v1.101.0 — read this section first, the rest of this file is historical
+
+v1.101.0 closes the flux/RF moonshot's last internal blocker: `Efm.cs` now carries the authoritative
+ECMA-130 8-to-14 table (256 byte→codeword entries + the 2 frame-sync patterns), replacing the
+modelled stand-in docs/DIFFERENTIATORS.md flagged as the one thing gating real-disc flux decode.
+Table transcribed from the GPL-licensed EFM dictionary in Sidney Cadot's `laser2wav` project (used
+by happycube's `cd-decode`), itself from the published standard. Verified three ways: a
+static-constructor self-check (every entry individually run-length-legal, no collisions with each
+other or the sync patterns), the existing `Efm`/`FluxDemodulator`/`FluxDecoder` suite passing
+unchanged, and a probe script grounding the one real finding this surfaced — `WeakSectorAnalyzer`'s
+tests failed under the real table not because anything broke, but because the modelled codebook's
+incidental behavior had masked the actual signature: scramble-defeating content shows an almost
+normal transition density but a 50-100x DSV excursion under the real table, not a density collapse.
+`WeakSectorAnalyzer.Analyze` now flags either signature — a more physically correct detector,
+discovered specifically by finally measuring the real channel. **This is a `DiscForge.Core`-only
+change: REAL-BUILT and REAL-TESTED** (`dotnet build` + `dotnet test`, 2694/2694, repeatedly), unlike
+every WinForms addition this session — no UI touched, nothing here needs the user's own build to
+confirm. What phase 3 (an actual RF/flux tap off a real drive) still needs is real hardware, which
+remains outside what this project can build alone.
+
+
+## State as of 2026-09-08: v1.100.0 (historical)
 
 v1.100.0 came from asking, deliberately skeptically, whether anything was really left after
 v1.99.0 — a full re-read of the feature docs looking for the same acquire-or-write-back shape

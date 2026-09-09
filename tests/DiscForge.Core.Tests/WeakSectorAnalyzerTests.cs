@@ -43,8 +43,16 @@ public class WeakSectorAnalyzerTests
         Assert.True(m.TransitionDensity > 0.2, $"td {m.TransitionDensity}");
     }
 
+    // Under the authoritative ECMA-130 codebook (landed once the flux/RF moonshot's data swap was
+    // done), a scramble-defeating weak sector's transition density turns out to sit close to a normal
+    // sector's — the density-collapse signature this test originally checked was an artifact of the
+    // project's earlier modelled codebook, not something the real table reproduces. What the real
+    // table DOES reproduce, dramatically, is a Digital Sum Value excursion tens of times any normal
+    // sector's: scrambling exists specifically to keep content well-balanced on the channel, so data
+    // chosen to defeat it (recovering all-zero once scrambled) is exactly the case that balancing
+    // can't fix. See WeakSectorAnalyzer's class doc comment.
     [Fact]
-    public void A_weak_sector_collapses_the_transition_density()
+    public void A_weak_sector_has_a_wildly_excessive_dsv_excursion()
     {
         var normalImg = new byte[2352]; WriteNormal(normalImg, 0, 2);
         var weakImg = new byte[2352]; WriteWeak(weakImg, 0);
@@ -52,8 +60,8 @@ public class WeakSectorAnalyzerTests
         var normal = WeakSectorAnalyzer.Measure(0, normalImg);
         var weak = WeakSectorAnalyzer.Measure(0, weakImg);
 
-        Assert.True(weak.TransitionDensity < normal.TransitionDensity * 0.6,
-            $"weak {weak.TransitionDensity} vs normal {normal.TransitionDensity}");
+        Assert.True(weak.MaxAbsDsv > normal.MaxAbsDsv * 10,
+            $"weak dsv {weak.MaxAbsDsv} vs normal dsv {normal.MaxAbsDsv}");
     }
 
     [Fact]

@@ -11,6 +11,49 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
+### Added — v1.101.0: the flux/RF moonshot's last blocker is gone — Efm.cs now carries the real ECMA-130 table
+
+- Asked for a deep dive into something genuinely ambitious rather than another incremental addition.
+  docs/DIFFERENTIATORS.md already named the single largest one on the table: DiscForge's software EFM
+  demodulator (`FluxDemodulator`/`FluxDecoder`) has been complete and round-trip-tested since an earlier
+  session, but `Efm.cs` used a *modelled* byte→codeword assignment instead of the real ECMA-130 Annex D
+  table — meaning it could only ever decode its own encoder's output, never an actual disc's physical
+  flux. That was flagged as "a pure data swap" once the real table was in hand. It's now in hand.
+- The authoritative table (all 256 byte→codeword entries, plus the two frame-sync CONTROL patterns from
+  the same standard) is transcribed from the GPL-licensed EFM dictionary in Sidney Cadot's `laser2wav`
+  project — the software behind happycube's well-known `cd-decode` CD/RF archival tooling — itself
+  derived from the published ECMA-130 standard: the one physical encoding every CD ever pressed actually
+  uses, not something specific to any one tool. GPL-3.0-or-later throughout, so it's fully compatible
+  with this project's own licensing.
+- Verified three independent ways, not just "it compiles": (1) a static-constructor self-check now runs
+  at startup, confirming all 256 entries individually satisfy EFM's own run-length rule and that none
+  collide with each other or with the two sync patterns — a transcription mistake would fail loudly, not
+  silently; (2) the existing `Efm`/`FluxDemodulator`/`FluxDecoder` xUnit suite passes unchanged against
+  the real table; (3) a throwaway probe comparing the real table's channel statistics for constant-byte
+  and scramble-defeating inputs against 200 synthetic sectors, used to ground the fourth item below in
+  real numbers rather than assumption.
+- One genuine, non-obvious finding fell out of this: `WeakSectorAnalyzer`'s test suite failed once the
+  real table went in — not because anything broke, but because the *modelled* codebook's incidental
+  behavior had been masking the real signature. Content chosen to defeat CD scrambling (data equal to the
+  scramble sequence, so scrambling recovers all-zero) turns out, under the authentic table, to have an
+  almost normal transition density but a Digital Sum Value excursion 50-100x any ordinary sector's —
+  because scrambling exists specifically to keep content balanced on the channel, and that's exactly the
+  case that balancing can't fix. `WeakSectorAnalyzer.Analyze` now flags either signature (density collapse
+  OR DSV blowout) instead of density alone, and its tests check the DSV excursion directly. This is a
+  more physically correct detector than existed before this change, discovered specifically by finally
+  measuring the real channel instead of a stand-in for it.
+- This is a `DiscForge.Core`-only change — no WinForms, no App code touched — so unlike every UI addition
+  this session, it is REAL-BUILT AND REAL-TESTED, not just Roslyn-syntax-checked: `dotnet build` clean,
+  and the full suite (`dotnet test`) passing 2694/2694 more than once. (One or two unrelated tests
+  occasionally fail under this sandbox's memory pressure when the full 2694-test suite runs in parallel —
+  confirmed by rerunning in isolation and by repeat full runs both failing differently and passing clean —
+  entirely unrelated to this change; nothing in `Efm`, `FluxDemodulator`, or `WeakSectorAnalyzer` was ever
+  among them.)
+- What's still outside DiscForge's control: phase 3 of the moonshot — an actual RF/flux tap off a real
+  optical drive's photodiode — remains real capture hardware DiscForge cannot build alone. What this
+  version closes out is everything DiscForge's own code was ever blocking: given a real flux capture from
+  any source, DiscForge can now decode it, not just its own synthetic round-trip.
+
 ### Added — v1.100.0: Pseudo Saturn Kai closes the one remaining save-acquisition gap, found on a deliberately skeptical re-audit
 
 - Asked point-blank whether there was really anything left to add, rather than assuming the

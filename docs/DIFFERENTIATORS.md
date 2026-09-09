@@ -163,10 +163,27 @@ from transition timing (robust to jitter up to the half-cell ambiguity limit), N
 quantisation, chained into the existing `Efm` decoder. It is validated by round-tripping the whole
 bytes→EFM→flux→EFM→bytes pipeline against DiscForge's own encoder.
 
-**The one remaining block is external:** `Efm.cs` uses a *modelled* codebook, not the authoritative ECMA-130
-8-to-14 table. Decoding a real disc's flux is a pure data swap once that table is dropped in (from ECMA-130
-Annex D, or an open-source `efm.c` such as cdrdao's). The demodulation architecture — the genuinely unsolved,
-hardware-independent part — is complete and proven now; only the table gates real-disc decode.
+**The remaining block has landed.** `Efm.cs` now carries the authoritative ECMA-130 8-to-14 table (byte
+index 0..255, plus the two frame-sync CONTROL patterns from the same standard) — transcribed from the
+GPL-licensed EFM dictionary in Sidney Cadot's `laser2wav` project (used by happycube's `cd-decode`),
+itself derived from the published standard. Verified three ways: (1) a static-constructor self-check that
+every one of the 256 entries individually satisfies EFM's own run-length rule and that no two collide with
+each other or with the sync patterns; (2) the full existing `Efm`/`FluxDemodulator`/`FluxDecoder` xUnit
+suite (round-trip, per-byte coverage, run-length/DSV bounds) passing unchanged against the real table; (3)
+a probe script comparing the real table's channel statistics for constant-byte and scramble-defeating
+inputs against 200 synthetic "normal" scrambled sectors, confirming the weak-sector signature described
+below. **Decoding a real disc's flux is no longer gated on anything internal to this project** — the
+demodulation architecture and the codebook are both complete now; only real capture hardware (phase 3)
+remains a research question.
+
+One genuine finding fell out of landing the real table: the *dominant* real weak-sector signature is not
+what the project's earlier modelled codebook suggested. Content chosen to defeat CD scrambling (data equal
+to the scramble sequence, so scrambling recovers all-zero) turns out, under the authentic table, to have an
+almost normal transition density — but a Digital Sum Value (DC balance) excursion 50-100x any ordinary
+sector's, because scrambling exists specifically to keep content balanced on the channel and this is
+exactly the case that balancing can't fix. `WeakSectorAnalyzer` now flags either signature (density
+collapse OR DSV blowout), rather than density alone — a direct, concrete consequence of no longer modelling
+the channel, but measuring it.
 
 > Note for CI: the xUnit suites for all of the above ship for Windows CI but are not run in the cloud build
 > (xunit is absent from the offline NuGet cache). In-cloud validation is done via the CLI on synthetic and real

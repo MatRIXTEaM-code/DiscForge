@@ -68,8 +68,9 @@ public sealed record FluxBitstream(int LeadingCells, byte[] RunLengths, int Tota
 /// round-tripping against DiscForge's own EFM encoder.
 ///
 /// Clean-room note: this reads and decodes the disc's own physical signal — the purest preservation there is. It
-/// defeats nothing. Decoding a REAL disc additionally needs the authoritative ECMA-130 8-to-14 table dropped
-/// into <see cref="Efm"/> (a data swap); this demodulation stage is table-independent and complete now.
+/// defeats nothing. <see cref="Efm"/> now carries the authoritative ECMA-130 8-to-14 table, so this stage —
+/// already table-independent and complete — chains straight through to a real disc's actual channel bytes with
+/// nothing left gating it internally; only real capture hardware remains a research question.
 /// </summary>
 public static class FluxDemodulator
 {
@@ -191,10 +192,9 @@ public static class FluxDemodulator
 }
 
 /// <summary>
-/// Chains the flux demodulator into the existing EFM decoder: cell-domain flux → channel bits → bytes. The byte
-/// stream it yields is only as faithful to a real disc as <see cref="Efm"/>'s codebook; with DiscForge's modelled
-/// table it round-trips its own encoder exactly, and with the authoritative ECMA-130 table dropped in it decodes
-/// a real disc's flux. The demodulation itself is table-independent and complete.
+/// Chains the flux demodulator into the existing EFM decoder: cell-domain flux → channel bits → bytes. With
+/// <see cref="Efm"/>'s authoritative ECMA-130 codebook now in place, this decodes a real disc's flux, not just
+/// its own encoder's round-trip. The demodulation itself is table-independent and was complete before the swap.
 /// </summary>
 public static class FluxDecoder
 {
