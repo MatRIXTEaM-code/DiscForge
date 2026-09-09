@@ -1,6 +1,23 @@
 # DiscForge — what's left (session handoff)
 
-## State as of 2026-09-08: v1.99.0 — read this section first, the rest of this file is historical
+## State as of 2026-09-08: v1.100.0 — read this section first, the rest of this file is historical
+
+v1.100.0 came from asking, deliberately skeptically, whether anything was really left after
+v1.99.0 — a full re-read of the feature docs looking for the same acquire-or-write-back shape
+every earlier tool filled. Found one: **Sega Saturn backup memory**. `SaturnSaveReader` lists a
+Saturn backup image's save directory but never extracts the data (block-linking was left
+unimplemented rather than risk wrong bytes) and has no writer — the same gap PS1/PS2/GameCube
+saves had before MemcardRex/PS2 Save Builder/GCMM, just missed on the earlier passes. Added
+**Pseudo Saturn Kai** to `MemoryCardView` alongside those three (own remembered path,
+`Settings.ExternalDumperPathPseudoSaturnKai`) — an established, actively maintained homebrew tool
+for dumping/restoring Saturn backup memory on real hardware, not a fragmented multi-brand
+situation. Also confirmed on the same pass that nothing else currently qualifies: floppy
+acquisition for other platforms is already covered generically by the Floppy screen; formats like
+MiniDisc/LaserDisc/VHS have no native DiscForge support to build an escape hatch onto at all.
+**UNVERIFIED — awaiting the user's own build**, same caveat as every WinForms change this session.
+
+
+## State as of 2026-09-08: v1.99.0 (historical)
 
 v1.99.0 adds the two candidates flagged in v1.98.0 as needing a decision rather than a guess:
 **PSP** (new `PspView`, launches UMDGen) and **Cartridges** (new `CartridgeView`, launches

@@ -148,6 +148,16 @@ internal sealed class SettingsModel
     /// genuinely split across more than one piece of hardware and DiscForge doesn't favour one
     /// brand over the other.</summary>
     public string? ExternalDumperPathCartReader { get; set; }
+
+    /// <summary>Last-used path to Pseudo Saturn Kai — used from MemoryCardView. DiscForge already
+    /// parses a Sega Saturn backup-memory image's save directory (<c>SaturnSaveReader</c>, the
+    /// Saturn detail in Examine) — names, comments, sizes — but deliberately stops at the
+    /// directory listing: full save-data extraction via the block-link list was left unimplemented
+    /// rather than risk returning wrong bytes, and there is no writer at all, nor anything that
+    /// talks to a real Saturn's internal RAM or a backup cartridge. Pseudo Saturn Kai is the
+    /// established homebrew tool for dumping and restoring Saturn backup memory on real hardware.
+    /// Own remembered path, same reason as every other field here.</summary>
+    public string? ExternalDumperPathPseudoSaturnKai { get; set; }
 }
 
 /// <summary>
@@ -324,6 +334,12 @@ internal static class Settings
     {
         get => _model.ExternalDumperPathCartReader;
         set { _model.ExternalDumperPathCartReader = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathPseudoSaturnKai
+    {
+        get => _model.ExternalDumperPathPseudoSaturnKai;
+        set { _model.ExternalDumperPathPseudoSaturnKai = value; Save(); }
     }
 
     public static IReadOnlyList<string> Recent => _model.Recent;

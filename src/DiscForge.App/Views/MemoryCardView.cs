@@ -69,6 +69,17 @@ internal sealed class MemoryCardView : UserControl
         Text = "GCMM…", Location = new Point(184, 118), Width = 90, Height = 26,
         FlatStyle = FlatStyle.System,
     };
+    // Sega Saturn backup memory: DiscForge parses the save directory (names/comments/sizes —
+    // see SaturnSaveReader / the Saturn detail in Examine) but deliberately stops there. Full
+    // data extraction via the block-link list was left unimplemented rather than risk returning
+    // wrong bytes, there's no writer, and nothing here talks to a real Saturn's internal RAM or
+    // a backup cartridge. Pseudo Saturn Kai is the established homebrew tool for dumping and
+    // restoring Saturn backup memory on real hardware. Own remembered path.
+    private readonly Button _pseudoSaturnKai = new()
+    {
+        Text = "Pseudo Saturn Kai…", Location = new Point(286, 118), Width = 180, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
     private readonly ListView _saves = new()
     {
         // Sits below both button rows (row 2 added for PS2 Save Builder/GCMM ends near Y=144);
@@ -97,13 +108,14 @@ internal sealed class MemoryCardView : UserControl
         _memcardRex.Click += (_, _) => LaunchExternalMemcardRex();
         _ps2SaveBuilder.Click += (_, _) => LaunchExternalPs2SaveBuilder();
         _gcmm.Click += (_, _) => LaunchExternalGcmm();
+        _pseudoSaturnKai.Click += (_, _) => LaunchExternalPseudoSaturnKai();
 
         foreach (var (name, w) in new[] { ("Save", 300), ("Type", 90), ("Size", 100), ("Detail", 210) })
             _saves.Columns.Add(new ColumnHeader { Text = name, Width = w });
 
         Controls.Add(_path); Controls.Add(open); Controls.Add(_summary);
         Controls.Add(_extractAll); Controls.Add(_newCard); Controls.Add(_memcardRex);
-        Controls.Add(_ps2SaveBuilder); Controls.Add(_gcmm); Controls.Add(_saves);
+        Controls.Add(_ps2SaveBuilder); Controls.Add(_gcmm); Controls.Add(_pseudoSaturnKai); Controls.Add(_saves);
 
         _summary.Text = "Open a PS1 (.mcr), PS2 (.ps2) or Dreamcast VMU memory-card image.";
     }
@@ -341,6 +353,17 @@ internal sealed class MemoryCardView : UserControl
         p => Settings.ExternalDumperPathGcmm = p,
         "Locate GCMM (GameCube Memory Manager)",
         "Use it to write the save onto a card or SD adapter — DiscForge did not write to it.",
+        ReportToSummary);
+
+    /// <summary>Same idea again, for Sega Saturn backup memory: DiscForge lists the save
+    /// directory but never extracts or writes save data, and has no way to talk to a real
+    /// Saturn's internal RAM or a backup cartridge at all. Pseudo Saturn Kai is the established
+    /// homebrew tool for that acquisition/write-back step.</summary>
+    private void LaunchExternalPseudoSaturnKai() => ExternalToolLauncher.Launch(
+        () => Settings.ExternalDumperPathPseudoSaturnKai,
+        p => Settings.ExternalDumperPathPseudoSaturnKai = p,
+        "Locate Pseudo Saturn Kai",
+        "Dump or restore Saturn backup memory there — DiscForge did not read from or write to it.",
         ReportToSummary);
 
     /// <summary>Shared report sink for this view's external-tool buttons — this screen has no

@@ -11,6 +11,38 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
+### Added — v1.100.0: Pseudo Saturn Kai closes the one remaining save-acquisition gap, found on a deliberately skeptical re-audit
+
+- Asked point-blank whether there was really anything left to add, rather than assuming the
+  v1.96.0–v1.99.0 run had found everything — read back through every feature doc again
+  specifically looking for a format DiscForge parses but stops short of acquiring or writing,
+  the same shape as every tool added so far, while being honest about anything too fragmented,
+  too niche, or across the detect-never-circumvent line to belong here.
+- Found one real, previously-missed case: **Sega Saturn backup memory**. `SaturnSaveReader`
+  parses a Saturn backup-memory image's save directory (names, comments, sizes — surfaced in
+  Examine) but deliberately stops there: full save-data extraction via the block-link list was
+  left unimplemented rather than risk returning wrong bytes, there's no writer at all, and
+  nothing in DiscForge talks to a real Saturn's internal 32 KB RAM or a backup cartridge. Same
+  acquire-and-write-back gap as the one MemcardRex/PS2 Save Builder/GCMM already fill for
+  PS1/PS2/GameCube saves — Saturn was simply the one console family that slipped through those
+  earlier passes.
+- Added a **Pseudo Saturn Kai** button to `MemoryCardView`, alongside the other three save tools
+  (own remembered path, `Settings.ExternalDumperPathPseudoSaturnKai`). Pseudo Saturn Kai is the
+  established homebrew disc for dumping and restoring Saturn backup memory on real hardware — an
+  actively maintained, well-known single tool for this job, not a fragmented multi-brand
+  situation the way cartridge dumping was.
+- Also confirmed, on the same pass, that nothing else qualifies right now: Amiga/C64/other
+  floppy acquisition is already covered generically by the Floppy screen's KryoFlux/Greaseweazle
+  buttons; MiniDisc, LaserDisc, VHS/Betamax and cassette/arcade-PCB formats have no native
+  DiscForge support at all to build an escape hatch onto; and nothing else stops short of a
+  single well-known companion tool the way this did.
+- `DiscForge.App` (WinForms) still cannot be built for real in this sandbox — verified the same
+  way as every WinForms-only change this session: Roslyn syntax-only parse of both changed files
+  (`Settings.cs`, `MemoryCardView.cs`), both clean. `dforge` CLI rebuilt clean with the version
+  bump; full suite `bash build.sh test`: 2694/2694 passing, unchanged (this version touches only
+  App/WinForms code). **UNVERIFIED — awaiting the user's own build**, same caveat as every
+  WinForms change this session.
+
 ### Added — v1.99.0: new PSP and Cartridges tiles — the two gaps flagged as needing a decision, not a guess
 
 - The last two candidates from the feature-gap audit (v1.97.0/v1.98.0) both needed a call this
