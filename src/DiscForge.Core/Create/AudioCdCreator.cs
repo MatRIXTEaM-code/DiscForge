@@ -16,7 +16,13 @@ public sealed class AudioCdException(string message) : Exception(message);
 /// <summary>One track of a compilation, as supplied by the caller.</summary>
 public sealed record AudioTrackSource
 {
-    /// <summary>Path to a Red Book WAV (44.1 kHz, 16-bit, stereo).</summary>
+    /// <summary>
+    /// Path to the source audio. A Red Book WAV (44.1 kHz, 16-bit, stereo) is
+    /// read directly. A FLAC file is decoded losslessly in-process — no external
+    /// tool needed. Anything else FFmpeg recognises as audio (MP3, AAC/M4A, Ogg
+    /// Vorbis, WMA, APE, Musepack, WavPack) is transcoded through an installed
+    /// FFmpeg if one is found on PATH; see <see cref="CompressedAudioSource"/>.
+    /// </summary>
     public required string Path { get; init; }
     /// <summary>Gap before this track, in sectors (75 = 1 second). Track 1 always
     /// gets the mandatory 150-sector lead-in gap regardless.</summary>
@@ -33,8 +39,9 @@ public sealed record AudioTrackSource
 }
 
 /// <summary>
-/// Builds a Red Book audio CD image from WAV files — the authoring half of the
-/// audio story (we could already extract audio to WAV, but not the reverse).
+/// Builds a Red Book audio CD image from WAV, FLAC, or (via FFmpeg) other
+/// compressed audio — the authoring half of the audio story (we could already
+/// extract audio to WAV, but not the reverse).
 ///
 /// Red Book rules this enforces:
 ///  - 44.1 kHz / 16-bit / stereo only. No resampling: a wrong conversion done
@@ -81,95 +88,122 @@ public static class AudioCdCreator
 
         var warnings = new List<string>();
         var inputs = new List<CdiWriter.TrackInput>();
+        // Decoding a FLAC or FFmpeg-handled source produces a temporary WAV that
+        // outlives this loop (CdiWriter.Write invokes each TrackInput's
+        // DataWriter later, when it actually streams the track) — every one
+        // created here is cleaned up in the finally block below, success or not.
+        var tempFiles = new List<string>();
 
         uint lba = 0;
         uint totalSectors = 0;
 
-        for (int i = 0; i < tracks.Count; i++)
+        try
         {
-            var source = tracks[i];
-            if (!File.Exists(source.Path))
-                throw new FileNotFoundException($"Track {i + 1}: file not found.", source.Path);
-
-            WavInfo info;
-            using (var wav = File.OpenRead(source.Path))
-                info = WavReader.ReadCdAudio(wav, Path.GetFileName(source.Path));
-
-            // Track 1 must carry the 150-sector lead-in gap.
-            uint pregap = i == 0 ? Math.Max(150, source.PregapSectors) : source.PregapSectors;
-
-            uint sectors = info.SectorCount;
-            long tail = info.DataLength % SectorBytes;
-            if (tail != 0)
-                warnings.Add(
-                    $"Track {i + 1} ({Path.GetFileName(source.Path)}) doesn't fill its last " +
-                    $"sector; {SectorBytes - tail} byte(s) of silence added. This is normal.");
-
-            if (info.Duration < TimeSpan.FromSeconds(4))
-                warnings.Add(
-                    $"Track {i + 1} is {info.Duration.TotalSeconds:N1}s. Red Book requires at " +
-                    "least 4 seconds per track; some players skip shorter ones.");
-
-            string path = source.Path;
-            long dataOffset = info.DataOffset;
-            long dataLength = info.DataLength;
-            long padding = (long)sectors * SectorBytes - dataLength;
-            long pregapBytes = (long)pregap * SectorBytes;
-
-            // A post-gap is silence after the audio. It counts as part of the
-            // track's length, so the next track's start moves accordingly.
-            uint postgap = source.PostgapSectors;
-            long postgapBytes = (long)postgap * SectorBytes;
-            uint trackSectors = sectors + postgap;
-
-            if (postgap > 0)
-                warnings.Add(
-                    $"Track {i + 1}: {postgap} sector(s) ({postgap / (double)SectorsPerSecond:N1}s) " +
-                    "of post-gap silence appended.");
-
-            inputs.Add(new CdiWriter.TrackInput
+            for (int i = 0; i < tracks.Count; i++)
             {
-                Mode = CdiTrackMode.Audio,
-                SectorSize = CdiSectorSize.S2352,
-                PregapSectors = pregap,
-                LengthSectors = trackSectors,
-                StartLba = lba + pregap,
-                Filename = $"TRACK{i + 1:D2}.WAV",
-                // Streamed: pregap silence, the samples, sector padding, post-gap.
-                DataWriter = os =>
+                var source = tracks[i];
+                if (!File.Exists(source.Path))
+                    throw new FileNotFoundException($"Track {i + 1}: file not found.", source.Path);
+
+                string wavPath;
+                try
                 {
-                    WriteSilence(os, pregapBytes);
-                    CopyRange(path, dataOffset, dataLength, os);
-                    WriteSilence(os, padding);
-                    WriteSilence(os, postgapBytes);
-                },
-            });
+                    var prepared = CompressedAudioSource.Prepare(source.Path);
+                    wavPath = prepared.WavPath;
+                    if (prepared.IsTemporary) tempFiles.Add(wavPath);
+                }
+                catch (AudioDecodeException ex)
+                {
+                    throw new AudioCdException($"Track {i + 1}: {ex.Message}");
+                }
 
-            lba += pregap + trackSectors;
-            totalSectors += pregap + trackSectors;
+                WavInfo info;
+                using (var wav = File.OpenRead(wavPath))
+                    info = WavReader.ReadCdAudio(wav, Path.GetFileName(source.Path));
+
+                // Track 1 must carry the 150-sector lead-in gap.
+                uint pregap = i == 0 ? Math.Max(150, source.PregapSectors) : source.PregapSectors;
+
+                uint sectors = info.SectorCount;
+                long tail = info.DataLength % SectorBytes;
+                if (tail != 0)
+                    warnings.Add(
+                        $"Track {i + 1} ({Path.GetFileName(source.Path)}) doesn't fill its last " +
+                        $"sector; {SectorBytes - tail} byte(s) of silence added. This is normal.");
+
+                if (info.Duration < TimeSpan.FromSeconds(4))
+                    warnings.Add(
+                        $"Track {i + 1} is {info.Duration.TotalSeconds:N1}s. Red Book requires at " +
+                        "least 4 seconds per track; some players skip shorter ones.");
+
+                string path = wavPath;
+                long dataOffset = info.DataOffset;
+                long dataLength = info.DataLength;
+                long padding = (long)sectors * SectorBytes - dataLength;
+                long pregapBytes = (long)pregap * SectorBytes;
+
+                // A post-gap is silence after the audio. It counts as part of the
+                // track's length, so the next track's start moves accordingly.
+                uint postgap = source.PostgapSectors;
+                long postgapBytes = (long)postgap * SectorBytes;
+                uint trackSectors = sectors + postgap;
+
+                if (postgap > 0)
+                    warnings.Add(
+                        $"Track {i + 1}: {postgap} sector(s) ({postgap / (double)SectorsPerSecond:N1}s) " +
+                        "of post-gap silence appended.");
+
+                inputs.Add(new CdiWriter.TrackInput
+                {
+                    Mode = CdiTrackMode.Audio,
+                    SectorSize = CdiSectorSize.S2352,
+                    PregapSectors = pregap,
+                    LengthSectors = trackSectors,
+                    StartLba = lba + pregap,
+                    Filename = $"TRACK{i + 1:D2}.WAV",
+                    // Streamed: pregap silence, the samples, sector padding, post-gap.
+                    DataWriter = os =>
+                    {
+                        WriteSilence(os, pregapBytes);
+                        CopyRange(path, dataOffset, dataLength, os);
+                        WriteSilence(os, padding);
+                        WriteSilence(os, postgapBytes);
+                    },
+                });
+
+                lba += pregap + trackSectors;
+                totalSectors += pregap + trackSectors;
+            }
+
+            uint capacity = allow80Minute ? Capacity80Min : Capacity74Min;
+            if (totalSectors > capacity)
+            {
+                var runtime = TimeSpan.FromSeconds((double)totalSectors / SectorsPerSecond);
+                var limit = TimeSpan.FromSeconds((double)capacity / SectorsPerSecond);
+                throw new AudioCdException(
+                    $"The compilation runs to {runtime:hh\\:mm\\:ss}, which won't fit a " +
+                    $"{limit.TotalMinutes:N0}-minute CD ({totalSectors:N0} sectors vs {capacity:N0}). " +
+                    "Remove a track" + (allow80Minute ? "." : ", or allow 80-minute media."));
+            }
+
+            if (allow80Minute && totalSectors > Capacity74Min)
+                warnings.Add(
+                    $"The compilation is over 74 minutes, so it needs 80-minute media " +
+                    $"({totalSectors:N0} sectors).");
+
+            long start = output.CanSeek ? output.Position : 0;
+            CdiWriter.Write(output, version, new[] { (IReadOnlyList<CdiWriter.TrackInput>)inputs });
+            long written = output.CanSeek ? output.Position - start : 0;
+
+            return new CompilationResult(written, inputs.Count, totalSectors, warnings);
         }
-
-        uint capacity = allow80Minute ? Capacity80Min : Capacity74Min;
-        if (totalSectors > capacity)
+        finally
         {
-            var runtime = TimeSpan.FromSeconds((double)totalSectors / SectorsPerSecond);
-            var limit = TimeSpan.FromSeconds((double)capacity / SectorsPerSecond);
-            throw new AudioCdException(
-                $"The compilation runs to {runtime:hh\\:mm\\:ss}, which won't fit a " +
-                $"{limit.TotalMinutes:N0}-minute CD ({totalSectors:N0} sectors vs {capacity:N0}). " +
-                "Remove a track" + (allow80Minute ? "." : ", or allow 80-minute media."));
+            foreach (var f in tempFiles)
+            {
+                try { File.Delete(f); } catch { /* best effort — a leftover temp file is harmless */ }
+            }
         }
-
-        if (allow80Minute && totalSectors > Capacity74Min)
-            warnings.Add(
-                $"The compilation is over 74 minutes, so it needs 80-minute media " +
-                $"({totalSectors:N0} sectors).");
-
-        long start = output.CanSeek ? output.Position : 0;
-        CdiWriter.Write(output, version, new[] { (IReadOnlyList<CdiWriter.TrackInput>)inputs });
-        long written = output.CanSeek ? output.Position - start : 0;
-
-        return new CompilationResult(written, inputs.Count, totalSectors, warnings);
     }
 
     private static void WriteSilence(Stream output, long bytes)

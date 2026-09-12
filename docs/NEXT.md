@@ -1,5 +1,27 @@
 # DiscForge — what's left (session handoff)
 
+## v1.112.0, 2026-09-12: the three ImgBurn gaps from `docs/imgburn-comparison.md`, closed
+
+Read `docs/imgburn-comparison.md`'s "Concrete gaps worth closing" section first for the reasoning;
+this is just the status. All three shipped in v1.112.0 (see CHANGELOG.md for the full writeup):
+compressed-source (FLAC in-process, MP3/AAC/OGG/WMA/APE/MPC/WV via optional FFmpeg) audio CD
+authoring, a `BurnView` burn queue (several different images burned in sequence, not just one image
+duplicated to several drives), and automatic write-speed selection from a DVD/BD media ID's rated
+speed (honestly not attempted for CD-R — ATIP doesn't encode a rating the way a DVD/BD media ID does).
+
+**Update, 2026-09-12, same day:** the burn queue is now confirmed on real hardware. Rebuilt
+`DiscForge.App` for real (this sandbox still can't — see the standing note below), ran it against a
+real drive with a blank CD-R: `Detect drives` completed cleanly with the new media-identity lookup in
+the path (no error, no speed override offered — correct, since CD-R's ATIP carries no rating), a
+two-item queue writing to image files processed both in sequence and logged "Queue finished.", and a
+single non-queue burn to the physical drive still worked, confirming the `OpenCdi`/`StartAsync`
+refactor didn't regress the existing path. Reported back: **all done, no issues.**
+
+Still open: the auto-speed default itself (picking a speed AT OR UNDER a media's rated maximum) has
+only been exercised on CD-R, which never triggers it — ATIP carries no speed rating, only a DVD/BD
+media ID does. That half wants confirming against an actual branded DVD-R/+R with a drive that
+reports several speeds, whenever one's next in the drive.
+
 ## Hardware confirmation, 2026-09-12: interrupt→resume PASSED on real hardware
 
 The long-open "hardware interrupt→resume test" is done and passed, against a real Plextor

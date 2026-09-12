@@ -1327,8 +1327,10 @@ static int CreateAudio(string[] args)
 {
     // usage: dforge create-audio <out.cdi> <track1.wav> [track2.wav ...] [--gapless] [--74]
     if (args.Length < 3)
-        return Fail("usage: dforge create-audio <out.cdi> <track1.wav> [track2.wav ...] " +
-                    "[--gapless] [--74] [--postgap [sectors]] [--version v2|v3|v35]");
+        return Fail("usage: dforge create-audio <out.cdi> <track1> [track2 ...] " +
+                    "[--gapless] [--74] [--postgap [sectors]] [--version v2|v3|v35]\n" +
+                    "  Tracks may be WAV or FLAC (decoded in-process), or anything an installed\n" +
+                    "  FFmpeg recognises as audio (MP3, AAC/M4A, OGG, WMA, APE, MPC, WV).");
 
     var outPath = args[1];
     bool gapless = args.Contains("--gapless");
@@ -1383,7 +1385,7 @@ static int CreateAudio(string[] args)
             $"{result.TotalSectors:N0} sectors, {result.CdiBytes:N0} bytes.");
         return 0;
     }
-    catch (Exception ex) when (ex is AudioCdException or WavFormatException or FileNotFoundException)
+    catch (Exception ex) when (ex is AudioCdException or WavFormatException or AudioDecodeException or FileNotFoundException)
     {
         return Fail(ex.Message);
     }

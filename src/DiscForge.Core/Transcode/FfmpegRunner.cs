@@ -161,32 +161,44 @@ public sealed partial class FfmpegRunner
     private sealed class RealProcessRunner : IProcessRunner
     {
         public int Run(string exe, IReadOnlyList<string> args, Action<string> onLine, CancellationToken ct)
+            => RunProcess(exe, args, onLine, ct);
+    }
+
+    /// <summary>
+    /// Run any process to completion, streaming each stdout/stderr line to
+    /// <paramref name="onLine"/>. Public so a caller that just needs "run this one
+    /// command and see the output" (e.g. a one-shot ffmpeg transcode outside the
+    /// <see cref="TranscodePlanner"/>/progress-parsing machinery above) doesn't
+    /// have to reimplement the same <see cref="Process"/> plumbing — it's the same
+    /// launch logic <see cref="RealProcessRunner"/> uses for every ffmpeg call.
+    /// </summary>
+    public static int RunProcess(string exe, IReadOnlyList<string> args, Action<string> onLine,
+                                 CancellationToken ct = default)
+    {
+        var psi = new ProcessStartInfo(exe)
         {
-            var psi = new ProcessStartInfo(exe)
-            {
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
 
-            using var proc = new Process { StartInfo = psi };
-            proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) onLine(e.Data); };
-            proc.OutputDataReceived += (_, e) => { if (e.Data is not null) onLine(e.Data); };
-            proc.Start();
-            proc.BeginErrorReadLine();
-            proc.BeginOutputReadLine();
+        using var proc = new Process { StartInfo = psi };
+        proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) onLine(e.Data); };
+        proc.OutputDataReceived += (_, e) => { if (e.Data is not null) onLine(e.Data); };
+        proc.Start();
+        proc.BeginErrorReadLine();
+        proc.BeginOutputReadLine();
 
-            while (!proc.WaitForExit(200))
+        while (!proc.WaitForExit(200))
+        {
+            if (ct.IsCancellationRequested)
             {
-                if (ct.IsCancellationRequested)
-                {
-                    try { proc.Kill(entireProcessTree: true); } catch { }
-                    return -1;
-                }
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                return -1;
             }
-            return proc.ExitCode;
         }
+        return proc.ExitCode;
     }
 }

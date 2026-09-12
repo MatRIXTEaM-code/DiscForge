@@ -11,6 +11,61 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
+### Added — v1.112.0: closing three ImgBurn gaps identified in `docs/imgburn-comparison.md`
+
+Follows up the ImgBurn deep-dive comparison with the three "concrete gaps worth closing" it ranked.
+All three shipped:
+
+**Compressed-source audio CD authoring.** `AudioCdCreator`/`create-audio` accepted only Red Book WAV.
+It now also accepts FLAC directly — decoded losslessly in-process by a new `FlacDecoder`, which parses
+the standard "fLaC" container/STREAMINFO and hands frames to the same `ChdFlac` core already validated
+byte-for-byte against real chdman output (`ChdFlac.Decode`'s `wantBytes: 1` trick makes it walk a whole
+FLAC stream frame-by-frame without needing the total sample count up front) — and, via a new
+`CompressedAudioSource`, anything an installed FFmpeg recognises as audio (MP3, AAC/M4A, Ogg Vorbis,
+WMA, APE, Musepack, WavPack), transcoded through FFmpeg exactly the way `TranscodePlanner` already does
+for video (same `FfmpegRunner.Locate`, a small new `FfmpegRunner.RunProcess` extracted from its private
+process-launch code so this didn't need a second copy of it). FFmpeg stays optional and undistributed,
+same stance as the video transcoder: missing FFmpeg fails with a clear message naming what's needed,
+not a cryptic one. A FLAC source that isn't 16-bit is refused outright (ChdFlac's subframe decode always
+folds to 16-bit samples, so a higher source depth would otherwise be silently truncated); a non-44.1kHz
+source decodes fine but is still caught by the same Red Book check every WAV source already goes
+through. Verified two ways: an offline round-trip test suite (DiscForge's own `FlacEncoder` →
+`FlacDecoder`, byte-identical PCM, no external tool needed in CI) and a manual end-to-end check in this
+environment (real `ffmpeg`-encoded MP3 → `CompressedAudioSource` → `AudioCdCreator` → a valid CDI).
+
+**A burn queue.** `BurnView` could duplicate ONE image to several destinations at once, but had no way
+to burn several DIFFERENT images back-to-back unattended — the classic tools' "build queue" job.
+Refactored `OpenCdi` into a reusable `LoadImage(path)` and extracted `PlanCurrentImage`/`LogPlanAndConfirm`
+from `StartAsync` so a new `RunQueueAsync` can load, plan, confirm and burn each queued image in turn
+using the exact same validated single-image machinery — no new hardware-facing code. A disc destination
+pauses between queue items for the media swap; an image-file destination moves straight on; one item
+failing to open, plan, or burn is logged and skipped rather than aborting the rest of the queue, the
+same stance `BurnJobPlanner` already takes toward one incapable destination. Purely additive: an empty
+queue (the default) burns the single open image exactly as before.
+
+**Automatic write-speed selection by media ID.** DiscForge already reads a disc's ATIP (CD-R) or
+physical-format/media-ID descriptor (DVD/BD) via `MediaInfoReader`, and already has a manufacturer
+lookup table (`AtipManufacturers`/`DvdMediaIds`). New `MediaIdentityParser.RecommendedMaxSpeedX` reads
+the rated speed straight out of a DVD/BD manufacturer label when one is encoded there (e.g. "Taiyo
+Yuden 16× DVD-R" → 16) — CD-R's ATIP code identifies the dye/stamper but never a speed rating, so this
+honestly returns null for every CD-R entry rather than guessing from a hand-picked table that would be
+as likely to be stale as to help. `BurnView.PopulateSpeedsAsync` now defaults the speed selection to the
+fastest drive-supported speed AT OR UNDER the media's rating (never above it) when no rating is found,
+behaviour is unchanged — still "Max (drive default)".
+
+**Verification tier.** FLAC decode/round-trip and speed-rating parsing are pure Core logic — provable
+offline (11 new tests: 7 `FlacDecoderTests` round-tripping through the existing `FlacEncoder`, 4
+`AudioCdTests` compiling FLAC/mixed-source tracks, 2 `MediaIdentityTests` for the speed-rating parser).
+The burn queue is App-only orchestration with no new hardware code, checked in this sandbox via
+Roslyn syntax parsing plus a semantic cross-check against the real built `Core.dll`/`Devices.dll`
+(this sandbox cannot build `DiscForge.App` itself), and since then confirmed for real: rebuilt and
+run against an actual drive with a blank CD-R — drive detection with the new media-identity lookup in
+the path, a two-item queue writing to image files, and a regular single-drive burn all completed with
+no issues (see `docs/NEXT.md`). Full suite: 2749/2749 (was 2732; +11 net, one pre-existing count
+discrepancy from an intervening unrelated test). `dforge cli`/`cli-win` both rebuild clean. The
+auto-speed-by-media-ID *default* itself still wants confirming against a branded DVD-R/+R — CD-R's
+ATIP never carries a rating, so this run couldn't exercise that half.
+
 ### Added — v1.111.0: real per-sector coverage proof for `completeness-check`
 
 Follows up a "what's left on the backlog" pass: `docs/ROADMAP.md` and `docs/COMPLETION_PLAN.md`

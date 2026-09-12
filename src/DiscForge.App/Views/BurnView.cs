@@ -12,10 +12,12 @@ using DiscForge.Core.Cdi;
 using DiscForge.Core.Convert;
 using DiscForge.Core.Cue;
 using DiscForge.Core.Devices;
+using DiscForge.Core.Media;
 using DiscForge.Core.Raw;
 using DiscForge.Core.Reading;
 using DiscForge.Devices;
 using DiscForge.Devices.Burning;
+using DiscForge.Devices.Media;
 using DiscForge.Devices.Reading;
 
 namespace DiscForge.App.Views;
@@ -100,20 +102,46 @@ internal sealed class BurnView : UserControl
         FlatStyle = FlatStyle.System, Enabled = false,
     };
 
+    // Burn queue: several DIFFERENT images burned one after another to the same
+    // destination(s)/settings, unattended between discs except for the media
+    // swap itself — the classic tools' "build queue" job. Optional: an empty
+    // queue leaves Start burning the single open image exactly as before.
+    private readonly ListBox _queue = new()
+    {
+        Location = new Point(12, 326), Size = new Size(560, 80), Font = Theme.Ui,
+        SelectionMode = SelectionMode.MultiExtended,
+        Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+    };
+    private readonly Button _queueAdd = new()
+    {
+        Text = "Add…", Location = new Point(580, 326), Width = 132, Height = 24,
+        FlatStyle = FlatStyle.System, Anchor = AnchorStyles.Top | AnchorStyles.Right,
+    };
+    private readonly Button _queueRemove = new()
+    {
+        Text = "Remove", Location = new Point(580, 354), Width = 132, Height = 24,
+        FlatStyle = FlatStyle.System, Anchor = AnchorStyles.Top | AnchorStyles.Right,
+    };
+    private readonly Button _queueClear = new()
+    {
+        Text = "Clear", Location = new Point(580, 382), Width = 132, Height = 24,
+        FlatStyle = FlatStyle.System, Anchor = AnchorStyles.Top | AnchorStyles.Right,
+    };
+
     private readonly Button _start = new()
     {
-        Text = "Start", Location = new Point(12, 308), Width = 100, Height = 28,
+        Text = "Start", Location = new Point(12, 416), Width = 100, Height = 28,
         FlatStyle = FlatStyle.System, Enabled = false,
     };
     private readonly ProgressBar _progress = new()
     {
-        Location = new Point(124, 311), Size = new Size(600, 22), Minimum = 0, Maximum = 100,
+        Location = new Point(124, 419), Size = new Size(600, 22), Minimum = 0, Maximum = 100,
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
     };
 
     private readonly EventLogView _log = new()
     {
-        Location = new Point(12, 346), Size = new Size(712, 144),
+        Location = new Point(12, 454), Size = new Size(712, 144),
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
     };
 
@@ -136,7 +164,7 @@ internal sealed class BurnView : UserControl
     public BurnView()
     {
         // Establish a realistic size before adding anchored children (see InspectView).
-        Size = new Size(736, 500);
+        Size = new Size(736, 608);
         BackColor = Color.White;
         Padding = new Padding(12);
 
@@ -181,6 +209,15 @@ internal sealed class BurnView : UserControl
         _erase.Click += async (_, _) => await EraseAsync();
         _destinations.SelectedIndexChanged += (_, _) => UpdateEraseEnabled();
 
+        Controls.Add(GroupLabel("Burn queue (optional) — several images, one after another",
+            new Point(12, 308)));
+        _queueAdd.Click += (_, _) => AddToQueue();
+        _queueRemove.Click += (_, _) => RemoveSelectedQueueItems();
+        _queueClear.Click += (_, _) => { _queue.Items.Clear(); UpdateStartEnabled(); };
+        _queue.SelectedIndexChanged += (_, _) =>
+            _queueRemove.Enabled = _queue.SelectedItems.Count > 0;
+        _queueRemove.Enabled = false;
+
         _start.Click += async (_, _) => await StartAsync();
         foreach (var cb in new[] { _test, _write, _verify }) cb.CheckedChanged += (_, _) => UpdateStartEnabled();
 
@@ -195,10 +232,29 @@ internal sealed class BurnView : UserControl
         Controls.Add(_test); Controls.Add(_write); Controls.Add(_verify); Controls.Add(_copies);
         Controls.Add(_auto); Controls.Add(_tao); Controls.Add(_raw);
         Controls.Add(_speed); Controls.Add(_erase);
+        Controls.Add(_queue); Controls.Add(_queueAdd); Controls.Add(_queueRemove); Controls.Add(_queueClear);
         Controls.Add(_start); Controls.Add(_progress);
         Controls.Add(_log);
 
         _log.Add("Open an image and choose a destination.");
+    }
+
+    // --- burn queue ------------------------------------------------------------
+
+    private void AddToQueue()
+    {
+        using var dlg = new OpenFileDialog { Filter = ImageFileDialogFilter, Multiselect = true };
+        if (dlg.ShowDialog() != DialogResult.OK) return;
+        foreach (var f in dlg.FileNames) _queue.Items.Add(f);
+        _log.Add($"Queue: added {dlg.FileNames.Length} image(s) — now {_queue.Items.Count} queued.");
+        UpdateStartEnabled();
+    }
+
+    private void RemoveSelectedQueueItems()
+    {
+        foreach (var item in _queue.SelectedItems.Cast<object>().ToList())
+            _queue.Items.Remove(item);
+        UpdateStartEnabled();
     }
 
     private static Label GroupLabel(string text, Point at) => new()
@@ -208,20 +264,30 @@ internal sealed class BurnView : UserControl
 
     // --- destinations --------------------------------------------------------
 
+    private const string ImageFileDialogFilter =
+        "Disc images (*.cdi;*.iso;*.cue;*.ccd)|*.cdi;*.iso;*.cue;*.ccd|" +
+        "CDI images (*.cdi)|*.cdi|ISO images (*.iso)|*.iso|CUE sheets (*.cue)|*.cue|" +
+        "CloneCD images (*.ccd)|*.ccd|All files (*.*)|*.*";
+
     private void OpenCdi()
     {
-        using var dlg = new OpenFileDialog
-        {
-            Filter = "Disc images (*.cdi;*.iso;*.cue;*.ccd)|*.cdi;*.iso;*.cue;*.ccd|" +
-                     "CDI images (*.cdi)|*.cdi|ISO images (*.iso)|*.iso|CUE sheets (*.cue)|*.cue|" +
-                     "CloneCD images (*.ccd)|*.ccd|All files (*.*)|*.*",
-        };
+        using var dlg = new OpenFileDialog { Filter = ImageFileDialogFilter };
         if (dlg.ShowDialog() != DialogResult.OK) return;
+        LoadImage(dlg.FileName);
+    }
 
+    /// <summary>
+    /// Load an image as the "currently open" source (<see cref="_openCdi"/> and
+    /// friends) — everything <see cref="OpenCdi"/> used to do once past the file
+    /// dialog, pulled out so a queued burn (<see cref="RunQueueAsync"/>) can load
+    /// each of several images in turn the exact same way a manual Open… does.
+    /// Returns false (having already logged why) when the image can't be used.
+    /// </summary>
+    private bool LoadImage(string originalPath)
+    {
         // A previous open may have left a CCD->CUE staging directory behind — done with it now.
         CleanupCcdTempDir();
 
-        var originalPath = dlg.FileName;
         var pickedPath = originalPath;
         var pickedExt = Path.GetExtension(pickedPath);
         var displayName = Path.GetFileName(originalPath);
@@ -249,7 +315,7 @@ internal sealed class BurnView : UserControl
             {
                 _log.Add($"Could not read '{displayName}' as a CloneCD image: {ex.Message}", EventLogView.Level.Error);
                 CleanupCcdTempDir();
-                return;
+                return false;
             }
         }
 
@@ -277,9 +343,11 @@ internal sealed class BurnView : UserControl
                 _openCdi = null;
                 _sourceIsCue = false;
                 CleanupCcdTempDir();
+                UpdateStartEnabled();
+                return false;
             }
             UpdateStartEnabled();
-            return;
+            return true;
         }
 
         var size = new FileInfo(pickedPath).Length;
@@ -290,6 +358,7 @@ internal sealed class BurnView : UserControl
                      "It may be truncated, or a raw BIN rather than an ISO.", EventLogView.Level.Warn);
 
         UpdateStartEnabled();
+        return true;
     }
 
     /// <summary>
@@ -416,7 +485,7 @@ internal sealed class BurnView : UserControl
             .ToList();
 
     private void UpdateStartEnabled() =>
-        _start.Enabled = _openCdi is not null
+        _start.Enabled = (_openCdi is not null || _queue.Items.Count > 0)
                          && CheckedDestinations().Count > 0
                          && (_test.Checked || _write.Checked || _verify.Checked);
 
@@ -441,17 +510,17 @@ internal sealed class BurnView : UserControl
                : BurnMethodChoice.Auto,
     };
 
-    private async Task StartAsync()
+    /// <summary>
+    /// Plan a job against whichever image is currently loaded as <see cref="_openCdi"/>,
+    /// logging its shape the same way for every source kind. Failures are logged
+    /// here (refusal or exception) and reported back as null rather than thrown,
+    /// so both a single-image Start and a queue item can treat "couldn't plan
+    /// this one" the same way — log it, move on — without duplicating the
+    /// try/catch/log dance.
+    /// </summary>
+    private MultiBurnPlan? PlanCurrentImage(IReadOnlyList<object> destTags)
     {
-        if (_openCdi is null) return;
-        var destTags = CheckedDestinations();
-        if (destTags.Count == 0) { _log.Add("Choose a destination.", EventLogView.Level.Warn); return; }
-
-        _log.Clear();
-        _progress.Value = 0;
-
-        // Plan first: impossible work is refused before any media is touched.
-        MultiBurnPlan plan;
+        if (_openCdi is null) return null;
         try
         {
             ImageShape shape;
@@ -486,22 +555,26 @@ internal sealed class BurnView : UserControl
                 _log.Add($"Image: {image.TrackCount} track(s), {image.Sessions.Count} session(s)");
             }
 
-            plan = BurnJobPlanner.PlanAll(shape, BuildJob(destTags));
+            return BurnJobPlanner.PlanAll(shape, BuildJob(destTags));
         }
         catch (BurnNotSupportedException ex)
         {
             _log.Add("Job refused: " + ex.Message, EventLogView.Level.Error);
-            return;
+            return null;
         }
         catch (Exception ex)
         {
             _log.Add("Error: " + ex.Message, EventLogView.Level.Error);
             AppLog.WriteException("burn plan", ex);
-            return;
+            return null;
         }
+    }
 
-        // A destination that can't take this job says so and sits it out; the
-        // rest still run.
+    /// <summary>Log a plan's per-destination detail and, for disc destinations,
+    /// confirm media is loaded before anything is touched. False means the
+    /// caller should not proceed (nothing runnable, or the user declined).</summary>
+    private bool LogPlanAndConfirm(MultiBurnPlan plan, string mediaPromptSuffix = "")
+    {
         foreach (var d in plan.Refused)
             _log.Add($"{d.Label}: SKIPPED — {d.Refusal}", EventLogView.Level.Error);
 
@@ -515,22 +588,98 @@ internal sealed class BurnView : UserControl
         }
 
         int discs = plan.Runnable.Count(d => !d.IsImageFile);
-        if (discs > 0)
+        if (discs == 0) return true;
+
+        var prompt = (discs == 1
+            ? "Insert media. Begin the job?"
+            : $"Insert blank media in all {discs} drives. They will be burned simultaneously. Begin?")
+            + mediaPromptSuffix;
+        if (RetroMessageBox.Show(prompt, "DiscForge",
+                MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
         {
-            var prompt = discs == 1
-                ? "Insert media. Begin the job?"
-                : $"Insert blank media in all {discs} drives. They will be burned simultaneously. Begin?";
-            if (RetroMessageBox.Show(prompt, "DiscForge",
-                    MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
-            {
-                _log.Add("Cancelled.", EventLogView.Level.Warn);
-                return;
-            }
+            _log.Add("Cancelled.", EventLogView.Level.Warn);
+            return false;
         }
+        return true;
+    }
+
+    private async Task StartAsync()
+    {
+        if (_queue.Items.Count > 0) { await RunQueueAsync(); return; }
+        if (_openCdi is null) return;
+        var destTags = CheckedDestinations();
+        if (destTags.Count == 0) { _log.Add("Choose a destination.", EventLogView.Level.Warn); return; }
+
+        _log.Clear();
+        _progress.Value = 0;
+
+        var plan = PlanCurrentImage(destTags);
+        if (plan is null) return;
+        if (!LogPlanAndConfirm(plan)) return;
 
         _start.Enabled = false;
         try { await RunAllAsync(plan); }
         finally { UpdateStartEnabled(); }
+    }
+
+    /// <summary>
+    /// Burn every queued image, one after another, to the same checked
+    /// destination(s) with the same Actions/Methods/Speed settings — the
+    /// classic tools' "build queue": several DIFFERENT sources run back to
+    /// back rather than the same source duplicated to several drives at once
+    /// (that's what the destination checkboxes above already do). A disc
+    /// destination pauses between items so the user can swap media; an image
+    /// file destination just moves straight on. One item failing to open,
+    /// plan, or burn is logged and skipped — it doesn't abort the rest of the
+    /// queue, same "one bad destination doesn't sink the job" stance
+    /// <see cref="BurnJobPlanner"/> already takes.
+    /// </summary>
+    private async Task RunQueueAsync()
+    {
+        var destTags = CheckedDestinations();
+        if (destTags.Count == 0) { _log.Add("Choose a destination.", EventLogView.Level.Warn); return; }
+
+        var paths = _queue.Items.Cast<string>().ToList();
+        _log.Clear();
+        _log.Add($"Burn queue: {paths.Count} image(s) to the same destination(s), one after another.");
+
+        _start.Enabled = false;
+        try
+        {
+            for (int i = 0; i < paths.Count; i++)
+            {
+                var path = paths[i];
+                _log.Add($"--- Queue {i + 1}/{paths.Count}: {Path.GetFileName(path)} ---");
+
+                if (!LoadImage(path))
+                {
+                    _log.Add("Could not open this image — skipping it.", EventLogView.Level.Error);
+                    continue;
+                }
+
+                var plan = PlanCurrentImage(destTags);
+                if (plan is null) continue;
+                if (!plan.AnyRunnable)
+                {
+                    _log.Add("No destination could take this image — skipping it.", EventLogView.Level.Error);
+                    continue;
+                }
+                if (!LogPlanAndConfirm(plan, $" (queue item {i + 1}/{paths.Count})"))
+                {
+                    _log.Add("Queue stopped.", EventLogView.Level.Warn);
+                    break;
+                }
+
+                _progress.Value = 0;
+                await RunAllAsync(plan);
+            }
+            _log.Add("Queue finished.", EventLogView.Level.Good);
+        }
+        finally
+        {
+            CleanupCcdTempDir();
+            UpdateStartEnabled();
+        }
     }
 
     /// <summary>
@@ -666,6 +815,27 @@ internal sealed class BurnView : UserControl
                      .Where(x => x.Report is not null)
                      .ToList());
 
+        // Auto write-speed-by-media-ID: ask each drive what disc it's actually
+        // holding (ATIP for CD-R, the physical-format/media-ID descriptor for
+        // DVD/BD) and see whether that identity names a certified speed rating
+        // (see RecommendedMaxSpeedX — CD-R's ATIP never does; DVD/BD media IDs
+        // often do, e.g. "Taiyo Yuden 16× DVD-R"). The lowest rating across every
+        // detected drive wins, the same "don't sink the slow drive" logic the
+        // burn planner already uses for capability mismatches.
+        (int Cap, string Reason)? recommended = null;
+        var identities = await Task.Run(() => _detected
+            .Select(DriveLetterOf)
+            .Where(l => l is not null)
+            .Select(l => MediaInfoReader.Read(l!.Value).Identity)
+            .Where(id => id?.Manufacturer is not null)
+            .ToList());
+        foreach (var id in identities)
+        {
+            if (MediaIdentityParser.RecommendedMaxSpeedX(id!.Manufacturer) is not int cap) continue;
+            if (recommended is null || cap < recommended.Value.Cap)
+                recommended = (cap, $"{id.Manufacturer} ({id.MediaId ?? id.AtipCode})");
+        }
+
         _speed.Items.Clear();
         _speed.Items.Add(new SpeedItem("Max (drive default)", null));
 
@@ -682,8 +852,34 @@ internal sealed class BurnView : UserControl
         }
 
         int restore = 0;
-        for (int i = 0; i < _speed.Items.Count; i++)
-            if ((_speed.Items[i] as SpeedItem)?.SectorsPerSecond == keep) { restore = i; break; }
+        if (keep is int wanted)
+        {
+            for (int i = 0; i < _speed.Items.Count; i++)
+                if ((_speed.Items[i] as SpeedItem)?.SectorsPerSecond == wanted) { restore = i; break; }
+        }
+        else if (recommended is { } rec)
+        {
+            // The fastest available speed AT OR UNDER the media's rating — never
+            // above it, since a drive can report speeds the media itself isn't
+            // certified for. If every available speed is faster than the rating
+            // (a very conservative rating on a fast drive), fall back to the
+            // slowest available rather than an uncapped "Max".
+            int bestIndex = -1, bestX = -1, slowestIndex = -1, slowestX = int.MaxValue;
+            for (int i = 1; i < _speed.Items.Count; i++)
+            {
+                if (MediaIdentityParser.RecommendedMaxSpeedX(((SpeedItem)_speed.Items[i]).Label) is not int x) continue;
+                if (x <= rec.Cap && x > bestX) { bestX = x; bestIndex = i; }
+                if (x < slowestX) { slowestX = x; slowestIndex = i; }
+            }
+            int chosen = bestIndex >= 0 ? bestIndex : slowestIndex;
+            if (chosen >= 0)
+            {
+                restore = chosen;
+                _log.Add($"Media identified as {rec.Reason}, rated {rec.Cap}x — defaulting write speed " +
+                         $"to {((SpeedItem)_speed.Items[chosen]).Label} instead of the drive's max. " +
+                         "Pick a different speed from the list to override.");
+            }
+        }
         _speed.SelectedIndex = restore;
     }
 

@@ -6,6 +6,7 @@
 // see the GNU General Public License (LICENSE at the repository root) for details.
 
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace DiscForge.Core.Media;
 
@@ -145,6 +146,31 @@ public static class MediaIdentityParser
     /// format revision, so this scans for the longest printable run instead.</summary>
     public static string? ParseAdipMediaId(ReadOnlySpan<byte> response)
         => response.Length < 8 ? null : PrintableRun(response[4..]);
+
+    private static readonly Regex SpeedRatingRegex =
+        new(@"(\d+)\s*[×xX]", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Pull a certified maximum write speed out of a manufacturer label, when
+    /// that label carries one — DiscForge's DVD/BD media-ID table names the
+    /// rated speed right in the manufacturer string (e.g. "Taiyo Yuden 16× DVD-R"),
+    /// because unlike a CD-R's ATIP code (which identifies the dye/stamper but
+    /// not a speed rating), a DVD/BD media ID's low bytes ARE that rating.
+    ///
+    /// Returns null when the identity is unknown, or (honestly) when it's a
+    /// recognised manufacturer whose code alone doesn't imply a speed — most
+    /// notably every CD-R entry in <see cref="AtipManufacturers"/>. A curated
+    /// per-manufacturer CD-R speed table was deliberately left out: without a
+    /// large, current, crowd-sourced dataset behind it (which is what a
+    /// database like ImgBurn's actually is), a small hand-picked table would
+    /// be as likely to be stale or wrong as to help.
+    /// </summary>
+    public static int? RecommendedMaxSpeedX(string? manufacturerLabel)
+    {
+        if (string.IsNullOrEmpty(manufacturerLabel)) return null;
+        var m = SpeedRatingRegex.Match(manufacturerLabel);
+        return m.Success && int.TryParse(m.Groups[1].Value, out int x) ? x : null;
+    }
 
     public static string BookTypeName(int book) => book switch
     {

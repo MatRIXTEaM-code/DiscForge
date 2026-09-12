@@ -204,4 +204,30 @@ public class MediaIdentityTests
         Assert.True(AtipManufacturers.KnownCodes >= 20);
         Assert.True(DvdMediaIds.KnownIds >= 20);
     }
+
+    // --- speed rating extraction (auto write-speed-by-media-ID) ---------------
+
+    [Theory]
+    [InlineData("Taiyo Yuden 16× DVD-R", 16)]
+    [InlineData("Mitsubishi / Verbatim 8× DVD+R", 8)]
+    [InlineData("Ritek 8× DVD+R", 8)]
+    public void Recommended_speed_is_parsed_from_a_dvd_manufacturer_label(string label, int expected)
+    {
+        Assert.Equal(expected, MediaIdentityParser.RecommendedMaxSpeedX(label));
+    }
+
+    [Theory]
+    [InlineData("Taiyo Yuden")]              // CD-R ATIP entries: no rating encoded, honestly
+    [InlineData("")]
+    [InlineData("Some unrelated string")]
+    public void No_speed_rating_is_returned_when_none_is_encoded(string? label)
+    {
+        Assert.Null(MediaIdentityParser.RecommendedMaxSpeedX(label));
+    }
+
+    [Fact]
+    public void No_speed_rating_for_a_null_label()
+    {
+        Assert.Null(MediaIdentityParser.RecommendedMaxSpeedX(null));
+    }
 }

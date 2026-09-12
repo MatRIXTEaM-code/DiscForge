@@ -367,4 +367,104 @@ public class AudioCdTests
                 CdiVersion.V35, cdi));
         Assert.Contains("Track 1", ex.Message);
     }
+
+    // --- compressed sources (FLAC / FFmpeg) -----------------------------------
+
+    private static string TempFlac(byte[] pcm)
+    {
+        var samples = new short[pcm.Length / 2];
+        for (int i = 0; i < samples.Length; i++)
+            samples[i] = (short)(pcm[i * 2] | (pcm[i * 2 + 1] << 8));
+        var flac = FlacEncoder.Encode(samples, sampleRate: 44100, channels: 2);
+        var p = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".flac");
+        File.WriteAllBytes(p, flac);
+        return p;
+    }
+
+    [Fact]
+    public void A_flac_track_compiles_and_round_trips_exactly_like_wav()
+    {
+        var pcm = Tone(50);
+        var path = TempFlac(pcm);
+        try
+        {
+            using var cdi = new MemoryStream();
+            var result = AudioCdCreator.Create(new[] { new AudioTrackSource { Path = path } },
+                CdiVersion.V35, cdi);
+            Assert.Equal(1, result.TrackCount);
+            cdi.Position = 0;
+
+            var image = CdiParser.Parse(cdi);
+            var track = image.AllTracks.Single();
+
+            using var wav = new MemoryStream();
+            CdiExtractor.ExtractAudioToWav(cdi, track, wav);
+            wav.Position = 0;
+
+            var info = WavReader.Read(wav);
+            var got = new byte[pcm.Length];
+            wav.Seek(info.DataOffset, SeekOrigin.Begin);
+            wav.ReadExactly(got);
+            Assert.Equal(pcm, got);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Mixing_wav_and_flac_tracks_in_one_compilation_works()
+    {
+        var a = TempWav(MakeWav(Tone(80)));
+        var b = TempFlac(Tone(60));
+        try
+        {
+            using var cdi = new MemoryStream();
+            var result = AudioCdCreator.Create(new[]
+            {
+                new AudioTrackSource { Path = a },
+                new AudioTrackSource { Path = b },
+            }, CdiVersion.V35, cdi);
+            Assert.Equal(2, result.TrackCount);
+        }
+        finally { File.Delete(a); File.Delete(b); }
+    }
+
+    [Fact]
+    public void An_unsupported_extension_is_refused_with_a_helpful_message()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".xyz");
+        File.WriteAllBytes(path, new byte[16]);
+        try
+        {
+            using var cdi = new MemoryStream();
+            var ex = Assert.Throws<AudioCdException>(() =>
+                AudioCdCreator.Create(new[] { new AudioTrackSource { Path = path } },
+                    CdiVersion.V35, cdi));
+            Assert.Contains("Track 1", ex.Message);
+            Assert.Contains("WAV", ex.Message);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void A_flac_file_that_is_not_red_book_is_refused_before_burning_anything()
+    {
+        // A non-44.1kHz FLAC decodes fine (FlacDecoder only guards bit depth,
+        // since that's the one dimension it would otherwise silently truncate)
+        // but must still be refused once it reaches the same Red Book check
+        // every WAV source goes through — no silent resampling, same as
+        // WavReader's own stance.
+        var samples = new short[100];
+        var flac = FlacEncoder.Encode(samples, sampleRate: 22050, channels: 2);
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".flac");
+        File.WriteAllBytes(path, flac);
+        try
+        {
+            using var cdi = new MemoryStream();
+            var ex = Assert.Throws<WavFormatException>(() =>
+                AudioCdCreator.Create(new[] { new AudioTrackSource { Path = path } },
+                    CdiVersion.V35, cdi));
+            Assert.Contains("22050", ex.Message);
+        }
+        finally { File.Delete(path); }
+    }
 }
