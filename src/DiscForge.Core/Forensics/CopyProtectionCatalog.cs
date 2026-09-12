@@ -27,11 +27,24 @@ public sealed record ProtectionDetection
     public required IReadOnlyList<ProtectionEvidence> Evidence { get; init; }
     public required string Note { get; init; }
 
+    /// <summary>True when this scheme's real authentication signal lives outside anything a
+    /// sector/subchannel image can hold — a physical-media measurement such as DPM (Data
+    /// Position Measurement: laser-timing variance from the pressing, read by repeated-pass
+    /// timing tools, not stored in any sector) — as opposed to e.g. LibCrypt, whose signal is
+    /// ordinary subchannel bytes and so IS captured by a normal dump. This is the "honesty"
+    /// flag: it exists so a clean, fully-verified dump doesn't get read as "this disc's
+    /// protection was fully preserved" when a physical-layer component of it necessarily wasn't.</summary>
+    public bool PhysicallyUncapturable { get; init; }
+    /// <summary>Set when <see cref="PhysicallyUncapturable"/> is true: what specifically an
+    /// image cannot represent, and (when known) which era/version actually needs it.</summary>
+    public string? UncapturableNote { get; init; }
+
     public override string ToString()
     {
         string ver = Version is { Length: > 0 } ? $" {Version}" : "";
         string parm = Parameters is { Length: > 0 } ? $" · {Parameters}" : "";
-        return $"{Scheme}{ver} [{Confidence}]{parm}";
+        string phys = PhysicallyUncapturable ? " [physical signal not capturable in an image]" : "";
+        return $"{Scheme}{ver} [{Confidence}]{parm}{phys}";
     }
 }
 
@@ -40,12 +53,31 @@ public sealed record ProtectionReport
 {
     public required IReadOnlyList<ProtectionDetection> Detections { get; init; }
     public bool AnyFound => Detections.Count > 0;
+    /// <summary>True if any detected scheme has a physical-media component (see
+    /// <see cref="ProtectionDetection.PhysicallyUncapturable"/>) that no image — however
+    /// byte-perfect its sectors and subchannel verify — can represent.</summary>
+    public bool AnyPhysicallyUncapturable => Detections.Any(d => d.PhysicallyUncapturable);
 
     public string Summary()
     {
         if (!AnyFound) return "No known copy-protection fingerprints found.";
         var names = Detections.Select(d => d.Version is { Length: > 0 } ? $"{d.Scheme} {d.Version}" : d.Scheme);
         return $"Protection fingerprint: {string.Join(", ", names)}.";
+    }
+
+    /// <summary>The honest, one-sentence catalog caveat: null when nothing detected needs one,
+    /// otherwise names which scheme(s) have a physical-media component this dump cannot prove it
+    /// captured — so "verified 1:1" is understood to mean the sector/subchannel data, not
+    /// necessarily the disc's full protection scheme.</summary>
+    public string? PhysicalCaptureCaveat()
+    {
+        var flagged = Detections.Where(d => d.PhysicallyUncapturable).ToList();
+        if (flagged.Count == 0) return null;
+        var names = string.Join(", ", flagged.Select(d => d.Scheme).Distinct());
+        return $"Physical-capture caveat: {names} may rely on a physical-media signal " +
+               "(e.g. DPM laser-timing variance from the pressing) that no sector/subchannel " +
+               "image can represent — this dump certifies the sector and subchannel data only, " +
+               "not necessarily this disc's full protection scheme.";
     }
 }
 
@@ -66,7 +98,8 @@ public static class CopyProtectionCatalog
 
     private sealed record Mark(string Value, MarkKind Kind, bool Strong);
 
-    private sealed record Signature(string Scheme, IReadOnlyList<Mark> Marks, string? VersionKey = null);
+    private sealed record Signature(string Scheme, IReadOnlyList<Mark> Marks, string? VersionKey = null,
+        bool Uncapturable = false, string? UncapturableNote = null);
 
     // Well-known schemes and the distinctive marks they leave. Marks flagged Strong are, on their
     // own, enough to confirm; supporting marks only raise a "likely".
@@ -99,7 +132,12 @@ public static class CopyProtectionCatalog
             new Mark("AddD", MarkKind.ExeString, false),
             new Mark(".cms_t", MarkKind.ExeString, true),
             new Mark(".cms_d", MarkKind.ExeString, true),
-        }, VersionKey: "SecuROM"),
+        }, VersionKey: "SecuROM", Uncapturable: true,
+           UncapturableNote: "SecuROM v7 and later layer DPM (Data Position Measurement — laser-timing " +
+               "variance across repeated reads of the pressing) on top of its sector/subchannel marks. " +
+               "This scan cannot always confirm which major version is present from filesystem marks " +
+               "alone, so treat any SecuROM detection as potentially requiring a physical-timing capture " +
+               "this dump does not contain."),
 
         new("LaserLock", new[]
         {
@@ -128,7 +166,10 @@ public static class CopyProtectionCatalog
             new Mark("sfsync04.sys", MarkKind.File, true),
             new Mark("Protection Technology", MarkKind.ExeString, false),
             new Mark(".sforce", MarkKind.ExeString, true),
-        }),
+        }, Uncapturable: true,
+           UncapturableNote: "StarForce (from v3 onward) authenticates primarily via DPM — laser-timing " +
+               "variance measured across repeated reads of the pressing — which is not stored in sector " +
+               "or subchannel data at all. No image, however byte-perfect and verified, reproduces it."),
 
         new("VOB ProtectCD", new[]
         {
@@ -221,6 +262,8 @@ public static class CopyProtectionCatalog
                 Confidence = confidence,
                 Evidence = evidence,
                 Note = "Preservation metadata only — DiscForge records the scheme; it does not bypass it.",
+                PhysicallyUncapturable = sig.Uncapturable,
+                UncapturableNote = sig.Uncapturable ? sig.UncapturableNote : null,
             });
         }
 
@@ -306,6 +349,13 @@ public static class CopyProtectionCatalog
             sb.AppendLine($"  {d}");
             foreach (var e in d.Evidence) sb.AppendLine($"      - {e.Kind}: {e.Detail}");
             sb.AppendLine($"      note: {d.Note}");
+            if (d.PhysicallyUncapturable && d.UncapturableNote is { Length: > 0 })
+                sb.AppendLine($"      physical-capture caveat: {d.UncapturableNote}");
+        }
+        if (r.PhysicalCaptureCaveat() is { } caveat)
+        {
+            sb.AppendLine();
+            sb.AppendLine(caveat);
         }
         return sb.ToString().TrimEnd();
     }

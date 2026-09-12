@@ -116,11 +116,21 @@ public static class DataDiscImager
     /// Refuses a disc that declares copy protection, and a disc whose block length
     /// is not 2048 (an audio/mixed CD — use the track-aware ripper for those).
     /// Check <see cref="ReadReport.Complete"/> before trusting the image.
+    ///
+    /// <paramref name="startLba"/> resumes an interrupted read: sectors before it are assumed
+    /// already correctly written to <paramref name="output"/> (positioned there by the caller —
+    /// this method itself only ever writes sequentially from wherever the stream currently is),
+    /// and only <c>[startLba, TotalSectors)</c> is actually read from the drive. The read logic,
+    /// retry behaviour and error handling are identical either way; only the loop's starting
+    /// point changes. Reported <see cref="ReadReport.SectorsRead"/> is the disc's true total
+    /// sector count regardless of where this particular call started, so a resumed dump's
+    /// report still describes the whole disc rather than just the tail this call covered.
     /// </summary>
     public static ReadReport ReadToIso(char driveLetter, Stream output,
                                        IProgress<ReadProgress>? progress = null,
                                        ReadOptions? options = null,
-                                       CancellationToken cancel = default)
+                                       CancellationToken cancel = default,
+                                       uint startLba = 0)
     {
         ArgumentNullException.ThrowIfNull(output);
         options ??= new ReadOptions();
@@ -139,12 +149,16 @@ public static class DataDiscImager
                 "CD, rip it track-by-track in the GUI (Read Disc) so the audio tracks are handled correctly.");
         if (cap.Sectors == 0)
             throw new DiscReadException("The drive reports a zero-length disc. Is it blank, or still spinning up?");
+        if (startLba > cap.Sectors)
+            throw new DiscReadException(
+                $"--resume start point (LBA {startLba}) is past this disc's {cap.Sectors:N0} sectors — " +
+                "this looks like a checkpoint from a different disc. Delete the .resume.json to start fresh.");
 
         var badSectors = new List<uint>();
         var notes = new List<string>();
         var buffer = new byte[SectorsPerRead * CookedSectorBytes];
 
-        uint done = 0;
+        uint done = startLba;
         while (done < cap.Sectors)
         {
             cancel.ThrowIfCancellationRequested();

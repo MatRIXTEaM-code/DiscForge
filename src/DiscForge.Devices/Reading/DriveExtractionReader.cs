@@ -8,6 +8,7 @@
 using System.Runtime.Versioning;
 using DiscForge.Core.Dumping;
 using DiscForge.Core.Mmc;
+using DiscForge.Core.Recovery;
 using DiscForge.Devices.Spti;
 
 namespace DiscForge.Devices.Reading;
@@ -28,7 +29,7 @@ namespace DiscForge.Devices.Reading;
 /// the 2048-byte user data block instead.
 /// </summary>
 [SupportedOSPlatform("windows")]
-public sealed class DriveExtractionReader : IExtractionReader, IDisposable
+public sealed class DriveExtractionReader : IExtractionReader, IExtractionRereadEscalation, IDisposable
 {
     private const int C2Bytes = 294;
     private const int DvdSectorSize = DiscForge.Core.Dumping.SectorExtraction.DvdSectorSize;
@@ -73,6 +74,22 @@ public sealed class DriveExtractionReader : IExtractionReader, IDisposable
     }
 
     public void Dispose() => _dev.Dispose();
+
+    /// <summary>
+    /// <see cref="IExtractionRereadEscalation"/>: the same Tier-B adaptive re-read
+    /// already proven against real hardware via <c>reread-probe</c> and wired into
+    /// the CD track ripper (<c>read-cdi --adaptive-reread</c>), now reachable from
+    /// <c>SectorExtraction</c> too — only ever consulted after every one of the
+    /// engine's own plain retries has already failed a sector, and only when the
+    /// caller opted in via <see cref="ExtractionOptions.AdaptiveReread"/>.
+    /// </summary>
+    public byte[]? TryRecover(long lba, bool isAudio)
+    {
+        if (lba < 0 || lba > uint.MaxValue) return null;
+        var source = new DriveRereadSource(_dev, (uint)lba, isAudio);
+        var run = AdaptiveReread.Run(source, new AdaptiveRereadConfig());
+        return run.Recovered ? source.LastMain : null;
+    }
 
     /// <summary>Point the sector-type negotiation at a new span (e.g. the next track).
     /// Discards any prefetched sectors — they were read in the old form.</summary>

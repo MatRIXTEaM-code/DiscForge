@@ -2,7 +2,7 @@
 
 *Auto-generated from the CLI's own help (`dforge` with no args). Regenerate after adding commands.*
 
-DiscForge exposes **272 commands**. Many read-only commands accept `--json` for machine-readable output.
+DiscForge exposes **341 commands**. Many read-only commands accept `--json` for machine-readable output.
 
 All analysis is clean-room: DiscForge identifies, verifies, and preserves — it never circumvents, strips, or defeats a protection measure.
 
@@ -287,6 +287,81 @@ All analysis is clean-room: DiscForge identifies, verifies, and preserves — it
 - `split <file> <size>     Split into .001/.002/… + .sfv manifest sizes: bytes, 700m, 4g, or fat32 (= 4 GiB - 1)`
 - `join <part|base> [out]  Rejoin parts, verifying CRCs + SHA-256 via the manifest`
 - `license <keygen|issue|verify|machine-id> …  Manage DiscForge licence keys (see --help) One-game-one-ROM: pick the best region per game from a DAT`
+
+## Hardware capture, burn & drive intelligence
+
+- `read-cdi <drive> <out.cdi> [--raw] [--continue-on-error] [--retries N] [--jitter] [--adaptive-reread]  Rip a CD (audio/mixed/data) track-by-track to a CDI image`
+- `read-raw <drive> <out.bin>  Read the program area back as full raw 2448-byte sectors (2352 main + 96 raw P-W sub) for raw-verify-readback [--start LBA] [--length N]`
+- `read-benchmark <drive>  Read-rate benchmark across the disc surface`
+- `reread-probe [drive]    Tier-B adaptive re-read: escalate one real sector to recovered/give-up`
+- `disc-mri-reread <drive> <plan.json> <target.bin>  Drive disc-mri's --plan-reread ranges through the real Tier-B controller, patching recovered sectors into target.bin`
+- `disc-scan <drive>       C2 media-quality scan of the disc in the drive`
+- `subchannel-dump <drive> <out.sub> [--track N] [--corrected f] [--compare]  Capture the raw (and optionally drive-corrected) P-W sub-channel standalone`
+- `writeinfo <drive>       Read-only: disc status + the drive's next-writable-address (for raw-DAO write setup)`
+- `detect-offset <image.cue> --db <dBAR.bin> [--range N]   Find the drive's combined read offset by AccurateRip sweep`
+- `offset-shift-scan <image.cue> --db <dBAR.bin> [--range N] [--json]   Sweep every track independently; catches a mastering offset that changes partway through the disc`
+- `blank <drive> [--full]  Erase a rewritable disc (CD-RW/DVD-RW) so it can be rewritten (minimal/fast by default; --full erases the entire disc, slower)`
+- `burn-plan [--write-type ...] [--burn-proof] [--link-size N] [--test-write] [--speed N] [--reserve-track N] [--json]  Preview a burn's exact SCSI/MMC command sequence, offline, no drive needed — no equivalent in ImgBurn`
+- `burn-raw <cue> <drive>  RAW DAO-96 burn (SPTI engine; see also burn)`
+- `booktype-set <drive> <recipe.json> [--force]  Replay a learned book-type recipe on the drive (the drive's own captured command, verbatim; guarded by vendor/model)`
+- `drive-profile [drive]   Probe and save a drive's capability/overread/cache-defeat profile`
+- `drive-db [text]         Bundled drive knowledge base: community-reference offsets, overread reach, C2 reputation (sourced)`
+- `drive-dossier <drive:|vendor model>  Local per-drive memory: observed quirks accumulate into warnings (auto-fed by extract-sectors)`
+
+## Forensics, scoring & recovery views
+
+- `disc-actuary <id> [--record ...] | --collection  Longitudinal scan history per disc; rank the shelf by remaining readable life (Windows SPTI). Pair with `burn` to clone a personal, unencrypted disc. Refuses copy-protected discs (CSS/CPRM/AACS); for audio/mixed CDs rip in the GUI`
+- `dump-ledger <keygen|init|submit|verify|consensus|show> ...  Public, hash-chained log of independently signed dump claims — see whether strangers' dumps agree, without trusting anyone`
+- `media-mortality <observe|merge|estimate|show> <model.json> ...  Federated (privacy-floored) model of how fast a cohort of discs decays, pooled across collections with no raw data shared`
+- `disc-mri <in.bin|.cue> [out.svg|.png]  Polar damage map on the PHYSICAL disc — scratches, rings, rot, voids`
+- `pressing-dna <a.cue> [b.cue]  Which PRESSING: geometry, pregaps, audio edges, MCN/ISRC — ring codes, answered offline`
+- `coverage-proof <image.iso>  Prove every sector is accounted for exactly once — reports silent gaps and overlapping claims`
+- `min-descriptor <image>    Minimal disc descriptor: factor into fill/duplicate/unique and report the irreducible content [--sector N]`
+- `entropy <file>          Shannon entropy (spot compression/encryption/blanked regions)`
+- `fuzzy-hash <file> [b]   SpamSum fuzzy hash; two files → similarity score`
+- `prototype-scan <iso> [--baseline f.json] [--emit-baseline out.json]   Debug-residue scan: leftover symbols, debug strings/embedded PDB, retail-baseline diff`
+- `secure-rip-plan <evidence.json>  Grade rip evidence (AccurateRip/C2/passes) and plan re-reads`
+- `recover <image> [report.html]   One-stop damage assessment: verdict, evidence, next steps`
+- `emu-ready <cue>           Emulation-readiness report: does this dump have what an emulator needs to run?`
+- `license-check <image> [--json]  Read the on-disc "Licensed by..." text (sector 4) and cross-check its region against SYSTEM.CNF`
+- `fs-recover <image.iso> --erased <list>  Use the filesystem to reconstruct free space and identify what erased sectors held [--out]`
+
+## Aaru / CICM interop
+
+- `aaru-create <in.img> <out.aaruf>     Write an uncompressed AaruFormat image`
+- `aaru-extract <img.aaruf> <out.img>   Extract user data (uncompressed or LZMA; CRC-64-proven)`
+- `aaru-info <img.aaruf>   Identify an AaruFormat image: header, blocks, sectors, compression`
+- `cicm-export <image> [out.xml]        Write a CICM preservation-metadata sidecar (Aaru interop)`
+- `rvz-decode <in.rvz> <out.iso>  Reconstruct a GameCube ISO from an RVZ/WIA (zstd/none groups; data-exact, junk zero-filled)`
+
+## GameCube extras
+
+- `gc-junk-fill <in> <out>  Rebuild scrubbed GameCube junk padding — ONLY if the generator self-validates against the image's own surviving junk (else declines)`
+- `gc-ringcode <red> <blue> <green> [--game-code X] [--disc N] [--rev N]  Decode a GameCube disc's red/blue/green inner-ring codes; cross-check against known values`
+- `gci-banner <file.gci|card[:index]> <out-dir>  Decode a save's own banner/icon to PNG`
+- `god-extract <header> <out.iso>  Reconstruct the XDVDFS ISO from a GOD package (self-validated; declines if unsure)`
+
+## Multi-disc sets & spanning
+
+- `multidisc-detect <folder> [--recursive] [--json]  Group a folder's disc images into multi-disc titles by the "(Disc N)" naming convention`
+- `multidisc-manifest <folder> [--recursive] [--json]  Hash every disc of each detected multi-disc title and roll the results into one set manifest`
+- `disc-span <folder|--manifest f> [--media bd25] [--keep-groups]  Plan the fewest discs to hold a set of files (smart spanning)`
+- `dat-tags "<name>"       Parse a catalogued name's region/revision/disc/variant tags`
+- `source-stage <manifest> <dir>  Assemble files from local + HTTP(S) origins into a staging folder for burning`
+
+## Certification & session provenance
+
+- `dump-cert <image> [--gen-key] | verify | prove | check   Signed dump certificate with a Merkle root — prove any 2 KB slice against the dump event`
+- `dump-session <image> [--json]  Show the drive/firmware/settings sidecar record `read-disc` writes alongside a dump — the exact drive and settings that produced this file, so that context survives it changing hands`
+
+## Everything else new
+
+- `dvd-layerbreak-plan <VTS_nn_0.IFO> …  Recommend a DVD9 layer break at a VOBU boundary`
+- `partitions <image>      Show a disk image's partition tables (MBR, GPT, Apple)`
+- `ps1-psv <extract|wrap> …     PS3/PSP .psv single-save identify/unwrap/wrap`
+- `ps1card-convert <in> <out>   Convert PS1 memory-card image formats (raw/gme/vgs/vmp)`
+- `version               Print the CLI version and dforge.dll's build timestamp — check this after a rebuild before trusting a fix is live.`
+- `ui [--port N] [--no-browser]  Launch the modern local web UI over the engine (http://127.0.0.1:8787)`
 
 ## More commands
 

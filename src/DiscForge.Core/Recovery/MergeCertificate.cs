@@ -9,6 +9,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using DiscForge.Core.Audio;
 using DiscForge.Core.Preservation;
 
 namespace DiscForge.Core.Recovery;
@@ -28,6 +29,10 @@ public enum MergeMethod
     SingleSource,
     /// <summary>No copy could supply a valid sector — a genuine hole in the reconstruction.</summary>
     Unrecovered,
+    /// <summary>An audio sector with no EDC of its own: one candidate's whole track matched a known-good
+    /// AccurateRip checksum, so that candidate was used for the whole track instead of an unconfirmable
+    /// byte vote. See <see cref="AccurateRipTieBreaker"/>.</summary>
+    AccurateRipConfirmed,
 }
 
 /// <summary>A coalesced run of sectors decided the same way, by the same source.</summary>
@@ -63,6 +68,11 @@ public sealed record MergeCertificate
     public required int Unrecovered { get; init; }
     /// <summary>Sectors excluded from a source because its bad-sector map marked them unreadable (holes not voted on).</summary>
     public required int HoleExcluded { get; init; }
+    /// <summary>Sectors decided by the AccurateRip tie-breaker rather than a byte vote (see
+    /// <see cref="MergeMethod.AccurateRipConfirmed"/>). Optional and defaults to 0 so certificates written
+    /// before this field existed still deserialize, and — deliberately — is not part of
+    /// <see cref="SigningContent"/>, so an old certificate's signature still verifies unchanged.</summary>
+    public int AccurateRipConfirmed { get; init; }
 
     public required IReadOnlyList<ProvenanceRun> Runs { get; init; }
     public required IReadOnlyList<long> UnrecoveredSectors { get; init; }
@@ -78,6 +88,7 @@ public sealed record MergeCertificate
         return $"{SectorCount:N0} sector(s) from {SourceCount} cop{(SourceCount == 1 ? "y" : "ies")} " +
                $"({sig}): {AllAgree:N0} agreed, {EdcRecovered:N0} EDC, {VoteVerified:N0} voted, " +
                $"{VoteBestEffort:N0} best-effort, {SingleSource:N0} single-source, {Unrecovered:N0} unrecovered" +
+               $"{(AccurateRipConfirmed > 0 ? $", {AccurateRipConfirmed:N0} AccurateRip-confirmed" : "")}" +
                $"{(HoleExcluded > 0 ? $"; {HoleExcluded:N0} hole(s) excluded from voting" : "")}.";
     }
 
@@ -91,10 +102,17 @@ public sealed record MergeCertificate
             $"{AllAgree},{EdcRecovered},{VoteVerified},{VoteBestEffort},{SingleSource},{Unrecovered},{HoleExcluded}",
         });
 
+    /// <summary>The exact UTF-8 bytes <see cref="VerifySignature"/> feeds to ECDSA — exposed publicly so a
+    /// caller whose runtime lacks a usable <see cref="ECDsa"/> (browser-wasm has none in .NET 8; see
+    /// DiscForge.Wasm) can verify the same signature through a different backend, e.g. the browser's own Web
+    /// Crypto <c>SubtleCrypto</c>, and get an identical answer. <see cref="VerifySignature"/> is defined in
+    /// terms of this method, not the reverse, so the two can never silently diverge.</summary>
+    public byte[] GetSigningBytes() => Encoding.UTF8.GetBytes(SigningContent());
+
     public MergeCertificate Sign(ECDsa privateKey)
     {
         ArgumentNullException.ThrowIfNull(privateKey);
-        byte[] sig = privateKey.SignData(Encoding.UTF8.GetBytes(SigningContent()), HashAlgorithmName.SHA256);
+        byte[] sig = privateKey.SignData(GetSigningBytes(), HashAlgorithmName.SHA256);
         return this with
         {
             Signature = System.Convert.ToBase64String(sig),
@@ -102,7 +120,11 @@ public sealed record MergeCertificate
         };
     }
 
-    /// <summary>Verify the embedded signature against the embedded public key.</summary>
+    /// <summary>Verify the embedded signature against the embedded public key. Deliberately does NOT catch
+    /// <see cref="PlatformNotSupportedException"/> (thrown by <see cref="ECDsa.Create()"/> on browser-wasm,
+    /// which has no ECDSA implementation in .NET 8) — a caller on such a runtime must see that exception and
+    /// fall back to an alternate backend (e.g. the browser's own Web Crypto <c>SubtleCrypto</c>, driven by
+    /// <see cref="GetSigningBytes"/>; see DiscForge.Wasm), not silently be told the signature is invalid.</summary>
     public bool VerifySignature()
     {
         if (string.IsNullOrEmpty(Signature) || string.IsNullOrEmpty(PublicKey)) return false;
@@ -110,10 +132,10 @@ public sealed record MergeCertificate
         {
             using var key = ECDsa.Create();
             key.ImportSubjectPublicKeyInfo(System.Convert.FromBase64String(PublicKey), out _);
-            return key.VerifyData(Encoding.UTF8.GetBytes(SigningContent()),
+            return key.VerifyData(GetSigningBytes(),
                                   System.Convert.FromBase64String(Signature), HashAlgorithmName.SHA256);
         }
-        catch { return false; }
+        catch (Exception ex) when (ex is FormatException or CryptographicException) { return false; }
     }
 
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -139,8 +161,19 @@ public sealed record ProvenanceMergeResult(byte[] Image, MergeCertificate Certif
 /// </summary>
 public static class ProvenanceMerge
 {
+    /// <summary>One audio track's span within the merge, for the AccurateRip tie-breaker: before the
+    /// normal per-sector vote runs, each hint's whole track is checked across every candidate copy (see
+    /// <see cref="AccurateRipTieBreaker"/>), and if exactly one clearly matches the database it is used
+    /// for that entire span, tagged <see cref="MergeMethod.AccurateRipConfirmed"/> — sectors within a
+    /// hint's span are never handed to the byte vote. A track with no match falls through to the
+    /// existing per-sector logic, unchanged.</summary>
+    public sealed record AudioTrackHint(
+        int TrackIndex, int StartSector, int EndSectorInclusive,
+        bool IsFirstTrack, bool IsLastTrack, IReadOnlyList<AccurateRip.DbEntry> Database);
+
     public static ProvenanceMergeResult Merge(IReadOnlyList<byte[]> images, IReadOnlyList<BadSectorMap?>? holeMaps = null,
-                                              int sectorSize = DumpMerge.RawSectorSize)
+                                              int sectorSize = DumpMerge.RawSectorSize,
+                                              IReadOnlyList<AudioTrackHint>? audioHints = null)
     {
         ArgumentNullException.ThrowIfNull(images);
         if (images.Count == 0) throw new ArgumentException("Provide at least one image to merge.", nameof(images));
@@ -161,12 +194,40 @@ public static class ProvenanceMerge
 
         var outp = new byte[len];
         var perSector = new (MergeMethod method, int? source)[sectors];
-        int allAgree = 0, edc = 0, voteV = 0, voteB = 0, single = 0, unrec = 0, holeExcluded = 0;
+        var decided = new bool[sectors];
+        int allAgree = 0, edc = 0, voteV = 0, voteB = 0, single = 0, unrec = 0, holeExcluded = 0, arConfirmed = 0;
         var unrecList = new List<long>();
+
+        if (audioHints is not null)
+        {
+            foreach (var hint in audioHints)
+            {
+                if (hint.StartSector < 0 || hint.EndSectorInclusive >= sectors || hint.EndSectorInclusive < hint.StartSector)
+                    throw new ArgumentException(
+                        $"Audio hint for track {hint.TrackIndex} spans sectors [{hint.StartSector},{hint.EndSectorInclusive}], " +
+                        $"outside this merge's {sectors:N0} sectors.", nameof(audioHints));
+
+                var resolution = AccurateRipTieBreaker.Resolve(
+                    images, hint.StartSector, hint.EndSectorInclusive, sectorSize,
+                    hint.IsFirstTrack, hint.IsLastTrack, hint.Database, hint.TrackIndex);
+                if (resolution.SourceIndex is not int k) continue;   // no match — the byte vote decides this track instead
+
+                int hAt = hint.StartSector * sectorSize;
+                int hLen = (hint.EndSectorInclusive - hint.StartSector + 1) * sectorSize;
+                images[k].AsSpan(hAt, hLen).CopyTo(outp.AsSpan(hAt, hLen));
+                for (int s = hint.StartSector; s <= hint.EndSectorInclusive; s++)
+                {
+                    perSector[s] = (MergeMethod.AccurateRipConfirmed, k);
+                    decided[s] = true;
+                }
+                arConfirmed += hint.EndSectorInclusive - hint.StartSector + 1;
+            }
+        }
 
         var candIdx = new List<int>(images.Count);
         for (int s = 0; s < sectors; s++)
         {
+            if (decided[s]) continue;   // already settled by the AccurateRip tie-breaker above
             int at = s * sectorSize;
             candIdx.Clear();
             for (int k = 0; k < images.Count; k++)
@@ -211,6 +272,7 @@ public static class ProvenanceMerge
             SourceSha256 = sourceHashes, OutputSha256 = Sha256(outp),
             AllAgree = allAgree, EdcRecovered = edc, VoteVerified = voteV, VoteBestEffort = voteB,
             SingleSource = single, Unrecovered = unrec, HoleExcluded = holeExcluded,
+            AccurateRipConfirmed = arConfirmed,
             Runs = runs, UnrecoveredSectors = unrecList,
         };
         return new ProvenanceMergeResult(outp, cert);

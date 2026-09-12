@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>1.107.0</Version>
+    <Copyright>Copyright (c) 2026 MaTRIX TeAm. All rights reserved.</Copyright>
+    <Company>DiscForge</Company>
+    <Product>DiscForge</Product>
+    <!-- The verification engine (dump-ledger chain/signature checks, merge-cert signature checks, and
+         DiscMri's evidence classification) compiled to WebAssembly and run entirely client-side in a
+         browser: nothing here uploads a certificate, image, or ledger anywhere. See
+         docs/DIFFERENTIATORS.md's "WASM verification-engine distribution" note for why this exists. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="8.0.30" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="8.0.30" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DiscForge.Core\DiscForge.Core.csproj" />
+  </ItemGroup>
+
+</Project>

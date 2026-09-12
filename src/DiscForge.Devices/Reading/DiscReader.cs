@@ -11,6 +11,7 @@ using DiscForge.Core.Cdi;
 using DiscForge.Core.Devices;
 using DiscForge.Core.Mmc;
 using DiscForge.Core.Reading;
+using DiscForge.Core.Recovery;
 using DiscForge.Devices.Spti;
 
 namespace DiscForge.Devices.Reading;
@@ -58,6 +59,22 @@ public sealed record ReadOptions
     /// Independent of ContinueOnError, which governs damage anywhere on the disc.
     /// </summary>
     public bool TolerateBoundarySectors { get; init; } = true;
+
+    /// <summary>
+    /// Opt-in, raw sectors only (audio or raw data — READ CD's 2352-byte shape, not a cooked
+    /// 2048-byte READ(10)): when a sector's straight retries are exhausted, drive one more
+    /// escalation ladder before falling through to the existing boundary/type-rejection handling —
+    /// Tier B adaptive re-read (<see cref="DiscForge.Core.Recovery.AdaptiveReread"/> wired to real
+    /// hardware via <see cref="DiscForge.Devices.Reading.DriveRereadSource"/>): plain re-reads, then
+    /// C2-assisted reads, then a deliberately slow (4x) C2-assisted read — accepting the moment a
+    /// data sector's own EDC validates, or, for audio (which has no EDC), the moment every byte has
+    /// cross-read consensus. This is the same Tier-B logic already proven against real hardware by
+    /// the standalone <c>reread-probe</c> diagnostic; here it runs automatically, in place, for a
+    /// sector that would otherwise just be logged as bad. Off by default: it can cost several extra
+    /// reads on a genuinely bad sector, so it's reserved for a disc that's already proven marginal
+    /// enough to be worth the time.
+    /// </summary>
+    public bool AdaptiveReread { get; init; }
 }
 
 /// <summary>What actually happened during a read.</summary>
@@ -271,6 +288,43 @@ public static class DiscReader
                        "its TOC flags claim, or the drive may not support this sector type. " +
                        "Try the other raw/cooked setting for this disc.";
 
+            // A cooked (2048-byte, DVD-mode) track that READ(10) flatly refuses is worth one
+            // more try before giving up: READ CD asking for Mode 1 user data goes through a
+            // different part of the drive's firmware than READ(10) does, and on some drives it
+            // succeeds where READ(10) doesn't — notably on discs that report a normal-looking
+            // DVD-ROM TOC (so detection and this probe get this far) but use a non-standard
+            // sector encoding underneath, such as a GameCube disc read on an unmodified PC DVD
+            // drive. This mirrors the existing "Rung 3" fallback used later during a full read
+            // (see TryHarder) — reusing an already-proven command rather than adding a new one.
+            // Doing it here too means a disc this drive can actually serve via READ CD isn't
+            // rejected before the rip even starts.
+            if (cooked)
+            {
+                var altResult = dev.SendCommand(
+                    MmcCommands.ReadCd(probedAt, 1, MmcCommands.ExpectedSectorType.Mode1,
+                                       MmcCommands.SectorFields.UserData),
+                    one, SptiDataDirection.In, timeoutSeconds: 60);
+                if (altResult.Success) continue;
+
+                // Last resort: some discs (a GameCube disc read on an unmodified PC DVD drive is
+                // the known real-world case) use sector data that fails a drive's normal EDC/ECC
+                // check outright, no matter which read command asks for it — the data itself
+                // looks "wrong" to the drive's error correction, even though it's exactly what
+                // the disc's spiral carries. Community GameCube-dumping tools get past this with
+                // a "streaming" read that tells the drive to hand back the bytes without
+                // insisting they check out. DiscForge has no vendor-specific equivalent of that,
+                // but the same effect is available through a standard SCSI/MMC mode page (0x01,
+                // Read-Write Error Recovery): RC (Read Continuous) asks the drive to prioritise
+                // handing back a continuous stream of data over fully recovering it, and DCR
+                // (Disable Correction) turns off its ECC correction pass; Read Retry Count = 0
+                // stops it re-trying before giving up. Tried only here, after every normal
+                // command shape has already failed — and always restored immediately afterwards,
+                // success or failure, so this drive's error-recovery behavior for every OTHER
+                // read (this track, this disc, or the next one) is left exactly as it was.
+                if (TryStreamingRecoveryRead(dev, probedAt, 1, one, cooked, expected))
+                    continue;
+            }
+
             return $"Track {t.Number}: test read at LBA {probedAt:N0} failed — {r.Describe()}.";
         }
 
@@ -360,7 +414,14 @@ public static class DiscReader
         };
     }
 
-    private static void ReadTrack(SptiDevice dev, ReadTrackPlan track, Stream output,
+    /// <summary>
+    /// Read one track's sectors to <paramref name="output"/>, exactly as <see cref="ReadToCdi"/> does
+    /// internally for every track in a plan. Exposed (visibility only — the body is unchanged from
+    /// what <see cref="ReadToCdi"/> has always called) so a caller can capture one track at a time
+    /// into its own file and assemble the final CDI later — the basis for track-granularity resume,
+    /// where a track that already read cleanly on a previous attempt is reused instead of re-read.
+    /// </summary>
+    public static void ReadTrack(SptiDevice dev, ReadTrackPlan track, Stream output,
                                   IProgress<ReadProgress>? progress, CancellationToken cancel,
                                   ReadOptions options, List<uint> badSectors,
                                   List<uint> boundarySectors, List<string> notes)
@@ -665,9 +726,26 @@ public static class DiscReader
                 if (IsTypeRejection(last)) break;           // shape rejected: the ladder handles it
             }
 
-            // Straight re-reads exhausted. At a boundary, and on a type rejection
-            // anywhere, there are still request shapes worth trying.
-            if (!got && (atBoundary || IsTypeRejection(last)))
+            // Straight re-reads exhausted. Before falling back to type/shape juggling (which
+            // addresses a mis-classified track or boundary geometry, not a marginal read), try
+            // harder at the SAME request shape via Tier-B adaptive re-read — the real gap this
+            // fills is a plain marginal sector, away from any boundary, that isn't a type
+            // rejection at all: today that sector has no escalation whatsoever between "retry
+            // N times" and "give up".
+            if (!got && options.AdaptiveReread && !cooked)
+                got = TryAdaptiveReread(dev, track, lba, sectorBytes, one, notes);
+
+            // Still unread. At a boundary, on a type rejection anywhere, and on ANY plain
+            // failure of a cooked (DVD-mode) track, there are still request shapes worth
+            // trying: for cooked tracks specifically, TryHarder's Rung 3 (READ CD asking for
+            // Mode 1 user data, a different firmware path than READ(10)) is the only escalation
+            // that exists at all, and until now it only ever ran at a boundary or on a type
+            // rejection — never on a plain "the drive just refused this sector" failure, which
+            // is exactly what a GameCube disc's non-standard sector encoding produces on an
+            // otherwise normal, unmodified DVD-ROM drive (see docs/NEXT.md). Trying it here too
+            // costs nothing when it doesn't help (the existing failure is reported exactly as
+            // before) and can only recover sectors an unmodified drive genuinely can read.
+            if (!got && (atBoundary || IsTypeRejection(last) || cooked))
             {
                 got = TryHarder(dev, lba, sectorBytes, cooked, expected, track.IsAudio,
                                 one, ref last);
@@ -713,6 +791,37 @@ public static class DiscReader
     }
 
     /// <summary>
+    /// Tier B: drive one sector's read through the (already hardware-proven) adaptive re-read
+    /// controller instead of the flat identical-attempt retry above — plain re-reads, then
+    /// C2-assisted, then a slow C2-assisted read, stopping the moment the sector proves itself
+    /// (data EDC, or full audio consensus). Only meaningful for raw 2352-byte sectors — the shape
+    /// <see cref="DriveRereadSource"/> speaks — which the call site already restricts to via its
+    /// own <c>!cooked</c> gate; the check here is a second, defensive guard against ever being
+    /// called with anything else.
+    /// </summary>
+    private static bool TryAdaptiveReread(
+        SptiDevice dev, ReadTrackPlan track, uint lba, int sectorBytes, byte[] one, List<string> notes)
+    {
+        if (sectorBytes != 2352) return false;
+
+        var source = new DriveRereadSource(dev, lba, track.IsAudio);
+        var run = AdaptiveReread.Run(source, new AdaptiveRereadConfig());
+        string strategies = $"{run.StrategiesUsed} strateg{(run.StrategiesUsed == 1 ? "y" : "ies")}";
+
+        if (run.Recovered && source.LastMain is { } main)
+        {
+            main.CopyTo(one, 0);
+            notes.Add($"track {track.Number}: LBA {lba:N0} recovered by Tier-B adaptive re-read " +
+                      $"({run.TotalReads} read(s) across {strategies}).");
+            return true;
+        }
+
+        notes.Add($"track {track.Number}: LBA {lba:N0} — Tier-B adaptive re-read exhausted " +
+                  $"{run.TotalReads} read(s) across {strategies}; still unreadable.");
+        return false;
+    }
+
+    /// <summary>
     /// Last resort for a single sector: work through request shapes the main path
     /// doesn't use. Each rung addresses a different drive quirk, cheapest first.
     /// </summary>
@@ -754,8 +863,93 @@ public static class DiscReader
                                    MmcCommands.SectorFields.UserData),
                 one, SptiDataDirection.In, timeoutSeconds: 60);
             if (last.Success) return true;
+
+            // Rung 4, cooked only, genuinely last resort: see the matching comment in Probe()
+            // for the full reasoning. Every sector this rung applies to has already failed
+            // READ(10), the alternate types above, the batched request, and Rung 3 — this is
+            // only reached when nothing normal has worked. Restores the drive's error-recovery
+            // settings immediately after, regardless of outcome.
+            if (TryStreamingRecoveryRead(dev, lba, 1, one, cooked, expected))
+                return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Genuinely last resort for a cooked-track sector every normal request shape has already
+    /// refused: temporarily tell the drive (SCSI mode page 0x01, Read-Write Error Recovery) to
+    /// hand back data without insisting it passes ECC/EDC checks — Read Continuous (RC) and
+    /// Disable Correction (DCR) set, Read Retry Count forced to 0 — then issue the same READ CD
+    /// Mode 1 request Rung 3 already uses. This is the standard, spec-defined equivalent of the
+    /// "streaming read" technique GameCube/Wii-dumping tools use to get past sector data that
+    /// fails a drive's normal error correction even though it's exactly what the disc's spiral
+    /// carries — see docs/NEXT.md for the real hardware report this was written for.
+    ///
+    /// Read-modify-write, not a hand-built page: fetches the drive's own current page first
+    /// (same pattern already proven working in SptiRawDaoBurnEngine's write-parameters handling)
+    /// and only touches the specific bits this needs, leaving every other field exactly as the
+    /// drive reported it — a real, reported constraint on some drives/translation layers is that
+    /// an unexpected value in a field this code has no reason to touch gets the whole MODE
+    /// SELECT rejected.
+    ///
+    /// ALWAYS restores the original page byte-for-byte before returning, success or failure,
+    /// via try/finally — this changes the drive's global error-recovery behavior, not just this
+    /// one command, so leaving it changed would silently affect every other read this drive does
+    /// for the rest of the session. If the drive doesn't support reading or writing this mode
+    /// page at all, this quietly does nothing (returns false) rather than risk sending it a mode
+    /// page built from nothing.
+    /// </summary>
+    private static bool TryStreamingRecoveryRead(SptiDevice dev, uint lba, uint count,
+        Span<byte> into, bool cooked, MmcCommands.ExpectedSectorType expected)
+    {
+        if (!cooked) return false;
+
+        const byte pageCode = 0x01;
+        var senseBuf = new byte[64];
+        var sense = dev.SendCommand(MmcCommands.ModeSense10(pageCode, (ushort)senseBuf.Length),
+                                    senseBuf, SptiDataDirection.In, timeoutSeconds: 20);
+        if (!sense.Success) return false;
+
+        // MODE SENSE(10) reply: 8-byte header (bytes 6..7 = block descriptor length), that many
+        // descriptor bytes, then the page itself (byte 0 = PS|page code, byte 1 = page length N,
+        // N further bytes). The Read-Write Error Recovery page is 12 bytes total (2 + 10).
+        int blockDescLen = (senseBuf[6] << 8) | senseBuf[7];
+        int pageStart = 8 + blockDescLen;
+        if (pageStart + 2 > senseBuf.Length) return false;
+        int pageLen = senseBuf[pageStart + 1];
+        int total = 2 + pageLen;
+        if (pageLen < 4 || pageStart + total > senseBuf.Length) return false;
+
+        var original = new byte[total];
+        Array.Copy(senseBuf, pageStart, original, 0, total);
+
+        var modified = (byte[])original.Clone();
+        modified[0] &= 0x7F;                          // clear PS for MODE SELECT
+        // Byte 2: AWRE(7) ARRE(6) TB(5) RC(4) EER(3) PER(2) DTE(1) DCR(0).
+        // Set RC (prioritise continuous data over full recovery) and DCR (skip ECC
+        // correction); clear PER so a bad-but-delivered sector isn't itself an error.
+        modified[2] = (byte)((modified[2] | 0x10 | 0x01) & ~0x04);
+        modified[3] = 0;                              // Read Retry Count = 0
+
+        var setParams = MmcCommands.ModeParameterList(modified);
+        var setResult = dev.SendCommand(MmcCommands.ModeSelect10((ushort)setParams.Length),
+                                        setParams, SptiDataDirection.Out, timeoutSeconds: 20);
+        if (!setResult.Success) return false;
+
+        try
+        {
+            var result = dev.SendCommand(
+                MmcCommands.ReadCd(lba, count, MmcCommands.ExpectedSectorType.Mode1,
+                                   MmcCommands.SectorFields.UserData),
+                into, SptiDataDirection.In, timeoutSeconds: 60);
+            return result.Success;
+        }
+        finally
+        {
+            var restoreParams = MmcCommands.ModeParameterList(original);
+            dev.SendCommand(MmcCommands.ModeSelect10((ushort)restoreParams.Length),
+                            restoreParams, SptiDataDirection.Out, timeoutSeconds: 20);
+        }
     }
 }

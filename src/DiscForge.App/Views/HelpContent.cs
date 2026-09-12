@@ -156,7 +156,11 @@ internal static class HelpContent
             "knowledge, so sync-less sectors aren't ambiguous); a dump's .badsectors.json sidecar is " +
             "auto-detected next to the image, or pick one explicitly. Worst evidence wins per pixel — " +
             "damage never hides. Save As writes either a .svg (map + legend) or a bare .png, matching " +
-            "dforge disc-mri's own two output modes."),
+            "dforge disc-mri's own two output modes. Plan Re-read turns the same evidence into a " +
+            "targeted, escalating re-read plan (coalesced ranges + suggested pass count) — offline, the " +
+            "same as dforge disc-mri --plan-reread; Save Plan writes the JSON that dforge disc-mri-reread " +
+            "then drives through a real drive's Tier-B adaptive re-read controller (a separate, hardware-" +
+            "facing CLI step, not run from this tile)."),
 
         new("secureripplan", "🗺", "Secure-Rip Plan", "Grade rip evidence and plan re-reads",
             "Grades a rip's per-sector evidence (clean / C2-flagged / pass-mismatch / unreadable, across " +
@@ -164,6 +168,29 @@ internal static class HelpContent
             "VERIFIED only when an independent AccurateRip match corroborates it, CONSISTENT being the " +
             "honest ceiling from self-agreement alone — and plans exactly which sector ranges still need a " +
             "targeted re-read. The EAC-style secure-rip depth, done offline against a saved evidence file."),
+
+        new("dumpledger", "🧾", "Dump Ledger", "A public log of independently signed dump claims",
+            "A public, hash-chained log of independently signed claims — \"this disc dumps to these exact " +
+            "bytes\" — so strangers can see for themselves how many independent submitters agree, without " +
+            "trusting DiscForge or any single submitter. Open or start a ledger, Verify checks the whole " +
+            "chain is intact and every entry's signature genuinely matches the key it names, and Consensus " +
+            "groups every submission for one disc fingerprint by DISTINCT submitter key (never raw " +
+            "submission count), so a lone re-submitter can never look like agreement. Generate a key once " +
+            "(keep the private key file secret — it's what proves a submission is really yours), then " +
+            "Submit appends a new, independently signed claim. Pure local-file analysis and offline ECDSA " +
+            "signing — no live drive, and no central server: the ledger file itself is the whole trust " +
+            "mechanism."),
+
+        new("mediamortality", "📉", "Media Decay", "Federated model of how fast a cohort of discs decays",
+            "A community mortality model for optical media that pools statistics across independent " +
+            "collections WITHOUT centralizing anyone's raw disc data. Observe folds in one disc's own " +
+            "Disc Actuary rot-kinetics fit (growth %/yr and sample count) as two numbers, nothing " +
+            "identifying — no disc id, title, or scan history ever appears in the model file. Merge With " +
+            "combines any two contributors' models EXACTLY (the same mathematics as computing one model " +
+            "centrally would give, order-independent, no coordinator needed), and Estimate reports a " +
+            "cohort's mean decay rate only once 3+ independent discs back it — a privacy floor against " +
+            "re-identifying a single contributor's disc, not an accuracy safeguard. Show All lists every " +
+            "cohort currently in the model, flagging which ones are still below that floor."),
 
         new("vobdemux", "✂", "VOB Demux", "Split a VOB/MPG into streams",
             "Splits an unencrypted MPEG program stream (a VOB or MPG) into its elementary video, audio and " +

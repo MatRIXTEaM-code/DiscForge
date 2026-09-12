@@ -161,6 +161,117 @@ public static class DriveKnowledgeBase
             PreferredRead = PreferredReadCommand.ReadCdBE,
             Sources = ["AccurateRip drive offset database (+6)"],
         },
+
+        // --- 2026-08-29 growth batch ------------------------------------------------
+        // Sourced from the AccurateRip community offset table (mirrored, with per-model submission
+        // counts, in DiscImageCreator's driveOffset.txt). Only the offset is community-established
+        // for these; none of them are documented classic-Plextor-style lead-in/lead-out dumpers, so
+        // that half is left honestly undetermined rather than assumed from the Plextor entries above.
+        new()
+        {
+            Vendor = "HL-DT-ST",
+            ModelContains = "WH16NS40",
+            DisplayName = "LG WH16NS40 (BD-RE, internal SATA)",
+            ReadOffsetSamples = +6,
+            LeadInOverread = ProbeState.No,
+            LeadOutOverread = ProbeState.NotDetermined,
+            C2Reputation = ProbeState.Advertised,
+            PreferredRead = PreferredReadCommand.ReadCdBE,
+            Notes = ["One of the most common current internal BD burners — a solid program-area " +
+                     "reader/writer, no classic-Plextor overread tricks."],
+            Sources = ["AccurateRip drive offset database (+6, 1199 submissions agreeing 100%)"],
+        },
+        new()
+        {
+            Vendor = "HL-DT-ST",
+            ModelContains = "GH24NSC0",
+            DisplayName = "LG GH24NSC0 (DVD-RW, internal SATA)",
+            ReadOffsetSamples = +6,
+            LeadInOverread = ProbeState.No,
+            LeadOutOverread = ProbeState.NotDetermined,
+            C2Reputation = ProbeState.Advertised,
+            PreferredRead = PreferredReadCommand.ReadCdBE,
+            Notes = ["The commodity internal DVD burner of the 2010s-2020s — still widely sold new."],
+            Sources = ["AccurateRip drive offset database (+6, 859 submissions agreeing 100%)"],
+        },
+        new()
+        {
+            Vendor = "PIONEER",
+            ModelContains = "BDR-209",
+            DisplayName = "Pioneer BDR-209 family (BD-RW)",
+            ReadOffsetSamples = +667,
+            LeadInOverread = ProbeState.NotDetermined,
+            LeadOutOverread = ProbeState.NotDetermined,
+            C2Reputation = ProbeState.Advertised,
+            PreferredRead = PreferredReadCommand.ReadCdBE,
+            Notes = ["Pioneer's offset is one of the largest in common circulation (+667) — worth " +
+                     "flagging so an un-corrected rip on this family isn't mistaken for disc damage."],
+            Sources = ["AccurateRip drive offset database (+667, 2000+ submissions across " +
+                       "BDR-209/209D/209M/209MIO agreeing 100%)"],
+        },
+        new()
+        {
+            Vendor = "ASUS",
+            ModelContains = "DRW-24B1ST",
+            DisplayName = "ASUS DRW-24B1ST (DVD-RW)",
+            ReadOffsetSamples = +6,
+            LeadInOverread = ProbeState.No,
+            LeadOutOverread = ProbeState.NotDetermined,
+            C2Reputation = ProbeState.Advertised,
+            PreferredRead = PreferredReadCommand.ReadCdBE,
+            Notes = ["Ubiquitous budget internal burner — near-identical offset behaviour to the " +
+                     "existing BW-16D1HT and iHAS124 entries above."],
+            Sources = ["AccurateRip drive offset database (+6, ~2600 submissions across suffix " +
+                       "variants a/c/g/i/j agreeing 100%)"],
+        },
+        new()
+        {
+            Vendor = "TSSTCORP",
+            ModelContains = "SH-224",
+            DisplayName = "Samsung/TSST SH-224 family (DVD-RW)",
+            ReadOffsetSamples = +6,
+            LeadInOverread = ProbeState.No,
+            LeadOutOverread = ProbeState.NotDetermined,
+            C2Reputation = ProbeState.Advertised,
+            PreferredRead = PreferredReadCommand.ReadCdBE,
+            Notes = ["TSSTcorp is the INQUIRY vendor string these Samsung-branded drives actually " +
+                     "report."],
+            Sources = ["AccurateRip drive offset database (+6, 3000+ submissions across " +
+                       "SH-224BB/DB/FB/GB agreeing 100%)"],
+        },
+        new()
+        {
+            Vendor = "PLEXTOR",
+            ModelContains = "PX-716",
+            DisplayName = "Plextor PX-716A/AL (DVD±R DL)",
+            ReadOffsetSamples = +30,
+            LeadInOverread = ProbeState.NotDetermined,
+            LeadOutOverread = ProbeState.NotDetermined,
+            C2Reputation = ProbeState.Advertised,
+            PreferredRead = PreferredReadCommand.ReadCdBE,
+            Notes = ["A Plextor DVD writer, not the classic CD-only Premium/PX-W52xx lineage — shares " +
+                     "the family's +30 offset but its lead-in/lead-out overread reach isn't on record " +
+                     "here, so it isn't assumed from the CD-RW entries above."],
+            Sources = ["AccurateRip drive offset database (+30, 2690+223 submissions across " +
+                       "PX-716A/AL agreeing 100%)"],
+        },
+        new()
+        {
+            // Sony's own INQUIRY vendor for these is "SONY "; the identical Optiarc-branded OEM
+            // unit (same drive, different label) reports "Optiarc" — match on vendor-agnostic model.
+            Vendor = "",
+            ModelContains = "AD-7200",
+            DisplayName = "Sony/Optiarc AD-7200A/S (DVD±RW)",
+            ReadOffsetSamples = +48,
+            LeadInOverread = ProbeState.No,
+            LeadOutOverread = ProbeState.NotDetermined,
+            C2Reputation = ProbeState.Advertised,
+            PreferredRead = PreferredReadCommand.ReadCdBE,
+            Notes = ["Common 2008-era slimline/desktop burner; Sony- and Optiarc-branded units are " +
+                     "the same hardware."],
+            Sources = ["AccurateRip drive offset database (+48, ~370 submissions across " +
+                       "SONY/Optiarc AD-7200A/AD-7200S agreeing 100%)"],
+        },
     };
 
     /// <summary>Look a live drive up by its INQUIRY strings. Null when the drive

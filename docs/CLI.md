@@ -4,12 +4,14 @@
 
 `dforge` is the cross-platform command-line tool (Core builds and runs anywhere .NET 8
 does). It exposes the same Core engine as the GUI. This reference is generated verbatim
-from the tool's own help output, so it never drifts: **293 commands**.
+from the tool's own help output, so it never drifts: **347 commands**.
 
 Run `dforge` with no arguments to print this list, or `dforge <command>` with no further
 arguments to see that command's usage.
 
 ```
+  version               Print the CLI version and dforge.dll's build timestamp —
+                        check this after a rebuild before trusting a fix is live.
   identify <file>       Say what a file is (any format DiscForge knows)
   library scan <dir> [--dat f] [--html out.html]   Identify+hash a whole tree, verify vs a DAT; --html writes a friendly color-coded audit dashboard
   catalog-export <dir> [--dat f] [--json out.json] [--csv out.csv]  Write a portable catalog of an optical archive (identity, hashes, verification status) to keep beside a NAS/cloud backup
@@ -37,9 +39,11 @@ arguments to see that command's usage.
   lineage <keygen|init|append|sign|verify|show> …  Append-only, signed chain-of-custody for a dump
   library-watch <dir> [--update]   Watch a collection for silent corruption (bit rot)
   remaster <pack|rebuild|verify> …  Decompose an ISO to a recipe+store and rebuild it byte-exact
-  ps1mc-convert <in> <out> [raw|gme|vgs]  Convert a PS1 memory card between container
-                          formats (raw .mcr / DexDrive .gme / VGS). Alias: ps1card-convert
-  ps1mc-format <out.mcr> [raw|gme|vgs]  Write a freshly-formatted, empty PS1 memory card. Alias: psxmc-format
+  ps1mc-convert <in> <out> [raw|gme|vgs|vmp]  Convert a PS1 memory card between container
+                          formats (raw .mcr / DexDrive .gme / VGS / PS3-PSP .vmp). Alias: ps1card-convert
+  ps1mc-format <out.mcr> [raw|gme|vgs|vmp]  Write a freshly-formatted, empty PS1 memory card. Alias: psxmc-format
+  ps1-psv <extract|wrap> …  Identify/unwrap a PS3-PSP .psv single-save export, or wrap a
+                          single-block card save into one (unsigned — see usage text)
   ps2mc-ecc <card.ps2> [--repair <out.ps2>] [--json]  Verify (and optionally repair) a PS2 memory card's per-page Hamming ECC — catches silent bit-rot in a save dump and corrects single-bit errors (CLEAN/CORRECTABLE/CORRUPT)
   save-convert <in> <out> <op> [--fill FF]  Fix a cartridge save's byte order or size.
                           op: swap16|swap32, pad <size|sram|flash|eeprom4k|eeprom16k|mempak>, trim
@@ -82,20 +86,30 @@ arguments to see that command's usage.
                           96-byte/sector sub-channel sidecar
   view-sector <img> <addr> [--count N] [--descramble]  Annotated hex view of
                           sectors. addr: LBA, mm:ss:ff, or +fileindex
-  extract-sectors <img> <out> --start <addr> --count N  Pull a sector range
+  extract-sectors <img|drive:> <out>  Pull a sector range from an image (--start/--count)
+                          or LIVE from a drive, CDRWIN-style: --start/--end/--count,
+                          --track n[,n…] or --disc; --as raw|mode1|form1|form2|2336|audio|dvd;
+                          --recover abort|ignore|replace, --retries N, --no-c2, --sub, --jitter
                           --as stored|user|raw2352, --byteswap for audio
   inspect-raw <img>       Analyse a raw image: TOC, Q health, CD-TEXT, MCN/ISRC,
                           scrambling, EDC/ECC. --deep checks every sector.
                           Also reads bare 2352 BINs (ECC gold-check on real rips)
+  blank <drive> [--full]  Erase a rewritable disc (CD-RW/DVD-RW) so it can be rewritten
+                          (minimal/fast by default; --full erases the entire disc, slower)
+  read-raw <drive> <out.bin>  Read the program area back as full raw 2448-byte sectors
+                          (2352 main + 96 raw P-W sub) for raw-verify-readback [--start LBA] [--length N]
   raw-verify-readback <golden.img> <readback.bin>  Prove a RAW burn is byte-faithful:
                           compare a disc read-back to the golden image (main + sub-channel)
   dvd-verify-readback <source.iso> <readback.bin> [--layer-break LBA]  Verify a burned DVD/BD
                           against its source at ECC-block granularity, layer-break aware
   booktype-trace <trace-file> [--save recipe.json]  Decode a captured bitsetting (book-type)
                           command trace and learn a verbatim replay recipe from your own drive
+  booktype-set <drive> <recipe.json> [--force]  Replay a learned book-type recipe on the drive
+                          (the drive's own captured command, verbatim; guarded by vendor/model)
   dump-merge <out> <in1> <in2> [in3 ...]  Merge several imperfect rips of the SAME
                           disc into one image (EDC-verified where possible)
   merge-cert <out> <in1> <in2> [...] [--key f | --gen-key] | verify <cert> [out in...]  Bad-sector-aware merge + a signed, checkable per-sector provenance certificate
+  dump-cert <image> [--gen-key] | verify | prove | check   Signed dump certificate with a Merkle root — prove any 2 KB slice against the dump event
   c2-merge <out.bin> <in1.bin> [in1.c2] <in2.bin> [in2.c2] ...  Byte-level C2 recovery: reassemble a sector from the good bytes of several C2-flagged reads
   dvd-ecc self-test | repair <block.bin> <out.bin>  DVD RS-PC error correction on a 208×182 ECC block (PI/PO product code); software-first, round-trip validated
   flux-demod self-test | encode <in> <out.dff> [--cell N --jitter J] | decode <in.dff> <out>  Demodulate an optical flux capture to the EFM bitstream (software-first; clock recovery + NRZI)
@@ -109,7 +123,9 @@ arguments to see that command's usage.
   disc-delta <base.iso> <target.iso> <out.delta>  File-level delta carrying only what changed
   disc-patch <base.iso> <in.delta> <out.iso>      Rebuild the target byte-exact from base + delta
   disc-genome <a.cue> [b.cue]  Offset-invariant disc fingerprint; compare two rips for same-disc
+  pressing-dna <a.cue> [b.cue]  Which PRESSING: geometry, pregaps, audio edges, MCN/ISRC — ring codes, answered offline
   health-map <in.bin> <out.svg>  Render a per-sector EDC/ECC health heatmap (SVG)
+  disc-mri <in.bin|.cue> [out.svg|.png]  Polar damage map on the PHYSICAL disc — scratches, rings, rot, voids
   error-pattern <in.bin>  Classify failing sectors: scratch/rot (recover) vs protection (preserve)
   disc-fs <image.iso>     Identify every filesystem a disc carries (ISO/Joliet/UDF/HFS/CD-XA)
   hfs-ls <image>          Walk a classic Mac HFS volume: files, folders, fork sizes
@@ -161,8 +177,13 @@ arguments to see that command's usage.
   fuzz-parsers <seed> [--iterations N]  Robustness-fuzz the format parsers; report unclean crashes/hangs
   disc-semdiff <a> <b>    Region-level (shift-tolerant) diff of two images: where they diverge, not a byte wall
   completeness-check <cue>  Dump-coverage certificate: reconcile cue layout, data size and subchannel; flag gaps
+  emu-ready <cue>           Emulation-readiness report: does this dump have what an emulator needs to run?
+  min-descriptor <image>    Minimal disc descriptor: factor into fill/duplicate/unique and report the irreducible content [--sector N]
+  fs-recover <image.iso> --erased <list>  Use the filesystem to reconstruct free space and identify what erased sectors held [--out]
+  coverage-proof <image.iso>  Prove every sector is accounted for exactly once — reports silent gaps and overlapping claims
   pregap-check <cue> [--json]  Audit a cue's pregaps vs PlayStation/Redump convention (2s data/audio boundary, no negative gaps)
   subq-map <disc.sub> [--json] [--form packed|interleaved|pq16]  Recover each track's real INDEX 00/01 and pregap from a captured subchannel
+  subchannel-dump <drive> <out.sub> [--track N] [--corrected f] [--compare]  Capture the raw (and optionally drive-corrected) P-W sub-channel standalone
   redump-cue <in.cue> <disc.sub> <out.cue> [--snap-pregap]  Re-cut a split bin/cue at the subchannel's INDEX 00 boundaries (Redump-conformant, byte-preserving)
   bad-sectors <map.badsectors.json> [--json]  Show a dump's unreadable-sector map: counts, coalesced runs, and per-track positions
   redump-diff <cue> <dat> [--game "name"] [--json]  Explain WHY a dump doesn't match Redump: per-file verdict + the cause (split, padding, offset, bad sector)
@@ -174,9 +195,13 @@ arguments to see that command's usage.
   disc-diff <a> <b> [--json]  Compare two disc images at the file level: what was added, removed, changed (by content), or moved/renamed — for two pressings, patched vs original, or revisions
   redump-prep <in.cue> <out-dir> [--sub f] [--snap-pregap] [--dat f --game "n"] [--offset N] [--json]  One-step submission prep: re-cut + carry holes + checks + submission text
   cu2 <write|verify> <cue> [file.cu2]  Generate or cross-check a Cybdyn CU2 track map (PSIO/xStation) from a cue
-  ode-export psio <cue> <out-dir> [--name N]  Lay a PS1 dump out for a PSIO/xStation ODE: game folder + bin/cue + generated CU2
+  license-check <image> [--json]  Read the on-disc "Licensed by..." text (sector 4) and cross-check its region against SYSTEM.CNF
+  ode-export psio <cue> [cue2 ...] <out-dir> [--name N]  Lay a PS1 dump out for a PSIO/xStation ODE: game folder + bin/cue + CU2 (+ MULTIDISC.LST for 2+ cues)
+  multidisc-detect <folder> [--recursive] [--json]  Group a folder's disc images into multi-disc titles by the "(Disc N)" naming convention
+  multidisc-manifest <folder> [--recursive] [--json]  Hash every disc of each detected multi-disc title and roll the results into one set manifest
   ode-layout <gdemu|rhea|phoebe|mode> <games-dir> <out-dir>  Arrange a set of converted games into an ODE SD-card layout (numbered folders + sidecars; menu built by the device tool)
   disc-bom <iso>          Technical bill-of-materials: engine, middleware, runtime, build date
+  prototype-scan <iso> [--baseline f.json] [--emit-baseline out.json]   Debug-residue scan: leftover symbols, debug strings/embedded PDB, retail-baseline diff
   ring-code "<runout>" | group <json>  Parse IFPI ring codes; group discs by plant/master
   offset-detect <rip.bin> <reference.bin>  Detect the CD-DA read offset between two PCM rips
   checksum <file>         CRC-32 + MD5 + SHA-1 + SHA-256 in one pass
@@ -205,7 +230,7 @@ arguments to see that command's usage.
   ips-create <orig> <mod> <out.ips>  Build an IPS patch from a before/after pair
   bps-apply <patch.bps> <source> [--out f]  Apply a BPS patch (CRC-verified)
   bps-create <source> <target> <out.bps>  Build a BPS patch from a before/after pair
-  create-udf <folder> <out.udf> [--udf-version 1.02|1.50|2.00|2.01|2.50]  Build a UDF filesystem image from a folder
+  create-udf <folder> <out.udf> [--udf-version 1.02|1.50|2.00|2.01|2.50|2.60]  Build a UDF filesystem image from a folder
                           --volume NAME sets the volume label
   create-udf-bridge <folder> <out.iso>  Build a UDF-bridge image readable as BOTH
                           ISO 9660 (with Joliet) and UDF 1.02, sharing one copy of
@@ -247,6 +272,7 @@ arguments to see that command's usage.
   xiso-ls <image.iso>     List files in an Xbox XDVDFS image (--extract <dir>)
   create-xiso <folder> <out.iso>   Build an Xbox XISO from a folder
   god-info <header>       Identify an Xbox 360 GOD package (type, size, Data#### inventory)
+  god-extract <header> <out.iso>  Reconstruct the XDVDFS ISO from a GOD package (self-validated; declines if unsure)
   iso-create <folder> <out.iso> [--volume-id N] [--no-joliet] [--rock-ridge]   Build a standard ISO 9660 data-disc image from a folder (Joliet by default)
   ps2-info <image>        Identify a PlayStation 1/2 disc (game ID, region) from SYSTEM.CNF
   gcm-info <image>        GameCube disc: boot header + file tree; for a Wii disc,
@@ -260,12 +286,20 @@ arguments to see that command's usage.
   wbfs-extract <file> <slot> <out.iso>  Rebuild one disc's ISO from a WBFS
                           container (contents are copied as-is, not decrypted)
   rvz-info <image>        Identify an RVZ/WIA container and show its metadata
+  rvz-decode <in.rvz> <out.iso>  Reconstruct a GameCube ISO from an RVZ/WIA (zstd/none groups; data-exact, junk zero-filled)
   nkit-info <image>       Detect an NKit-scrubbed GC/Wii image; show source CRC32 for Redump matching
-  gc-verify <image> [--json]  Single-image GameCube 'good dump' health check: bounds, region cross-check, size class
+  gc-verify <image> [--json]  Single-image GameCube 'good dump' health check: bounds, full boot-chain confirm, region cross-check, size class, padding
   gc-junk-map <image> [--json]  Map a GameCube disc's non-game padding and classify each region (junk present / zeroed / structured)
+  gc-junk-fill <in> <out>  Rebuild scrubbed GameCube junk padding — ONLY if the generator
+                          self-validates against the image's own surviving junk (else declines)
+  gc-ringcode <red> <blue> <green> [--game-code X] [--disc N] [--rev N]  Decode a GameCube
+                          disc's red/blue/green inner-ring codes; cross-check against known values
   dvd-layerbreak <pfi>    Read a DVD PFI/.physical: book type, layers, PTP/OTP, layer-break LBA + verify
   layerbreak-pick <total-sectors> [--target N] [--cells a,b,..] [--max-layer N] [--seamless]  Choose a legal DVD-DL layer break
   capacity-check <image-sectors> <cd74|cd80|dvd5|dvd9|bd25|bd50|N> [--overburn]  Check an image against media capacity
+  disc-span <folder|--manifest f> [--media bd25] [--keep-groups]  Plan the fewest discs to hold a set of files (smart spanning)
+  source-stage <manifest> <dir>  Assemble files from local + HTTP(S) origins into a staging folder for burning
+  ui [--port N] [--no-browser]  Launch the modern local web UI over the engine (http://127.0.0.1:8787)
   rom-info <file>         Identify a cartridge ROM (N64, SNES, Genesis, GB/GBC, GBA,
                           NES, and more) and print its No-Intro CRC32/MD5/SHA1
   rom-integrity <file> [--json]  Recompute a cartridge's own checksums (GB header+global, Genesis content, GBA header+logo) to catch a bad dump
@@ -291,6 +325,12 @@ arguments to see that command's usage.
   drives                  List optical recorders + capabilities (Windows via device stack; macOS via system_profiler)
   burn <image.iso> [drive] [--verify] [--speed N]  Burn a data ISO to a blank CD/DVD/BD (Windows IMAPI2, or macOS hdiutil)
   read-disc <drive> <out.iso> [--continue-on-error] [--retries N]  Image a data DVD/BD/data-CD to a flat ISO
+  read-cdi <drive> <out.cdi> [--raw] [--continue-on-error] [--retries N] [--jitter] [--adaptive-reread]  Rip a CD (audio/mixed/data) track-by-track to a CDI image
+  writeinfo <drive>       Read-only: disc status + the drive's next-writable-address (for raw-DAO write setup)
+  drive-profile <drive>   Consolidated per-drive profile: read/write reach, write modes, read fidelity [--out profile.json]
+  drive-db [text]         Bundled drive knowledge base: community-reference offsets, overread reach, C2 reputation (sourced)
+  drive-dossier <drive:|vendor model>  Local per-drive memory: observed quirks accumulate into warnings (auto-fed by extract-sectors)
+  disc-actuary <id> [--record ...] | --collection  Longitudinal scan history per disc; rank the shelf by remaining readable life
                           (Windows SPTI). Pair with `burn` to clone a personal, unencrypted disc. Refuses
                           copy-protected discs (CSS/CPRM/AACS); for audio/mixed CDs rip in the GUI
   raw-dump <drive> [--stream-read]  Drive/media diagnostic for the Hitachi-LG GDR-816x DVD-ROM family:
@@ -301,6 +341,7 @@ arguments to see that command's usage.
                           PSF/PSF2, SPC, VGM, NSF): system, tags, duration. No playback
   gci-info <file>         List GameCube saves in a .gci or a memory-card image
   gci-extract <card> <index> <out.gci>  Write one save from a card image to a .gci
+  gci-banner <file.gci|card[:index]> <out-dir>  Decode a save's own banner/icon to PNG
   n64save-info <file>     Identify an N64 save by size, and list Controller Pak notes
   saturnsave-info <file>  List the directory of a Sega Saturn backup-memory image
   floppy-extract <image> <path-in-image> <out>  Extract one file from a floppy image
@@ -330,6 +371,31 @@ arguments to see that command's usage.
   dvd-ifo <dump|build> …  Dump a DVD's structure to editable JSON, or rebuild IFOs from it
 
 More commands:
+  fat-ls / fat-extract, exfat-ls / exfat-extract, ntfs-ls / ntfs-extract, ext-ls / ext-extract
+                          List and extract files from FAT / exFAT / NTFS / ext2-3-4 volume images (read-only)
+  partitions <image>      Show a disk image's partition tables (MBR, GPT, Apple)
+  aaru-info <img.aaruf>   Identify an AaruFormat image: header, blocks, sectors, compression
+  aaru-extract <img.aaruf> <out.img>   Extract user data (uncompressed or LZMA; CRC-64-proven)
+  aaru-create <in.img> <out.aaruf>     Write an uncompressed AaruFormat image
+  cicm-export <image> [out.xml]        Write a CICM preservation-metadata sidecar (Aaru interop)
+  recover <image> [report.html]   One-stop damage assessment: verdict, evidence, next steps
+  secure-rip-plan <evidence.json>  Grade rip evidence (AccurateRip/C2/passes) and plan re-reads
+  entropy <file>          Shannon entropy (spot compression/encryption/blanked regions)
+  fuzzy-hash <file> [b]   SpamSum fuzzy hash; two files → similarity score
+  drive-profile [drive]   Probe and save a drive's capability/overread/cache-defeat profile
+  reread-probe [drive]    Tier-B adaptive re-read: escalate one real sector to recovered/give-up
+  disc-scan <drive>       C2 media-quality scan of the disc in the drive
+  read-benchmark <drive>  Read-rate benchmark across the disc surface
+  burn-raw <cue> <drive>  RAW DAO-96 burn (SPTI engine; see also burn)
+  burn-plan [--write-type ...] [--burn-proof] [--link-size N] [--test-write]
+            [--speed N] [--reserve-track N] [--json]  Preview a burn's exact
+            SCSI/MMC command sequence, offline, no drive needed — no equivalent in ImgBurn
+  dump-session <image> [--json]  Show the drive/firmware/settings sidecar record
+            `read-disc` writes alongside a dump — the exact drive and settings that
+            produced this file, so that context survives it changing hands
+  dvd-layerbreak-plan <VTS_nn_0.IFO> …  Recommend a DVD9 layer break at a VOBU boundary
+  ps1card-convert <in> <out>   Convert PS1 memory-card image formats (raw/gme/vgs/vmp)
+  ps1-psv <extract|wrap> …     PS3/PSP .psv single-save identify/unwrap/wrap
   chd-info <image.chd>    Show a CHD's version, codecs, hunk geometry and CD track layout
   chd-create <in.cue|in.img> <out.chd>   Create a CHD (v5) from a bin/cue or raw image
   chd-extract <image.chd> <out.bin> [out.cue] [--parent p.chd ...]   Decompress a CD CHD to bin/cue
@@ -363,6 +429,8 @@ More commands:
   dvd-rewrite <VIDEO_TS|disc root> <out folder> [--keep 1,3]   Rebuild VIDEO_TS keeping selected titles
   vcd-info <INFO.VCD|ENTRIES.VCD>   Read a Video CD control/entry file
   accuraterip <image.cue> [--db <dBAR.bin>] [--url]   AccurateRip v1/v2 checksums + disc IDs; verify vs a DB record
+  detect-offset <image.cue> --db <dBAR.bin> [--range N]   Find the drive's combined read offset by AccurateRip sweep
+  offset-shift-scan <image.cue> --db <dBAR.bin> [--range N] [--json]   Sweep every track independently; catches a mastering offset that changes partway through the disc
   scan-protection <image.cdi>   Fingerprint copy protection as metadata (identify only)
   sbi-make <disc.sub> [out.sbi] [--start-lba N]   Write an SBI from a captured subchannel (LibCrypt preservation)
   sbi-info <file.sbi>     Describe an SBI subchannel-patch file
@@ -376,6 +444,7 @@ More commands:
   mount <image>           Mount a disc image, or show how to mount it where supported
   transcode <input> <output> [options]   Transcode audio between DiscForge-supported formats
   dat-verify <dat-file> <file ...>   Verify one or more files against a Redump/No-Intro DAT
+  dat-tags "<name>"       Parse a catalogued name's region/revision/disc/variant tags
   bin2src <file> [--name ID] [--asm] [--per-line N] [--out f]   Emit a file as C/asm source bytes
   search <file> (--hex 4d5a | --ascii TEXT) [--limit N]   Search a file for a hex or ASCII pattern
 ```

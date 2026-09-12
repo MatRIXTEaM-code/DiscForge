@@ -57,6 +57,19 @@ public sealed record DumpCertificate
     /// <summary>The post-dump <see cref="Dumping.ExtractionAudit"/> verdict, when one ran.</summary>
     public string? AuditGrade { get; init; }
     public string? Note { get; init; }
+    /// <summary>The honest catalog field for physical-media-only protection signals (see
+    /// <see cref="Forensics.ProtectionReport.PhysicalCaptureCaveat"/>): set when a detected
+    /// scheme (e.g. StarForce, some SecuROM) authenticates via a physical measurement — DPM
+    /// laser-timing variance from the pressing — that no sector/subchannel image can represent.
+    /// Null means either nothing of that kind was detected, or no protection scan was supplied
+    /// when this certificate was created; it is not itself proof the disc carries no such
+    /// protection.
+    ///
+    /// Deliberately EXCLUDED from <see cref="SigningContent"/>: adding a field there changes the
+    /// signed byte string for every certificate, including ones already issued before this field
+    /// existed, and would break their signature verification under the new build. This field
+    /// stays informational/unsigned so old certificates keep verifying exactly as before.</summary>
+    public string? PhysicalCaptureCaveat { get; init; }
 
     public string? Signature { get; init; }
     public string? PublicKey { get; init; }

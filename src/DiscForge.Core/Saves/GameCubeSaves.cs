@@ -187,6 +187,16 @@ public static class GcMemoryCardReader
         return new GcMemoryCard { Saves = saves };
     }
 
+    /// <summary>Gather just a save's data blocks (no directory-entry header) by following its BAT chain —
+    /// the same bytes a .gci's payload would have, for callers that only need the payload (e.g. banner/icon
+    /// decode) and not a full .gci re-emission.</summary>
+    public static byte[] GetSavePayload(byte[] data, GcSave save)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentNullException.ThrowIfNull(save);
+        return GatherPayload(data, save.FirstBlock, save.BlockCount);
+    }
+
     /// <summary>Rebuild a save as a standalone .gci: its 0x40 directory entry + its data blocks (BAT chain).</summary>
     public static byte[] ExtractSaveToGci(byte[] data, GcSave save)
     {

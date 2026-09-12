@@ -61,4 +61,37 @@ public class Ps1CardConvertTests
         Assert.Equal(Ps1CardFormat.Unknown, Ps1CardConvert.Detect(new byte[100]));
         Assert.Throws<Ps1CardConvert.Ps1CardFormatException>(() => Ps1CardConvert.ToRaw(new byte[100]));
     }
+
+    [Fact]
+    public void Raw_to_vmp_adds_a_header_and_round_trips()
+    {
+        var raw = RawCard();
+        var vmp = Ps1CardConvert.Convert(raw, Ps1CardFormat.Vmp);
+
+        Assert.Equal(Ps1CardFormat.Vmp, Ps1CardConvert.Detect(vmp));
+        Assert.Equal(128 + Ps1CardConvert.CardSize, vmp.Length);
+        Assert.Equal(raw, Ps1CardConvert.ToRaw(vmp));
+
+        // The signature-carrying half of the header is honestly zeroed, never fabricated.
+        Assert.All(vmp[..128], b => Assert.Equal(0, b));
+    }
+
+    [Fact]
+    public void Vgs_to_vmp_converts_directly_and_keeps_the_card()
+    {
+        var raw = RawCard(0x33);
+        var vgs = Ps1CardConvert.Convert(raw, Ps1CardFormat.Vgs);
+        var vmp = Ps1CardConvert.Convert(vgs, Ps1CardFormat.Vmp);
+
+        Assert.Equal(Ps1CardFormat.Vmp, Ps1CardConvert.Detect(vmp));
+        Assert.Equal(raw, Ps1CardConvert.ToRaw(vmp));
+    }
+
+    [Fact]
+    public void Vmp_is_told_apart_from_a_same_sized_coincidence()
+    {
+        // Structural detection requires "MC" right at the 0x80 offset, not just the right length.
+        var notVmp = new byte[128 + Ps1CardConvert.CardSize];
+        Assert.Equal(Ps1CardFormat.Unknown, Ps1CardConvert.Detect(notVmp));
+    }
 }

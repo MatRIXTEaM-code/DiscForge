@@ -29,12 +29,15 @@ GROUPS = [
     ("Protection & interop", ["protect", "subcode", "interop"]),
     ("DVD & video", ["dvdshrink", "dvdinfo", "transcode", "pack"]),
     ("Identify, verify & catalogue",
-     ["identify", "examine", "library", "submit", "tools"]),
+     ["identify", "examine", "library", "submit", "tools", "verify"]),
     ("Console & cartridge preservation",
      ["patch", "dreamcast", "milcd", "dcid", "xbox", "memcard", "psxasset",
-      "psxbuild", "compimg", "scummvm"]),
+      "psxbuild", "compimg", "scummvm", "textures"]),
     ("Extract, cheats & game media", ["extract", "cheat", "media"]),
-    ("Collection & front-end", ["playlists", "sets"]),
+    ("Collection & front-end", ["playlists", "sets", "datbuild"]),
+    ("Preservation certificates & forensics",
+     ["merge", "mergecert", "dumpcert", "prove", "pressingdna", "drivedossier",
+      "discactuary", "discmri", "secureripplan"]),
     ("Utility", ["help", "settings", "about", "exit"]),
 ]
 

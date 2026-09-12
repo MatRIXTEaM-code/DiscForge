@@ -42,6 +42,30 @@ static string CliVersion()
     return v is null ? "1.12.0" : $"{v.Major}.{v.Minor}.{v.Build}";
 }
 
+// `dforge version` / `dforge --version` / `dforge -v`: prints the version AND the
+// executing DLL's own last-write time. The version alone only proves freshness when a
+// session happened to bump it; the file timestamp proves it unconditionally, on every
+// rebuild, whether or not the version changed — the exact check that would have caught
+// 2026-08-29's stale-binary confusion in seconds instead of a debugging round-trip.
+// Compare it against when you actually ran `dotnet build`; if it's stale, `dotnet clean`
+// before rebuilding.
+static int VersionCmd()
+{
+    var asm = System.Reflection.Assembly.GetExecutingAssembly();
+    var v = asm.GetName().Version;
+    string version = v is null ? "unknown" : $"{v.Major}.{v.Minor}.{v.Build}";
+    string built = "unknown";
+    try
+    {
+        var path = asm.Location;
+        if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            built = File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm:ss");
+    }
+    catch { /* best-effort; never fail a version query over this */ }
+    Console.WriteLine($"DiscForge CLI v{version}  (dforge.dll built {built})");
+    return 0;
+}
+
 if (args.Length == 0)
 {
     Console.WriteLine(Banner);
@@ -53,6 +77,8 @@ if (args.Length == 0)
     Console.WriteLine(" bler, dpm, audio-dynamics, apm-info, rdb-info).");
     Console.WriteLine();
     Console.WriteLine("commands:");
+    Console.WriteLine("  version               Print the CLI version and dforge.dll's build timestamp —");
+    Console.WriteLine("                        check this after a rebuild before trusting a fix is live.");
     Console.WriteLine("  identify <file>       Say what a file is (any format DiscForge knows)");
     Console.WriteLine("  library scan <dir> [--dat f] [--html out.html]   Identify+hash a whole tree, verify vs a DAT; --html writes a friendly color-coded audit dashboard");
     Console.WriteLine("  catalog-export <dir> [--dat f] [--json out.json] [--csv out.csv]  Write a portable catalog of an optical archive (identity, hashes, verification status) to keep beside a NAS/cloud backup");
@@ -80,9 +106,11 @@ if (args.Length == 0)
     Console.WriteLine("  lineage <keygen|init|append|sign|verify|show> …  Append-only, signed chain-of-custody for a dump");
     Console.WriteLine("  library-watch <dir> [--update]   Watch a collection for silent corruption (bit rot)");
     Console.WriteLine("  remaster <pack|rebuild|verify> …  Decompose an ISO to a recipe+store and rebuild it byte-exact");
-    Console.WriteLine("  ps1mc-convert <in> <out> [raw|gme|vgs]  Convert a PS1 memory card between container");
-    Console.WriteLine("                          formats (raw .mcr / DexDrive .gme / VGS). Alias: ps1card-convert");
-    Console.WriteLine("  ps1mc-format <out.mcr> [raw|gme|vgs]  Write a freshly-formatted, empty PS1 memory card. Alias: psxmc-format");
+    Console.WriteLine("  ps1mc-convert <in> <out> [raw|gme|vgs|vmp]  Convert a PS1 memory card between container");
+    Console.WriteLine("                          formats (raw .mcr / DexDrive .gme / VGS / PS3-PSP .vmp). Alias: ps1card-convert");
+    Console.WriteLine("  ps1mc-format <out.mcr> [raw|gme|vgs|vmp]  Write a freshly-formatted, empty PS1 memory card. Alias: psxmc-format");
+    Console.WriteLine("  ps1-psv <extract|wrap> …  Identify/unwrap a PS3-PSP .psv single-save export, or wrap a");
+    Console.WriteLine("                          single-block card save into one (unsigned — see usage text)");
     Console.WriteLine("  ps2mc-ecc <card.ps2> [--repair <out.ps2>] [--json]  Verify (and optionally repair) a PS2 memory card's per-page Hamming ECC — catches silent bit-rot in a save dump and corrects single-bit errors (CLEAN/CORRECTABLE/CORRUPT)");
     Console.WriteLine("  save-convert <in> <out> <op> [--fill FF]  Fix a cartridge save's byte order or size.");
     Console.WriteLine("                          op: swap16|swap32, pad <size|sram|flash|eeprom4k|eeprom16k|mempak>, trim");
@@ -240,6 +268,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  multidisc-manifest <folder> [--recursive] [--json]  Hash every disc of each detected multi-disc title and roll the results into one set manifest");
     Console.WriteLine("  ode-layout <gdemu|rhea|phoebe|mode> <games-dir> <out-dir>  Arrange a set of converted games into an ODE SD-card layout (numbered folders + sidecars; menu built by the device tool)");
     Console.WriteLine("  disc-bom <iso>          Technical bill-of-materials: engine, middleware, runtime, build date");
+    Console.WriteLine("  prototype-scan <iso> [--baseline f.json] [--emit-baseline out.json]   Debug-residue scan: leftover symbols, debug strings/embedded PDB, retail-baseline diff");
     Console.WriteLine("  ring-code \"<runout>\" | group <json>  Parse IFPI ring codes; group discs by plant/master");
     Console.WriteLine("  offset-detect <rip.bin> <reference.bin>  Detect the CD-DA read offset between two PCM rips");
     Console.WriteLine("  checksum <file>         CRC-32 + MD5 + SHA-1 + SHA-256 in one pass");
@@ -326,10 +355,12 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  rvz-info <image>        Identify an RVZ/WIA container and show its metadata");
     Console.WriteLine("  rvz-decode <in.rvz> <out.iso>  Reconstruct a GameCube ISO from an RVZ/WIA (zstd/none groups; data-exact, junk zero-filled)");
     Console.WriteLine("  nkit-info <image>       Detect an NKit-scrubbed GC/Wii image; show source CRC32 for Redump matching");
-    Console.WriteLine("  gc-verify <image> [--json]  Single-image GameCube 'good dump' health check: bounds, region cross-check, size class");
+    Console.WriteLine("  gc-verify <image> [--json]  Single-image GameCube 'good dump' health check: bounds, full boot-chain confirm, region cross-check, size class, padding");
     Console.WriteLine("  gc-junk-map <image> [--json]  Map a GameCube disc's non-game padding and classify each region (junk present / zeroed / structured)");
     Console.WriteLine("  gc-junk-fill <in> <out>  Rebuild scrubbed GameCube junk padding — ONLY if the generator");
     Console.WriteLine("                          self-validates against the image's own surviving junk (else declines)");
+    Console.WriteLine("  gc-ringcode <red> <blue> <green> [--game-code X] [--disc N] [--rev N]  Decode a GameCube");
+    Console.WriteLine("                          disc's red/blue/green inner-ring codes; cross-check against known values");
     Console.WriteLine("  dvd-layerbreak <pfi>    Read a DVD PFI/.physical: book type, layers, PTP/OTP, layer-break LBA + verify");
     Console.WriteLine("  layerbreak-pick <total-sectors> [--target N] [--cells a,b,..] [--max-layer N] [--seamless]  Choose a legal DVD-DL layer break");
     Console.WriteLine("  capacity-check <image-sectors> <cd74|cd80|dvd5|dvd9|bd25|bd50|N> [--overburn]  Check an image against media capacity");
@@ -361,11 +392,14 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  drives                  List optical recorders + capabilities (Windows via device stack; macOS via system_profiler)");
     Console.WriteLine("  burn <image.iso> [drive] [--verify] [--speed N]  Burn a data ISO to a blank CD/DVD/BD (Windows IMAPI2, or macOS hdiutil)");
     Console.WriteLine("  read-disc <drive> <out.iso> [--continue-on-error] [--retries N]  Image a data DVD/BD/data-CD to a flat ISO");
+    Console.WriteLine("  read-cdi <drive> <out.cdi> [--raw] [--continue-on-error] [--retries N] [--jitter] [--adaptive-reread]  Rip a CD (audio/mixed/data) track-by-track to a CDI image");
     Console.WriteLine("  writeinfo <drive>       Read-only: disc status + the drive's next-writable-address (for raw-DAO write setup)");
     Console.WriteLine("  drive-profile <drive>   Consolidated per-drive profile: read/write reach, write modes, read fidelity [--out profile.json]");
     Console.WriteLine("  drive-db [text]         Bundled drive knowledge base: community-reference offsets, overread reach, C2 reputation (sourced)");
     Console.WriteLine("  drive-dossier <drive:|vendor model>  Local per-drive memory: observed quirks accumulate into warnings (auto-fed by extract-sectors)");
     Console.WriteLine("  disc-actuary <id> [--record ...] | --collection  Longitudinal scan history per disc; rank the shelf by remaining readable life");
+    Console.WriteLine("  dump-ledger <keygen|init|submit|verify|consensus|show> ...  Public, hash-chained log of independently signed dump claims — see whether strangers' dumps agree, without trusting anyone");
+    Console.WriteLine("  media-mortality <observe|merge|estimate|show> <model.json> ...  Federated (privacy-floored) model of how fast a cohort of discs decays, pooled across collections with no raw data shared");
     Console.WriteLine("                          (Windows SPTI). Pair with `burn` to clone a personal, unencrypted disc. Refuses");
     Console.WriteLine("                          copy-protected discs (CSS/CPRM/AACS); for audio/mixed CDs rip in the GUI");
     Console.WriteLine("  raw-dump <drive> [--stream-read]  Drive/media diagnostic for the Hitachi-LG GDR-816x DVD-ROM family:");
@@ -376,6 +410,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("                          PSF/PSF2, SPC, VGM, NSF): system, tags, duration. No playback");
     Console.WriteLine("  gci-info <file>         List GameCube saves in a .gci or a memory-card image");
     Console.WriteLine("  gci-extract <card> <index> <out.gci>  Write one save from a card image to a .gci");
+    Console.WriteLine("  gci-banner <file.gci|card[:index]> <out-dir>  Decode a save's own banner/icon to PNG");
     Console.WriteLine("  n64save-info <file>     Identify an N64 save by size, and list Controller Pak notes");
     Console.WriteLine("  saturnsave-info <file>  List the directory of a Sega Saturn backup-memory image");
     Console.WriteLine("  floppy-extract <image> <path-in-image> <out>  Extract one file from a floppy image");
@@ -421,13 +456,22 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  entropy <file>          Shannon entropy (spot compression/encryption/blanked regions)");
     Console.WriteLine("  fuzzy-hash <file> [b]   SpamSum fuzzy hash; two files → similarity score");
     // Drives & media (hardware)
-    Console.WriteLine("  drive-profile [drive]   Probe and save a drive's capability/overread profile");
+    Console.WriteLine("  drive-profile [drive]   Probe and save a drive's capability/overread/cache-defeat profile");
+    Console.WriteLine("  reread-probe [drive]    Tier-B adaptive re-read: escalate one real sector to recovered/give-up");
+    Console.WriteLine("  disc-mri-reread <drive> <plan.json> <target.bin>  Drive disc-mri's --plan-reread ranges through the real Tier-B controller, patching recovered sectors into target.bin");
     Console.WriteLine("  disc-scan <drive>       C2 media-quality scan of the disc in the drive");
     Console.WriteLine("  read-benchmark <drive>  Read-rate benchmark across the disc surface");
     Console.WriteLine("  burn-raw <cue> <drive>  RAW DAO-96 burn (SPTI engine; see also burn)");
+    Console.WriteLine("  burn-plan [--write-type ...] [--burn-proof] [--link-size N] [--test-write]");
+    Console.WriteLine("            [--speed N] [--reserve-track N] [--json]  Preview a burn's exact");
+    Console.WriteLine("            SCSI/MMC command sequence, offline, no drive needed — no equivalent in ImgBurn");
+    Console.WriteLine("  dump-session <image> [--json]  Show the drive/firmware/settings sidecar record");
+    Console.WriteLine("            `read-disc` writes alongside a dump — the exact drive and settings that");
+    Console.WriteLine("            produced this file, so that context survives it changing hands");
     Console.WriteLine("  dvd-layerbreak-plan <VTS_nn_0.IFO> …  Recommend a DVD9 layer break at a VOBU boundary");
     // Save/memory-card extras
-    Console.WriteLine("  ps1card-convert <in> <out>   Convert PS1 memory-card image formats");
+    Console.WriteLine("  ps1card-convert <in> <out>   Convert PS1 memory-card image formats (raw/gme/vgs/vmp)");
+    Console.WriteLine("  ps1-psv <extract|wrap> …     PS3/PSP .psv single-save identify/unwrap/wrap");
     // CHD
     Console.WriteLine("  chd-info <image.chd>    Show a CHD's version, codecs, hunk geometry and CD track layout");
     Console.WriteLine("  chd-create <in.cue|in.img> <out.chd>   Create a CHD (v5) from a bin/cue or raw image");
@@ -468,6 +512,8 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  vcd-info <INFO.VCD|ENTRIES.VCD>   Read a Video CD control/entry file");
     // Audio
     Console.WriteLine("  accuraterip <image.cue> [--db <dBAR.bin>] [--url]   AccurateRip v1/v2 checksums + disc IDs; verify vs a DB record");
+    Console.WriteLine("  detect-offset <image.cue> --db <dBAR.bin> [--range N]   Find the drive's combined read offset by AccurateRip sweep");
+    Console.WriteLine("  offset-shift-scan <image.cue> --db <dBAR.bin> [--range N] [--json]   Sweep every track independently; catches a mastering offset that changes partway through the disc");
     // Protection / subchannel
     Console.WriteLine("  scan-protection <image.cdi>   Fingerprint copy protection as metadata (identify only)");
     Console.WriteLine("  sbi-make <disc.sub> [out.sbi] [--start-lba N]   Write an SBI from a captured subchannel (LibCrypt preservation)");
@@ -484,6 +530,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  transcode <input> <output> [options]   Transcode audio between DiscForge-supported formats");
     // Verify / utilities
     Console.WriteLine("  dat-verify <dat-file> <file ...>   Verify one or more files against a Redump/No-Intro DAT");
+    Console.WriteLine("  dat-tags \"<name>\"       Parse a catalogued name's region/revision/disc/variant tags");
     Console.WriteLine("  bin2src <file> [--name ID] [--asm] [--per-line N] [--out f]   Emit a file as C/asm source bytes");
     Console.WriteLine("  search <file> (--hex 4d5a | --ascii TEXT) [--limit N]   Search a file for a hex or ASCII pattern");
     return 0;
@@ -491,6 +538,9 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
 
 return args[0].ToLowerInvariant() switch
 {
+    "version" => VersionCmd(),
+    "--version" => VersionCmd(),
+    "-v" => VersionCmd(),
     "inspect" => Inspect(args),
     "fix-modes" => FixModesCommand.Run(args),
 "browse" => ImageCommands.Browse(args),
@@ -531,6 +581,7 @@ return args[0].ToLowerInvariant() switch
     "preserve-master" => PreserveMasterCmd(args),
     "flux" => FluxCmd(args),
     "lineage" => LineageCmd(args),
+    "dump-ledger" => DumpLedgerCmd(args),
     "library-watch" => LibraryWatchCmd(args),
     "remaster" => RemasterCmd(args),
     "offset-detect" => OffsetDetectCmd(args),
@@ -607,7 +658,9 @@ return args[0].ToLowerInvariant() switch
     "multidisc-manifest" => MultiDiscManifestCmd(args),
     "ode-layout" => OdeLayoutCmd(args),
     "disc-bom" => DiscBomCmd(args),
+    "prototype-scan" => PrototypeScanCmd(args),
     "ring-code" => RingCodeCmd(args),
+    "gc-ringcode" => GcRingCodeCmd(args),
     "disc-fs" => DiscFsCmd(args),
     "hfs-ls" => HfsLsCmd(args),
     "hfs-lint" => HfsLintCmd(args),
@@ -626,6 +679,7 @@ return args[0].ToLowerInvariant() switch
     "transcode" => Transcode(args),
     "accuraterip" => AccurateRipCmd(args),
     "detect-offset" => DetectOffsetCmd(args),
+    "offset-shift-scan" => OffsetShiftScanCmd(args),
     "mount" => MountCmd(args),
     "ccd-info" => CcdInfo(args),
     "wbfs-info" => WbfsInfo(args),
@@ -703,6 +757,7 @@ return args[0].ToLowerInvariant() switch
     "ps1mc-convert" => Ps1CardConvertCmd(args),
     "gci-info" => GciInfo(args),
     "gci-extract" => GciExtract(args),
+    "gci-banner" => GciBanner(args),
     "n64save-info" => N64SaveInfo(args),
     "n64-info" => N64Info(args),
     "saturnsave-info" => SaturnSaveInfo(args),
@@ -726,16 +781,22 @@ return args[0].ToLowerInvariant() switch
     "drives" => DrivesCmd(args),
     "burn" => BurnCmd(args),
     "burn-raw" => BurnRawCmd(args),
+    "burn-plan" => BurnPlanCmd(args),
+    "dump-session" => DumpSessionCmd(args),
     "compose-verify" => ComposeVerifyCmd(args),
     "writeinfo" => WriteInfoCmd(args),
     "drive-profile" => DriveProfileCmd(args),
     "drive-db" => DriveDbCmd(args),
+    "reread-probe" => RereadProbeCmd(args),
+    "disc-mri-reread" => DiscMriRereadCmd(args),
     "drive-dossier" => DriveDossierCmd(args),
     "disc-actuary" => DiscActuaryCmd(args),
+    "media-mortality" => MediaMortalityCmd(args),
     "plextor-d8" => PlextorD8Cmd(args),
     "disc-scan" => DiscScanCmd(args),
     "read-benchmark" => ReadBenchmarkCmd(args),
     "read-disc" => ReadDiscCmd(args),
+    "read-cdi" => ReadCdiCmd(args),
     "read-raw" => ReadRawCmd(args),
     "subchannel-dump" => SubchannelDumpCmd(args),
     "prove" => ProveCmd(args),
@@ -743,6 +804,7 @@ return args[0].ToLowerInvariant() switch
     "raw-dump" => RawDumpCmd(args),
     "fat-extract" => FatExtractCmd(args),
     "dat-verify" => DatVerify(args),
+    "dat-tags" => DatTagsCmd(args),
     "dat-build" => DatBuildCmd(args),
     "library" => Library(args),
     "license" => LicenseCmd(args),
@@ -770,6 +832,7 @@ return args[0].ToLowerInvariant() switch
     "ext-extract" => ExtExtractCmd(args),
     "hashverify" => HashVerifyCmd(args),
     "ps1card-convert" => Ps1CardConvertCmd(args),
+    "ps1-psv" => Ps1PsvCmd(args),
     "save-convert" => SaveConvertCmd(args),
     "rom-convert" => RomConvertCmd(args),
     "submission-info" => SubmissionInfoCmd(args),
@@ -995,8 +1058,7 @@ static int Convert(string[] args)
         var version = ParseVersionArg(args) ?? CdiVersion.V35;
         try
         {
-            using var os = File.Create(output);
-            GdiConverter.GdiToCdi(input, version, os);
+            WriteFileAtomically(output, os => GdiConverter.GdiToCdi(input, version, os));
             Console.WriteLine($"Converted {Path.GetFileName(input)} -> {Path.GetFileName(output)} " +
                               $"({VersionLabel(version)}).");
             return 0;
@@ -1028,8 +1090,7 @@ static int Convert(string[] args)
         CdiImage image;
         try { image = CdiParser.Parse(fs); }
         catch (CdiFormatException ex) { return Fail(ex.Message); }
-        using var os = File.Create(output);
-        NrgConverter.CdiToNrg(fs, image, os);
+        WriteFileAtomically(output, os => NrgConverter.CdiToNrg(fs, image, os));
         Console.WriteLine($"Converted {Path.GetFileName(input)} -> {Path.GetFileName(output)} (Nero NRG v2).");
         return 0;
     }
@@ -1041,8 +1102,7 @@ static int Convert(string[] args)
         NrgImage image;
         try { image = NrgParser.Parse(fs); }
         catch (NrgFormatException ex) { return Fail(ex.Message); }
-        using var os = File.Create(output);
-        NrgConverter.NrgToCdi(fs, image, version, os);
+        WriteFileAtomically(output, os => NrgConverter.NrgToCdi(fs, image, version, os));
         Console.WriteLine($"Converted {Path.GetFileName(input)} -> {Path.GetFileName(output)} ({VersionLabel(version)}).");
         return 0;
     }
@@ -1052,8 +1112,8 @@ static int Convert(string[] args)
         var version = ParseVersionArg(args) ?? CdiVersion.V35;
         try
         {
-            using var os = File.Create(output);
-            var r = IsoConverter.IsoToCdi(input, version, os);
+            IsoConverter.ConvertResult r = default!;
+            WriteFileAtomically(output, os => r = IsoConverter.IsoToCdi(input, version, os));
             foreach (var w in r.Warnings) Console.WriteLine($"warning: {w}");
             Console.WriteLine(
                 $"Wrapped {Path.GetFileName(input)} -> {Path.GetFileName(output)} " +
@@ -1075,8 +1135,8 @@ static int Convert(string[] args)
 
         try
         {
-            using var os = File.Create(output);
-            var r = IsoConverter.CdiToIso(fs, image, os);
+            IsoConverter.ConvertResult r = default!;
+            WriteFileAtomically(output, os => r = IsoConverter.CdiToIso(fs, image, os));
             foreach (var w in r.Warnings) Console.WriteLine($"warning: {w}");
             Console.WriteLine(
                 $"Extracted {Path.GetFileName(input)} -> {Path.GetFileName(output)}: " +
@@ -1101,8 +1161,8 @@ static int Convert(string[] args)
 
         try
         {
-            using var os = File.Create(output);
-            var result = MdsConverter.MdsToCdi(mds, mdfPath, version, os);
+            MdsConverter.ConvertResult result = default!;
+            WriteFileAtomically(output, os => result = MdsConverter.MdsToCdi(mds, mdfPath, version, os));
             foreach (var w in result.Warnings) Console.WriteLine($"warning: {w}");
             Console.WriteLine(
                 $"Converted {Path.GetFileName(input)} ({mds.Medium}, {result.TrackCount} track(s)) " +
@@ -1217,8 +1277,8 @@ static int Create(string[] args)
     var version = ParseVersionArg(args) ?? CdiVersion.V35;
     bool rockRidge = args.Contains("--rock-ridge");
 
-    using var os = File.Create(outPath);
-    var result = CdiCreator.CreateFromDirectory(volume, dir, version, os, rockRidge);
+    CdiCreator.CreateResult result = default!;
+    WriteFileAtomically(outPath, os => result = CdiCreator.CreateFromDirectory(volume, dir, version, os, rockRidge));
 
     foreach (var w in result.Warnings) Console.WriteLine($"warning: {w}");
     Console.WriteLine(
@@ -1313,8 +1373,8 @@ static int CreateAudio(string[] args)
 
     try
     {
-        using var os = File.Create(outPath);
-        var result = AudioCdCreator.Create(tracks, version, os, allow80Minute: !only74);
+        AudioCdCreator.CompilationResult result = default!;
+        WriteFileAtomically(outPath, os => result = AudioCdCreator.Create(tracks, version, os, allow80Minute: !only74));
 
         foreach (var w in result.Warnings) Console.WriteLine($"warning: {w}");
         Console.WriteLine(
@@ -1582,9 +1642,8 @@ static int BuildRaw(string[] args)
             Console.WriteLine($"Image: {total:N0} sectors x {size} = " +
                               $"{total * size / (1024.0 * 1024.0):N1} MB ({form})");
 
-            using var output = File.Create(outPath);
             long lastPct = -1;
-            RawImageGenerator.Generate(layout, form, output, new Progress<double>(f =>
+            WriteFileAtomically(outPath, output => RawImageGenerator.Generate(layout, form, output, new Progress<double>(f =>
             {
                 long pct = (long)(f * 100);
                 if (pct != lastPct && pct % 10 == 0)
@@ -1592,7 +1651,7 @@ static int BuildRaw(string[] args)
                     lastPct = pct;
                     Console.Write($"\r  composing… {pct}%");
                 }
-            }));
+            })));
             Console.WriteLine("\r  composing… done");
         }
         Console.WriteLine($"Wrote {outPath}");
@@ -1640,13 +1699,19 @@ static int MergeCertCmd(string[] args)
 {
     if (args.Length < 2)
         return Fail("usage:\n" +
-                    "  dforge merge-cert <out.bin> <in1.bin> <in2.bin> [in3 ...] [--sector-size 2352|2048] [--key priv.b64 | --gen-key] [--json]\n" +
+                    "  dforge merge-cert <out.bin> <in1.bin> <in2.bin> [in3 ...] [--sector-size 2352|2048] [--key priv.b64 | --gen-key]\n" +
+                    "                    [--cue <layout.cue> --ar-db <dBAR.bin>] [--json]\n" +
                     "  dforge merge-cert verify <cert.dmc.json> [out.bin in1.bin in2.bin ...]\n" +
                     "  Merges several imperfect rips of the SAME disc into one image and writes a signed certificate\n" +
                     "  (<out>.dmc.json) recording how EVERY sector was decided and which copy it came from. Each input's\n" +
                     "  sibling .badsectors.json is honoured: a copy's unreadable sectors are excluded from the vote\n" +
                     "  rather than counted as data. 'verify' checks the signature and, given the files, re-confirms the\n" +
-                    "  input/output hashes the certificate binds. Pure recovery + provenance; it defeats nothing.");
+                    "  input/output hashes the certificate binds. Pure recovery + provenance; it defeats nothing.\n" +
+                    "  --cue/--ar-db: for a disc with audio tracks, when the copies disagree on a sector the usual\n" +
+                    "  fallback is an unconfirmable byte vote (no EDC exists for audio). Given the disc's track layout\n" +
+                    "  (--cue) and a downloaded AccurateRip record (--ar-db, see `dforge accuraterip --url`), each audio\n" +
+                    "  track is instead checked whole against the database first; a matching copy settles that whole\n" +
+                    "  track (AccurateRipConfirmed in the certificate) and the vote never runs for it.");
 
     if (args[1] == "verify")
     {
@@ -1687,17 +1752,23 @@ static int MergeCertCmd(string[] args)
     string outPath = args[1];
     int sectorSize = 2352;
     string? keyFile = OptVal(args, "--key");
+    string? cuePath = OptVal(args, "--cue");
+    string? arDbPath = OptVal(args, "--ar-db");
     bool genKey = args.Contains("--gen-key");
     var inputs = new List<string>();
     for (int i = 2; i < args.Length; i++)
     {
         if (args[i] == "--sector-size" && i + 1 < args.Length) { if (!int.TryParse(args[++i], out sectorSize) || sectorSize <= 0) return Fail("--sector-size must be positive."); }
-        else if (args[i] == "--key") i++;                 // consumed by OptVal
+        else if (args[i] == "--key" || args[i] == "--cue" || args[i] == "--ar-db") i++;   // consumed by OptVal
         else if (args[i] == "--gen-key" || args[i] == "--json") { }
         else inputs.Add(args[i]);
     }
     if (inputs.Count < 2) return Fail("merge-cert needs at least two input images.");
     foreach (var p in inputs) if (!File.Exists(p)) return Fail($"File not found: {p}");
+    if (cuePath is not null != arDbPath is not null)
+        return Fail("--cue and --ar-db must be given together (the AccurateRip tie-breaker needs both the track layout and the database record).");
+    if (cuePath is not null && !File.Exists(cuePath)) return Fail($"File not found: {cuePath}");
+    if (arDbPath is not null && !File.Exists(arDbPath)) return Fail($"File not found: {arDbPath}");
 
     try
     {
@@ -1709,7 +1780,14 @@ static int MergeCertCmd(string[] args)
             try { return DiscForge.Core.Preservation.BadSectorMap.Load(sc); } catch { return null; }
         }).ToList();
 
-        var result = DiscForge.Core.Recovery.ProvenanceMerge.Merge(images, holeMaps, sectorSize);
+        IReadOnlyList<DiscForge.Core.Recovery.ProvenanceMerge.AudioTrackHint>? audioHints = null;
+        if (cuePath is not null && arDbPath is not null)
+        {
+            audioHints = BuildAudioTieBreakHints(cuePath, arDbPath, sectorSize, out string hintNote);
+            if (hintNote.Length > 0) Console.WriteLine(hintNote);
+        }
+
+        var result = DiscForge.Core.Recovery.ProvenanceMerge.Merge(images, holeMaps, sectorSize, audioHints);
         var cert = result.Certificate;
 
         if (genKey || keyFile is not null)
@@ -1756,6 +1834,62 @@ static string Sha256Hex(string path)
 {
     using var s = File.OpenRead(path);
     return System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(s)).ToLowerInvariant();
+}
+
+// Builds the AccurateRip tie-break hints for `merge-cert`: reads the disc's track layout from a .cue
+// (the same file that would build the flat raw image being merged) and a downloaded AccurateRip
+// database record, and turns them into one ProvenanceMerge.AudioTrackHint per audio track — the sector
+// span each track occupies in the flat merge image, plus the database entries to check it against.
+// Track indices follow the same convention as `dforge accuraterip`/`AccurateRip.Verify`: 0-based among
+// audio tracks only, in disc order (AccurateRip does not number data tracks).
+static IReadOnlyList<DiscForge.Core.Recovery.ProvenanceMerge.AudioTrackHint> BuildAudioTieBreakHints(
+    string cuePath, string arDbPath, int sectorSize, out string note)
+{
+    using var layout = DiscLayout.FromCueFile(cuePath);
+    var allTracks = layout.Tracks.OrderBy(t => t.Number).ToList();
+    var audioTracks = allTracks.Where(t => t.Mode == RawTrackMode.Audio).ToList();
+    if (audioTracks.Count == 0)
+    {
+        note = $"  ('{Path.GetFileName(cuePath)}' has no audio tracks — the AccurateRip tie-breaker has nothing to check; merging by sector vote as usual.)";
+        return Array.Empty<DiscForge.Core.Recovery.ProvenanceMerge.AudioTrackHint>();
+    }
+
+    // Cumulative sector offsets across EVERY track (data included) — this is how the flat raw
+    // image being merged actually addresses sectors, and also the TOC AccurateRip's disc ID is keyed on.
+    var offsets = new List<int>();
+    int lba = 0;
+    foreach (var t in allTracks) { offsets.Add(lba); lba += t.TotalSectors; }
+    offsets.Add(lba);   // lead-out
+
+    var (id1, id2, cddb) = DiscForge.Core.Audio.AccurateRip.DiscIds(offsets);
+    var chunks = DiscForge.Core.Audio.AccurateRipDatabase.Parse(File.ReadAllBytes(arDbPath));
+    var entries = DiscForge.Core.Audio.AccurateRipDatabase.ToEntries(chunks, (id1, id2, cddb));
+    if (entries.Count == 0)
+    {
+        note = $"  ('{Path.GetFileName(arDbPath)}' holds no pressing matching this disc's IDs (AR1={id1:X8} AR2={id2:X8} CDDB={cddb:X8}) — " +
+               "the tie-breaker has nothing to check against; merging by sector vote as usual.)";
+        return Array.Empty<DiscForge.Core.Recovery.ProvenanceMerge.AudioTrackHint>();
+    }
+
+    int firstNum = audioTracks.First().Number;
+    int lastNum = audioTracks.Last().Number;
+    var hints = new List<DiscForge.Core.Recovery.ProvenanceMerge.AudioTrackHint>();
+    int trackIdx = 0;
+    int runningLba = 0;
+    foreach (var t in allTracks)
+    {
+        if (t.Mode == RawTrackMode.Audio)
+        {
+            hints.Add(new DiscForge.Core.Recovery.ProvenanceMerge.AudioTrackHint(
+                TrackIndex: trackIdx, StartSector: runningLba, EndSectorInclusive: runningLba + t.TotalSectors - 1,
+                IsFirstTrack: t.Number == firstNum, IsLastTrack: t.Number == lastNum, Database: entries));
+            trackIdx++;
+        }
+        runningLba += t.TotalSectors;
+    }
+
+    note = $"  AccurateRip tie-breaker armed: {hints.Count} audio track(s) checked against {chunks.Count} pressing(s) in '{Path.GetFileName(arDbPath)}'.";
+    return hints;
 }
 
 static int DvdEccCmd(string[] args)
@@ -2141,8 +2275,7 @@ static int DeEmphCmd(string[] args)
         var filter = new DiscForge.Core.Audio.DeEmphasis(info.SampleRate);
         filter.ProcessInterleaved(pcm, info.Channels);
 
-        using (var outFs = File.Create(outPath))
-            DiscForge.Core.Audio.WavWriter.Write(outFs, pcm, info.SampleRate, info.Channels);
+        WriteFileAtomically(outPath, outFs => DiscForge.Core.Audio.WavWriter.Write(outFs, pcm, info.SampleRate, info.Channels));
 
         Console.WriteLine($"{Path.GetFileName(outPath)}: de-emphasised {info.Channels}ch/{info.SampleRate}Hz — " +
             $"high-shelf {filter.ResponseDb(info.SampleRate / 2.0):0.0} dB, 1 kHz {filter.ResponseDb(1000):0.00} dB.");
@@ -2217,8 +2350,7 @@ static int EcmCmd(string[] args)
     {
         long inSize = new FileInfo(inPath).Length;
         using (var inp = File.OpenRead(inPath))
-        using (var outp = File.Create(outPath))
-            DiscForge.Core.Raw.EcmCodec.Encode(inp, outp);
+            WriteFileAtomically(outPath, outp => DiscForge.Core.Raw.EcmCodec.Encode(inp, outp));
         long outSize = new FileInfo(outPath).Length;
         double pct = inSize > 0 ? 100.0 * (inSize - outSize) / inSize : 0;
         Console.WriteLine($"Wrote {Path.GetFileName(outPath)}: {inSize:N0} -> {outSize:N0} bytes " +
@@ -2243,10 +2375,9 @@ static int UnecmCmd(string[] args)
         return Fail("Refusing to write the output over the input; name the output file explicitly.");
     try
     {
-        long written;
+        long written = 0;
         using (var inp = File.OpenRead(inPath))
-        using (var outp = File.Create(outPath))
-            written = DiscForge.Core.Raw.EcmCodec.Decode(inp, outp);
+            WriteFileAtomically(outPath, outp => written = DiscForge.Core.Raw.EcmCodec.Decode(inp, outp));
         Console.WriteLine($"Wrote {Path.GetFileName(outPath)}: {written:N0} bytes (EDC verified).");
         return 0;
     }
@@ -2590,9 +2721,10 @@ static int ExtractSectors(string[] args)
         if (start >= access.TotalSectors)
             return Fail($"Start sector is past the end of the image ({access.TotalSectors:N0} sectors).");
 
-        using var output = File.Create(args[2]);
         var raw = new byte[2352];
         long written = 0;
+        WriteFileAtomically(args[2], output =>
+        {
         for (long s = start; s < end; s++)
         {
             var sec = access.Read(s);
@@ -2643,6 +2775,7 @@ static int ExtractSectors(string[] args)
             output.Write(payload, 0, payload.Length);
             written += payload.Length;
         }
+        });
         Console.WriteLine($"Extracted {end - start:N0} sector(s), {written:N0} bytes " +
                           $"({mode}{(byteswap ? ", byteswapped" : "")}) to {args[2]}");
         return 0;
@@ -2683,6 +2816,9 @@ static int ExtractSectorsDrive(string[] args)
         "  [--sub]                                   capture formatted Q to <out>.subq (16 bytes/sector) and analyse CRCs\n" +
         "  [--q-retries N]                           Q-only re-reads when a frame fails CRC (default 4)\n" +
         "  [--jitter]                                audio consensus: accept only two matching reads\n" +
+        "  [--adaptive-reread]                       Tier-B escalation (plain re-read, then C2-assisted,\n" +
+        "                                            then a slow 4x C2-assisted read) for a sector that has\n" +
+        "                                            already exhausted --retries, before it counts as failed\n" +
         "  [--no-audit]                              skip the automatic post-dump audit of the output file\n" +
         "  [--cert] [--cert-key <keyfile>]           emit a Dump Certificate sidecar (drive, settings, span grades,\n" +
         "                                            Merkle root over the sectors); --cert-key signs it (ECDSA)\n" +
@@ -2703,6 +2839,7 @@ static int ExtractSectorsDrive(string[] args)
     bool useC2 = !args.Contains("--no-c2");
     bool sub = args.Contains("--sub");
     bool jitter = args.Contains("--jitter");
+    bool adaptiveReread = args.Contains("--adaptive-reread");
     bool noAudit = args.Contains("--no-audit");
     for (int i = 3; i < args.Length; i++)
     {
@@ -2767,6 +2904,7 @@ static int ExtractSectorsDrive(string[] args)
             }
             if (useC2) { useC2 = false; if (!json) Console.WriteLine("note: C2 has no meaning on DVD/BD media — disabled."); }
             if (sub) { sub = false; if (!json) Console.WriteLine("note: --sub (CD subchannel) has no meaning on DVD/BD media — disabled."); }
+            if (adaptiveReread) { adaptiveReread = false; if (!json) Console.WriteLine("note: --adaptive-reread is a CD-only (READ CD) escalation — disabled on DVD/BD media."); }
         }
 
         // Resolve the extract mode into (label, start, end, audioHint, boundary, outPath) spans.
@@ -2832,6 +2970,7 @@ static int ExtractSectorsDrive(string[] args)
             CaptureSubcode = sub,
             JitterConsensus = jitter,
             QRetries = qRetries,
+            AdaptiveReread = adaptiveReread,
         };
 
         // Per-span options: data spans get the sync gate; boundary spans (audio pregaps
@@ -2857,7 +2996,8 @@ static int ExtractSectorsDrive(string[] args)
                 {
                     if (done % 512 == 0 || done == total)
                         Console.Write($"\r{span.Label}: {done:N0}/{total:N0} sectors…");
-                }));
+                }),
+                adaptiveReread ? reader : null);
             if (!json) Console.WriteLine();
             return result;
         }
@@ -3366,17 +3506,53 @@ static int RawVerifyReadback(string[] args)
             "  --partial          the read-back is an intentional sub-range (e.g. one track of a\n" +
             "                     mixed-mode disc read on its own) — grade the overlap only; do not\n" +
             "                     count the golden sectors beyond the read-back as dropouts.\n" +
-            "  --json             print the result as JSON (for scripting).");
+            "  --json             print the result as JSON (for scripting).\n" +
+            "  --debug-align      print the internal alignment computation (lead-in boundary,\n" +
+            "                     header-vs-Q base address, skew) instead of comparing — for working\n" +
+            "                     out WHY a verify landed where it did, not what changed.\n" +
+            "  --debug-align-search  brute-force every offset in a small window around the computed\n" +
+            "                     alignment, reporting exact main-channel match counts at each — the\n" +
+            "                     ground-truth check for whether the computed alignment is a few\n" +
+            "                     sectors off, and by how much.\n" +
+            "  --debug-q-scan     divide the whole track into 20 regions and report the Q sub-channel\n" +
+            "                     address match rate in each, with the dominant mismatch delta — for\n" +
+            "                     telling a constant addressing offset apart from one that changes\n" +
+            "                     partway through the track.");
     if (!File.Exists(args[1])) return Fail($"Golden image not found: {args[1]}");
     if (!File.Exists(args[2])) return Fail($"Read-back capture not found: {args[2]}");
     string? reportPath = null;
     bool json = false;
     bool partial = false;
+    bool debugAlign = args.Contains("--debug-align");
+    bool debugAlignSearch = args.Contains("--debug-align-search");
+    bool debugQScan = args.Contains("--debug-q-scan");
     for (int i = 3; i < args.Length; i++)
     {
         if (args[i] == "--report" && i + 1 < args.Length) reportPath = args[++i];
         else if (args[i] == "--json") json = true;
         else if (args[i] == "--partial") partial = true;
+    }
+
+    if (debugQScan)
+    {
+        using var g = File.OpenRead(args[1]);
+        using var r = File.OpenRead(args[2]);
+        Console.WriteLine(RawReadbackCompare.DebugQScan(g, r));
+        return 0;
+    }
+    if (debugAlignSearch)
+    {
+        using var g = File.OpenRead(args[1]);
+        using var r = File.OpenRead(args[2]);
+        Console.WriteLine(RawReadbackCompare.DebugAlignmentSearch(g, r));
+        return 0;
+    }
+    if (debugAlign)
+    {
+        using var g = File.OpenRead(args[1]);
+        using var r = File.OpenRead(args[2]);
+        Console.WriteLine(RawReadbackCompare.DebugAlignment(g, r));
+        return 0;
     }
 
     try
@@ -3931,6 +4107,122 @@ static int DetectOffsetCmd(string[] args)
     catch (Exception ex) { return Fail(ex.Message); }
 
     // The track's PCM plus `margin` frames both sides, zero-filled where the image ends.
+    static byte[] ReadPcmWindow(RawTrack t, int margin, out bool padded)
+    {
+        long marginBytes = (long)margin * 4;
+        long trackBytes = (long)t.LengthSectors * t.StoredSectorSize;
+        var buf = new byte[trackBytes + 2 * marginBytes];
+        long wantStart = t.SourceByteOffset - marginBytes;
+        long wantEnd = t.SourceByteOffset + trackBytes + marginBytes;
+        lock (t.Source)
+        {
+            long srcLen = t.Source.Length;
+            long readStart = Math.Max(0, wantStart);
+            long readEnd = Math.Min(srcLen, wantEnd);
+            padded = readStart > wantStart || readEnd < wantEnd;
+            t.Source.Position = readStart;
+            int into = (int)(readStart - wantStart);
+            int total = (int)(readEnd - readStart);
+            int done = 0;
+            while (done < total)
+            {
+                int n = t.Source.Read(buf, into + done, total - done);
+                if (n <= 0) break;
+                done += n;
+            }
+        }
+        return buf;
+    }
+}
+
+// Scan every audio track independently against the database, rather than assuming one offset
+// holds for the whole disc — detect-offset's own "only N/M tracks verify" outcome can't tell an
+// offset that shifted partway through the disc (a mastering anomaly) apart from ordinary rip
+// damage. This can, because it locates exactly where the offset changed.
+static int OffsetShiftScanCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge offset-shift-scan <image.cue> --db <dBAR.bin> [--range N]\n" +
+                    "  Sweeps EVERY audio track's own AccurateRip offset independently (unlike detect-offset,\n" +
+                    "  which sweeps one track and assumes the result holds for the whole disc) and reports\n" +
+                    "  whether the offset is consistent or changes partway through — a real mastering\n" +
+                    "  anomaly some discs have, which a single-track sweep can't tell apart from a damaged rip.\n" +
+                    "  Rip the disc WITHOUT offset correction first. Needs the same --db record as detect-offset.");
+    if (!File.Exists(args[1])) return Fail($"File not found: {args[1]}");
+    string? dbPath = OptVal(args, "--db");
+    if (dbPath is null) return Fail("offset-shift-scan needs --db <dBAR.bin> — fetch it via the URL from `accuraterip --url`.");
+    if (!File.Exists(dbPath)) return Fail($"Database record not found: {dbPath}");
+    int range = int.TryParse(OptVal(args, "--range"), out var rg) && rg is > 0 and <= 5000 ? rg : 600;
+
+    try
+    {
+        using var layout = DiscLayout.FromCueFile(args[1]);
+        var audioTracks = layout.Tracks.Where(t => t.Mode == RawTrackMode.Audio).OrderBy(t => t.Number).ToList();
+        if (audioTracks.Count == 0) return Fail("No audio tracks — read offsets are an audio-CD concept.");
+
+        var offsets = new List<int>();
+        int lba = 0;
+        foreach (var t in layout.Tracks.OrderBy(t => t.Number)) { offsets.Add(lba); lba += t.TotalSectors; }
+        offsets.Add(lba);
+        var ids = DiscForge.Core.Audio.AccurateRip.DiscIds(offsets);
+        var entries = DiscForge.Core.Audio.AccurateRipDatabase.ToEntries(
+            DiscForge.Core.Audio.AccurateRipDatabase.Parse(File.ReadAllBytes(dbPath)), ids);
+        if (entries.Count == 0)
+            return Fail("The database record holds no pressing matching this disc's IDs.");
+
+        int firstNum = audioTracks.First().Number, lastNum = audioTracks.Last().Number;
+        var results = new List<DiscForge.Core.Audio.OffsetDetection.TrackOffsetResult>();
+
+        Console.WriteLine($"Sweeping {audioTracks.Count} audio track(s) independently across offsets -{range}..+{range}…");
+        for (int idx = 0; idx < audioTracks.Count; idx++)
+        {
+            var t = audioTracks[idx];
+            bool isFirst = t.Number == firstNum, isLast = t.Number == lastNum;
+            int trackFrames = (int)(t.LengthSectors * 588);
+            var window = ReadPcmWindow(t, range, out bool padded);
+
+            var sweep = (!isFirst && !isLast)
+                ? DiscForge.Core.Audio.OffsetDetection.SweepV1(window, trackFrames, range)
+                : DiscForge.Core.Audio.OffsetDetection.BruteSweepV1(window, trackFrames, range, isFirst, isLast);
+            var hits = DiscForge.Core.Audio.OffsetDetection.Match(sweep, range, entries, idx);
+
+            if (hits.Count > 0)
+            {
+                var best = hits[0];
+                results.Add(new DiscForge.Core.Audio.OffsetDetection.TrackOffsetResult
+                {
+                    TrackNumber = t.Number, OffsetSamples = best.OffsetSamples, Confidence = best.Confidence,
+                });
+                Console.WriteLine($"  Track {t.Number,2}: {best.OffsetSamples:+#;-#;0} samples (confidence {best.Confidence})" +
+                                  (padded ? "  [margin zero-filled]" : ""));
+            }
+            else
+            {
+                results.Add(new DiscForge.Core.Audio.OffsetDetection.TrackOffsetResult { TrackNumber = t.Number, OffsetSamples = null });
+                Console.WriteLine($"  Track {t.Number,2}: no match in range" + (padded ? "  [margin zero-filled]" : ""));
+            }
+        }
+
+        var report = DiscForge.Core.Audio.OffsetDetection.AnalyzeRuns(results);
+        Console.WriteLine();
+        Console.WriteLine(report.Summary());
+
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                shiftDetected = report.ShiftDetected,
+                unmatchedCount = report.UnmatchedCount,
+                runs = report.Runs.Select(r => new { r.OffsetSamples, r.FirstTrack, r.LastTrack }),
+                tracks = report.Tracks.Select(t => new { t.TrackNumber, t.OffsetSamples, t.Confidence }),
+            });
+        }
+        return report.Runs.Count == 0 ? 1 : (report.ShiftDetected ? 2 : 0);
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+
+    // Same window-reading helper as detect-offset (kept local/duplicated rather than shared —
+    // both are small, self-contained, and this avoids coupling two independent commands).
     static byte[] ReadPcmWindow(RawTrack t, int margin, out bool padded)
     {
         long marginBytes = (long)margin * 4;
@@ -5019,9 +5311,11 @@ static int RomConvertCmd(string[] args)
 static int Ps1CardConvertCmd(string[] args)
 {
     if (args.Length < 3)
-        return Fail("usage: dforge ps1card-convert <in> <out> [raw|gme|vgs]\n" +
+        return Fail("usage: dforge ps1card-convert <in> <out> [raw|gme|vgs|vmp]\n" +
                     "  Container transform only — the 128 KB of card data is preserved byte-for-byte.\n" +
-                    "  Target defaults to the output extension (.gme→DexDrive, .vgs/.mem→VGS, else raw).");
+                    "  Target defaults to the output extension (.gme→DexDrive, .vgs/.mem→VGS, .vmp→VMP, else raw).\n" +
+                    "  A .vmp written here has no PS3/PSP signature (DiscForge has no Sony key material) —\n" +
+                    "  it carries the same byte-for-byte card data but won't authenticate on real hardware.");
     string inPath = args[1], outPath = args[2];
     if (!File.Exists(inPath)) return Fail($"File not found: {inPath}");
 
@@ -5031,6 +5325,7 @@ static int Ps1CardConvertCmd(string[] args)
     {
         "gme" or "dexdrive" => DiscForge.Core.PlayStation.Ps1CardFormat.DexDrive,
         "vgs" or "mem" => DiscForge.Core.PlayStation.Ps1CardFormat.Vgs,
+        "vmp" => DiscForge.Core.PlayStation.Ps1CardFormat.Vmp,
         _ => DiscForge.Core.PlayStation.Ps1CardFormat.Raw,
     };
 
@@ -5044,6 +5339,45 @@ static int Ps1CardConvertCmd(string[] args)
         return 0;
     }
     catch (DiscForge.Core.PlayStation.Ps1CardConvert.Ps1CardFormatException ex) { return Fail(ex.Message); }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+// Extract a PS3/PSP .psv single-save export to a raw 8 KB block (identify + unwrap), or wrap
+// a single-block save extracted from a card (ps1mc-list/ps1card-convert) into one.
+static int Ps1PsvCmd(string[] args)
+{
+    if (args.Length < 3)
+        return Fail("usage: dforge ps1-psv extract <in.psv> <out.blk>\n" +
+                    "       dforge ps1-psv wrap <productCode> <in.blk> <out.psv>\n" +
+                    "  extract: prints the product code and writes the raw 8 KB save block.\n" +
+                    "  wrap: builds a .psv from a single-block save. No PS3/PSP signature is written\n" +
+                    "  (DiscForge has no Sony key material) — the result won't authenticate on real\n" +
+                    "  hardware but carries the save data byte-for-byte for tools that read it directly.");
+    string mode = args[1].ToLowerInvariant();
+    try
+    {
+        if (mode == "extract")
+        {
+            if (args.Length < 4) return Fail("usage: dforge ps1-psv extract <in.psv> <out.blk>");
+            var data = File.ReadAllBytes(args[2]);
+            var save = DiscForge.Core.PlayStation.Ps1SingleSave.Read(data);
+            File.WriteAllBytes(args[3], save.SaveBlock);
+            Console.WriteLine($"product code: {save.ProductCode}");
+            Console.WriteLine($"wrote {Path.GetFileName(args[3])} ({save.SaveBlock.Length:N0} bytes).");
+            return 0;
+        }
+        if (mode == "wrap")
+        {
+            if (args.Length < 5) return Fail("usage: dforge ps1-psv wrap <productCode> <in.blk> <out.psv>");
+            var block = File.ReadAllBytes(args[3]);
+            var psv = DiscForge.Core.PlayStation.Ps1SingleSave.ToPsv(args[2], block);
+            File.WriteAllBytes(args[4], psv);
+            Console.WriteLine($"wrote {Path.GetFileName(args[4])} ({psv.Length:N0} bytes) — unsigned, see usage note above.");
+            return 0;
+        }
+        return Fail($"Unknown mode '{mode}' — use 'extract' or 'wrap'.");
+    }
+    catch (DiscForge.Core.PlayStation.Ps1PsvFormatException ex) { return Fail(ex.Message); }
     catch (Exception ex) { return Fail(ex.Message); }
 }
 
@@ -6026,6 +6360,60 @@ static int DiscBomCmd(string[] args)
     catch (Exception ex) { return Fail(ex.Message); }
 }
 
+// A dedicated "is this a prototype, not the retail disc?" pass: leftover debug files, debug
+// strings/embedded PDB references in executables, and (optionally) a diff against a known-retail
+// file manifest. Detection and documentation only — a hit here is worth a second look, not proof.
+static int PrototypeScanCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge prototype-scan <image.iso> [--baseline <retail.json>] [--emit-baseline <out.json>] [--json]\n" +
+                    "  Looks for prototype/debug-build residue: leftover symbol/map files, a debug/devkit\n" +
+                    "  directory, debug strings or an embedded PDB path (CodeView RSDS signature) inside a\n" +
+                    "  scanned executable, and — with --baseline — a diff against a known-retail file manifest\n" +
+                    "  (path/size/SHA-256 per file: build one with --emit-baseline against a known-good image).\n" +
+                    "  Detection and documentation only; a hit is worth a closer look, never a verdict.");
+    string path = args[1];
+    if (!File.Exists(path)) return Fail($"File not found: {path}");
+    try
+    {
+        var jsonOpts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+        var image = File.ReadAllBytes(path);
+
+        if (OptVal(args, "--emit-baseline") is { } emitPath)
+        {
+            var built = DiscForge.Core.Forensics.PrototypeScanner.BuildBaseline(image);
+            File.WriteAllText(emitPath, System.Text.Json.JsonSerializer.Serialize(built, jsonOpts));
+            Console.WriteLine($"Wrote {Path.GetFileName(emitPath)} — {built.Count} file(s), for future prototype-scan --baseline runs.");
+            return 0;
+        }
+
+        IReadOnlyList<DiscForge.Core.Forensics.BaselineEntry>? baseline = null;
+        if (OptVal(args, "--baseline") is { } basePath)
+        {
+            if (!File.Exists(basePath)) return Fail($"Baseline file not found: {basePath}");
+            baseline = System.Text.Json.JsonSerializer.Deserialize<List<DiscForge.Core.Forensics.BaselineEntry>>(
+                File.ReadAllText(basePath), jsonOpts)
+                ?? throw new InvalidDataException($"'{basePath}' is not a readable baseline (expected a JSON array of {{Path,Size,Sha256}}).");
+        }
+
+        var report = DiscForge.Core.Forensics.PrototypeScanner.FromIso(image, baseline);
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                file = Path.GetFileName(path), report.VolumeId, report.BuildDate, report.FileCount,
+                looksLikePrototype = report.LooksLikePrototype,
+                residue = report.Residue.Select(r => new { kind = r.Kind.ToString(), r.Detail, r.InFile }),
+                baselineDiff = report.BaselineDiff.Select(d => new { kind = d.Kind.ToString(), d.Path, d.Detail }),
+            });
+            return report.LooksLikePrototype ? 2 : 0;
+        }
+        Console.WriteLine($"{Path.GetFileName(path)}: {DiscForge.Core.Forensics.PrototypeScanner.Render(report)}");
+        return report.LooksLikePrototype ? 2 : 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
 // Generate or verify a Cybdyn CU2 track-map sidecar from a cue and its data file.
 static int Cu2Cmd(string[] args)
 {
@@ -6868,9 +7256,8 @@ static int IsoCreateCmd(string[] args)
 
     try
     {
-        DiscForge.Core.Iso.IsoFromFolderResult r;
-        using (var os = File.Create(outIso))
-            r = DiscForge.Core.Iso.IsoFromFolder.Write(folder, volumeId, os, joliet, rockRidge, bootImg, bootMedia, efiBootImg);
+        DiscForge.Core.Iso.IsoFromFolderResult r = default!;
+        WriteFileAtomically(outIso, os => r = DiscForge.Core.Iso.IsoFromFolder.Write(folder, volumeId, os, joliet, rockRidge, bootImg, bootMedia, efiBootImg));
 
         // Dual-layer territory? Plan the layer break up front so burn time holds no surprises: legal
         // candidates are 16-sector ECC-block boundaries with layer 0 ≥ layer 1 (OTP) and within the
@@ -7431,14 +7818,18 @@ static int DumpCertCmd(string[] args)
     const string usage =
         "usage:\n" +
         "  dforge dump-cert <image.bin> [--key f | --gen-key] [--drive s] [--firmware s] [--settings s]\n" +
-        "                   [--note s] [--sector-size N] [--json]     create <image>.dcert.json\n" +
+        "                   [--note s] [--sector-size N] [--scan-protection] [--json]  create <image>.dcert.json\n" +
         "  dforge dump-cert verify <cert.dcert.json> [image.bin] [--pub keyfile] [--json]\n" +
         "  dforge dump-cert prove <cert.dcert.json> <image.bin> --sector N [--out proof.json]\n" +
         "  dforge dump-cert check <cert.dcert.json> <proof.json> <image.bin | slice.bin>\n" +
         "  A certificate records WHAT was dumped (SHA-256 + a Merkle tree over the sectors) and the\n" +
         "  context (drive, settings, sidecar counts), signed with ECDSA P-256. `prove` extracts a\n" +
         "  ~18-hash audit path for one sector; `check` verifies a slice against the signed root\n" +
-        "  WITHOUT the rest of the image. Keys are merge-cert's base64 format (shareable).";
+        "  WITHOUT the rest of the image. Keys are merge-cert's base64 format (shareable).\n" +
+        "  --scan-protection fingerprints copy protection from the image and, if a detected scheme\n" +
+        "  (e.g. StarForce, some SecuROM) authenticates via a physical-media signal — DPM laser-timing\n" +
+        "  variance from the pressing — no image can hold, records that honestly on the certificate:\n" +
+        "  \"verified 1:1\" then means the sector/subchannel data, not necessarily the full protection.";
     if (args.Length < 2) return Fail(usage);
 
     try
@@ -7462,7 +7853,8 @@ static int DumpCertCmd(string[] args)
             if (args.Contains("--json"))
             {
                 EmitJson(new { certificate = Path.GetFileName(args[2]), cert.Image, cert.SectorCount,
-                               cert.MerkleRoot, signed = cert.Signed, signatureValid = sigOk, imageValid = imgOk });
+                               cert.MerkleRoot, signed = cert.Signed, signatureValid = sigOk, imageValid = imgOk,
+                               physicalCaptureCaveat = cert.PhysicalCaptureCaveat });
                 return (cert.Signed ? sigOk : true) && imgOk != false ? 0 : 2;
             }
             Console.WriteLine($"{Path.GetFileName(args[2])}: {cert.Image}, {cert.SectorCount:N0} sector(s) of {cert.SectorSize}, dumped {cert.CreatedUtc}");
@@ -7474,6 +7866,7 @@ static int DumpCertCmd(string[] args)
             Console.WriteLine($"  merkle:     {cert.MerkleRoot}");
             Console.WriteLine(!cert.Signed ? "  signature:  (unsigned)" : $"  signature:  {(sigOk ? "VALID" : "INVALID")}");
             if (imgOk is { } io) Console.WriteLine($"  image:      {(io ? "matches the certificate (file hash + Merkle root)" : "DOES NOT match the certificate")}");
+            if (cert.PhysicalCaptureCaveat is { Length: > 0 }) Console.WriteLine($"  caveat:     {cert.PhysicalCaptureCaveat}");
             return (cert.Signed ? sigOk : true) && imgOk != false ? 0 : 2;
         }
 
@@ -7556,6 +7949,23 @@ static int DumpCertCmd(string[] args)
             catch { /* a corrupt sidecar shouldn't block certification */ }
         }
 
+        // Optional honest-catalog pass: fingerprint copy protection from the image and, when a
+        // detected scheme has a physical-media-only component (StarForce, some SecuROM — see
+        // CopyProtectionCatalog), fold a plain-language caveat into the certificate so "verified
+        // 1:1" isn't read as "this disc's protection was fully captured." Best-effort and opt-in
+        // (--scan-protection): a full-image scan costs a read + ISO parse, so it's not forced on
+        // every certificate, and any failure here must never block certificate creation.
+        string? physicalCaveat = null;
+        if (args.Contains("--scan-protection"))
+        {
+            try
+            {
+                var scan = DiscForge.Core.Forensics.CopyProtectionCatalog.FromIso(File.ReadAllBytes(imagePath));
+                physicalCaveat = scan.PhysicalCaptureCaveat();
+            }
+            catch { /* best-effort — an unreadable/non-ISO image just yields no caveat */ }
+        }
+
         cert2 = cert2 with
         {
             Drive = OptVal(args, "--drive"),
@@ -7565,6 +7975,7 @@ static int DumpCertCmd(string[] args)
             ToolVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3),
             UnreadableCount = Math.Max(0, unreadable),
             BoundaryCount = boundary,
+            PhysicalCaptureCaveat = physicalCaveat,
         };
 
         if (args.Contains("--gen-key") || OptVal(args, "--key") is not null)
@@ -7586,7 +7997,8 @@ static int DumpCertCmd(string[] args)
         if (args.Contains("--json"))
         {
             EmitJson(new { certificate = Path.GetFileName(certOut), cert2.Image, cert2.ImageBytes,
-                           cert2.SectorCount, cert2.ImageSha256, cert2.MerkleRoot, signed = cert2.Signed });
+                           cert2.SectorCount, cert2.ImageSha256, cert2.MerkleRoot, signed = cert2.Signed,
+                           physicalCaptureCaveat = cert2.PhysicalCaptureCaveat });
             return 0;
         }
         Console.WriteLine($"Wrote {Path.GetFileName(certOut)} — {cert2.SectorCount:N0} sector(s), " +
@@ -7594,6 +8006,8 @@ static int DumpCertCmd(string[] args)
                           (args.Contains("--gen-key") ? $" (+ {Path.GetFileName(imagePath)}.key — keep it safe)" : ""));
         Console.WriteLine($"  verify anytime:  dforge dump-cert verify {Path.GetFileName(certOut)} {Path.GetFileName(imagePath)}");
         Console.WriteLine($"  prove any slice: dforge dump-cert prove {Path.GetFileName(certOut)} {Path.GetFileName(imagePath)} --sector N");
+        if (cert2.PhysicalCaptureCaveat is { Length: > 0 })
+            Console.WriteLine($"  note: {cert2.PhysicalCaptureCaveat}");
         return 0;
     }
     catch (Exception ex) { return Fail(ex.Message); }
@@ -9769,23 +10183,34 @@ static int DiscMriCmd(string[] args)
 {
     if (args.Length < 2)
         return Fail("usage: dforge disc-mri <image.bin | image.cue> [out.svg|out.png] [--map <sidecar.json>] [--size N]\n" +
+                    "                       [--plan-reread [out.json]]\n" +
                     "  Renders per-sector evidence as a polar map of the PHYSICAL disc (real Red Book\n" +
                     "  spiral geometry), so damage shows its true shape: a radial streak is a scratch,\n" +
                     "  a ring is a pressing defect, a bloom from the hub is rot, a solid outer band is\n" +
                     "  a muted/failed read region. A cue supplies per-track audio/data knowledge; the\n" +
                     "  dump's .badsectors.json sidecar (auto-detected, or --map) overlays recorded holes\n" +
                     "  and track-boundary sectors. Worst evidence wins per pixel — damage never hides.\n" +
-                    "  Output: .svg (map + legend, default) or .png (bare map). --size sets map pixels (default 1200).");
+                    "  Output: .svg (map + legend, default) or .png (bare map). --size sets map pixels (default 1200).\n" +
+                    "  --plan-reread closes the loop: turns the same evidence into a targeted, escalating\n" +
+                    "  re-read plan (coalesced ranges + suggested pass count), the way 'secure-rip-plan' does\n" +
+                    "  for audio tracks — printed, and written as JSON if a path is given.");
 
     string inPath = args[1];
     if (!File.Exists(inPath)) return Fail($"File not found: {inPath}");
     string? outArg = args.Length > 2 && !args[2].StartsWith("--") ? args[2] : null;
     string? mapArg = null;
     int size = 1200;
+    bool planReread = false;
+    string? planOutArg = null;
     for (int i = 2; i < args.Length; i++)
     {
         if (args[i] == "--map" && i + 1 < args.Length) mapArg = args[++i];
         else if (args[i] == "--size" && i + 1 < args.Length) int.TryParse(args[++i], out size);
+        else if (args[i] == "--plan-reread")
+        {
+            planReread = true;
+            if (i + 1 < args.Length && !args[i + 1].StartsWith("--")) planOutArg = args[++i];
+        }
     }
 
     try
@@ -9856,6 +10281,33 @@ static int DiscMriCmd(string[] args)
         if (spans is null)
             Console.WriteLine("note: no cue given — sync-less sectors could be audio OR voids; " +
                               "run on the .cue (or a --disc dump) for an unambiguous map.");
+
+        if (planReread)
+        {
+            var plan = DiscForge.Core.Forensics.DiscMri.PlanReread(evidence);
+            if (plan.Nothing)
+                Console.WriteLine("plan-reread: nothing to re-read — no EDC-failed, void or unreadable sectors.");
+            else
+            {
+                Console.WriteLine($"plan-reread: {plan.Ranges.Count} range(s), {plan.Ranges.Sum(r => r.Count):N0} sector(s) total, " +
+                                  $"{plan.SuggestedPasses} suggested pass(es).");
+                Console.WriteLine($"  {plan.Strategy}");
+                foreach (var r in plan.Ranges.Take(20))
+                    Console.WriteLine($"    [{r.StartSector:N0} .. {r.StartSector + r.Count - 1:N0}]  {r.Count:N0} sector(s)  worst={r.Worst}");
+                if (plan.Ranges.Count > 20) Console.WriteLine($"    ... and {plan.Ranges.Count - 20} more range(s).");
+            }
+            if (planOutArg is not null)
+            {
+                var jsonOpts = new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+                };
+                File.WriteAllText(planOutArg, System.Text.Json.JsonSerializer.Serialize(plan, jsonOpts));
+                Console.WriteLine($"  Wrote {Path.GetFileName(planOutArg)}.");
+            }
+        }
+
         return damage > 0 ? 2 : 0;
     }
     catch (Exception ex) { return Fail(ex.Message); }
@@ -9966,15 +10418,16 @@ static int ReconstructCmd(string[] args)
 static int PsxMcFormatCmd(string[] args)
 {
     if (args.Length < 2)
-        return Fail("usage: dforge psxmc-format <out.mcr> [raw|gme|vgs]\n" +
+        return Fail("usage: dforge psxmc-format <out.mcr> [raw|gme|vgs|vmp]\n" +
                     "  Writes a freshly-formatted, empty 128 KB PS1 memory card (15 free blocks).\n" +
-                    "  Container defaults to the output extension (.gme->DexDrive, .vgs/.mem->VGS), else raw.");
+                    "  Container defaults to the output extension (.gme->DexDrive, .vgs/.mem->VGS, .vmp->VMP), else raw.");
     string outPath = args[1];
     string sel = args.Length >= 3 ? args[2].ToLowerInvariant() : Path.GetExtension(outPath).TrimStart('.').ToLowerInvariant();
     var target = sel switch
     {
         "gme" or "dexdrive" => DiscForge.Core.PlayStation.Ps1CardFormat.DexDrive,
         "vgs" or "mem" => DiscForge.Core.PlayStation.Ps1CardFormat.Vgs,
+        "vmp" => DiscForge.Core.PlayStation.Ps1CardFormat.Vmp,
         _ => DiscForge.Core.PlayStation.Ps1CardFormat.Raw,
     };
     try
@@ -10794,6 +11247,8 @@ static int DatVerify(string[] args)
         {
             Console.WriteLine($"  ✓ {Path.GetFileName(args[a])}  →  {m.Rom!.Game}");
             Console.WriteLine($"      {m.Rom.Name}");
+            var tags = DiscForge.Core.Dat.DatNameTagParser.Parse(m.Rom.Description ?? m.Rom.Game);
+            Console.WriteLine($"      tags: {tags.Summary()}");
             verified++;
         }
         else
@@ -10805,6 +11260,20 @@ static int DatVerify(string[] args)
     }
     Console.WriteLine($"{verified} verified, {failed} not verified.");
     return failed > 0 ? 1 : 0;
+}
+
+static int DatTagsCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge dat-tags \"<catalogued name>\" [--json]\n" +
+                    "  Parses a No-Intro/Redump-style catalogued name — \"Title (Region) (Rev N) (Demo)…\" —\n" +
+                    "  into structured region/revision/disc/variant fields, without needing to hand-read the\n" +
+                    "  free text. Feed it a DAT match's game name or description (from dat-verify) to get a\n" +
+                    "  revision- and variant-aware read of which catalogued dump you have.");
+    var tags = DiscForge.Core.Dat.DatNameTagParser.Parse(args[1]);
+    if (args.Contains("--json")) { EmitJson(tags); return 0; }
+    Console.WriteLine(tags.Summary());
+    return 0;
 }
 
 // Build a Redump/No-Intro-style DAT by hashing a folder of dumps.
@@ -10897,8 +11366,7 @@ static int CisoToIso(string[] args)
     try
     {
         using (var input = File.OpenRead(args[1]))
-        using (var output = File.Create(args[2]))
-            DiscForge.Core.Ciso.CisoImage.Decompress(input, output);
+        WriteFileAtomically(args[2], output => DiscForge.Core.Ciso.CisoImage.Decompress(input, output));
         Console.WriteLine($"Decompressed to {Path.GetFileName(args[2])} ({new FileInfo(args[2]).Length:N0} bytes).");
         return 0;
     }
@@ -10914,8 +11382,7 @@ static int IsoToCiso(string[] args)
     {
         long size = new FileInfo(args[1]).Length;
         using (var input = File.OpenRead(args[1]))
-        using (var output = File.Create(args[2]))
-            DiscForge.Core.Ciso.CisoImage.Compress(input, size, output);
+        WriteFileAtomically(args[2], output => DiscForge.Core.Ciso.CisoImage.Compress(input, size, output));
         long comp = new FileInfo(args[2]).Length;
         Console.WriteLine($"Compressed to {Path.GetFileName(args[2])} ({comp:N0} bytes, " +
                           $"{100.0 * comp / Math.Max(1, size):N1}% of original).");
@@ -11159,6 +11626,84 @@ static int GciExtract(string[] args)
         var gci = DiscForge.Core.Saves.GcMemoryCardReader.ExtractSaveToGci(data, card.Saves[index]);
         File.WriteAllBytes(args[3], gci);
         Console.WriteLine($"Wrote {gci.Length:N0} bytes to {args[3]}");
+        return 0;
+    }
+    catch (DiscForge.Core.Saves.GcSaveFormatException ex) { return Fail(ex.Message); }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int GciBanner(string[] args)
+{
+    if (args.Length < 3)
+        return Fail("usage: dforge gci-banner <file.gci | card[:index]> <out-dir>\n" +
+                     "  Decodes a save's OWN banner/icon (as shown in the memory-card manager) to PNG —\n" +
+                     "  not the disc's opening.bnr (use gcm-banner for that). For a whole-card image, give\n" +
+                     "  the save's directory index after a colon, e.g. mycard.raw:3; omit it to list saves.\n" +
+                     "  Only the first icon frame is decoded (see GcSaveBannerReader for why).");
+    string target = args[1], outDir = args[2];
+    string cardPath = target;
+    int? index = null;
+    int colon = target.LastIndexOf(':');
+    if (colon > 1 && int.TryParse(target[(colon + 1)..], out int parsedIndex))
+    {
+        cardPath = target[..colon];
+        index = parsedIndex;
+    }
+    if (!File.Exists(cardPath)) return Fail($"File not found: {cardPath}");
+
+    try
+    {
+        var data = File.ReadAllBytes(cardPath);
+        DiscForge.Core.Saves.GcSave save;
+        byte[] payload;
+
+        if (DiscForge.Core.Saves.GcMemoryCardReader.IsGcMemoryCard(data))
+        {
+            var card = DiscForge.Core.Saves.GcMemoryCardReader.Read(data);
+            if (index is null)
+            {
+                Console.WriteLine($"GameCube memory card: {card.Saves.Count} save(s) — pick one with " +
+                                   $"{cardPath}:<index>");
+                for (int i = 0; i < card.Saves.Count; i++)
+                    Console.WriteLine($"  [{i}] {card.Saves[i].GameCode}/{card.Saves[i].Maker} {card.Saves[i].FileName}");
+                return 0;
+            }
+            if (index < 0 || index >= card.Saves.Count)
+                return Fail($"Save index {index} out of range (0..{card.Saves.Count - 1}).");
+            save = card.Saves[index.Value];
+            payload = DiscForge.Core.Saves.GcMemoryCardReader.GetSavePayload(data, save);
+        }
+        else if (DiscForge.Core.Saves.GciReader.IsGci(data))
+        {
+            save = DiscForge.Core.Saves.GciReader.Read(data);
+            payload = DiscForge.Core.Saves.GciReader.Payload(data);
+        }
+        else
+        {
+            return Fail("Not a GameCube .gci or memory-card image.");
+        }
+
+        Directory.CreateDirectory(outDir);
+        int wrote = 0;
+
+        var banner = DiscForge.Core.Saves.GcSaveBannerReader.DecodeBanner(save, payload);
+        if (banner is not null)
+        {
+            string bannerPath = Path.Combine(outDir, $"{save.FileName.Trim()}_banner.png".Replace(' ', '_'));
+            File.WriteAllBytes(bannerPath, DiscForge.Core.Util.PngWriter.EncodeRgba(banner.Rgba, banner.Width, banner.Height));
+            Console.WriteLine($"{Path.GetFileName(bannerPath)}  {banner.Width}×{banner.Height} {banner.Format}");
+            wrote++;
+        }
+        var icon = DiscForge.Core.Saves.GcSaveBannerReader.DecodeIcon(save, payload);
+        if (icon is not null)
+        {
+            string iconPath = Path.Combine(outDir, $"{save.FileName.Trim()}_icon.png".Replace(' ', '_'));
+            File.WriteAllBytes(iconPath, DiscForge.Core.Util.PngWriter.EncodeRgba(icon.Rgba, icon.Width, icon.Height));
+            Console.WriteLine($"{Path.GetFileName(iconPath)}  {icon.Width}×{icon.Height} {icon.Format} (first frame only)");
+            wrote++;
+        }
+        if (wrote == 0)
+            return Fail("This save declares no banner/icon image (or its offset doesn't fit the payload).");
         return 0;
     }
     catch (DiscForge.Core.Saves.GcSaveFormatException ex) { return Fail(ex.Message); }
@@ -11986,6 +12531,109 @@ static int BurnRawCmd(string[] args)
 #endif
 }
 
+static int BurnPlanCmd(string[] args)
+{
+    if (args.Contains("--help") || args.Contains("-h"))
+        return Fail("usage: dforge burn-plan [--write-type packet|tao|sao|raw|layerjump] [--burn-proof]\n" +
+                    "                        [--link-size N] [--test-write] [--speed Nx] [--no-opc]\n" +
+                    "                        [--reserve-track SECTORS] [--json]\n" +
+                    "  Computes and prints a burn's EXACT SCSI/MMC command sequence for a given set of write\n" +
+                    "  knobs — MODE SELECT(10)'s Write Parameters page (page 0x05) byte-for-byte, SET CD SPEED,\n" +
+                    "  SEND OPC, and CLOSE TRACK/SESSION — entirely offline, no drive needed. Every CDB comes\n" +
+                    "  from the same pure builders (WriteParametersPage/MmcCommands/SetCdSpeed) the live SPTI\n" +
+                    "  burn engines use, so this is a faithful preview, not a guess. ImgBurn has no equivalent:\n" +
+                    "  it burns and logs what happened, but gives you no way to see, diff or archive the exact\n" +
+                    "  planned command sequence before a disc is ever in the drive — useful for debugging across\n" +
+                    "  drives, and for folding a burn's exact parameters into a preservation record (see `lineage`).\n" +
+                    "  --write-type defaults to sao (Session-At-Once/DAO); raw is the RAW DAO-96 shape `burn-raw\n" +
+                    "  --engine spti` actually uses. --speed takes a multiplier (e.g. 8 for 8x); omit for drive max.");
+
+    string writeTypeArg = (OptVal(args, "--write-type") ?? "sao").ToLowerInvariant();
+    var writeType = writeTypeArg switch
+    {
+        "packet" => DiscForge.Core.Mmc.CdWriteType.Packet,
+        "tao" => DiscForge.Core.Mmc.CdWriteType.TrackAtOnce,
+        "sao" or "dao" => DiscForge.Core.Mmc.CdWriteType.SessionAtOnce,
+        "raw" => DiscForge.Core.Mmc.CdWriteType.Raw,
+        "layerjump" => DiscForge.Core.Mmc.CdWriteType.LayerJump,
+        var other => throw new ArgumentException($"--write-type must be packet|tao|sao|raw|layerjump, not '{other}'."),
+    };
+    byte? linkSize = byte.TryParse(OptVal(args, "--link-size"), out var ls) ? ls : null;
+    int? speed = int.TryParse(OptVal(args, "--speed"), out var sp) ? sp : null;
+    uint? reserve = uint.TryParse(OptVal(args, "--reserve-track"), out var rt) ? rt : null;
+
+    try
+    {
+        var knobs = new DiscForge.Core.Mmc.BurnKnobs
+        {
+            WriteType = writeType,
+            TestWrite = args.Contains("--test-write"),
+            BurnProof = args.Contains("--burn-proof"),
+            LinkSize = linkSize,
+            RequestOpc = !args.Contains("--no-opc"),
+            WriteSpeedMultiplier = speed,
+            ReserveTrackSectors = reserve,
+        };
+        var plan = DiscForge.Core.Mmc.BurnCommandPlanner.Plan(knobs);
+
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                writeType = knobs.WriteType.ToString(),
+                knobs.TestWrite,
+                knobs.BurnProof,
+                knobs.LinkSize,
+                knobs.RequestOpc,
+                knobs.WriteSpeedMultiplier,
+                knobs.ReserveTrackSectors,
+                writeParametersPageHex = plan.WriteParametersPageHex,
+                steps = plan.Steps.Select(s => new { s.Name, opcode = $"0x{s.Opcode:X2}", s.Cdb, s.Description }),
+            });
+            return 0;
+        }
+        Console.WriteLine(plan.Render());
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int DumpSessionCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge dump-session <image> [--json]\n" +
+                    "  Shows the dump-session sidecar (<image>.dumpsession.json) that `read-disc` writes\n" +
+                    "  alongside a dump: the exact drive vendor/model/firmware, engine, retry policy and\n" +
+                    "  outcome that produced it — the \"how\", next to a hash manifest's \"what\". No file is\n" +
+                    "  created by this command; it only reads whatever session record already exists.");
+    string imagePath = args[1];
+    try
+    {
+        var session = DiscForge.Core.Preservation.DumpSessionRecorder.ReadSidecar(imagePath);
+        if (session is null)
+            return Fail($"No session record found at '{DiscForge.Core.Preservation.DumpSessionRecorder.SidecarPath(imagePath)}'.");
+
+        if (args.Contains("--json")) { EmitJson(session); return 0; }
+
+        Console.WriteLine($"{Path.GetFileName(imagePath)} — dump session record");
+        Console.WriteLine($"  operation:  {session.Operation}  (DiscForge {session.ToolVersion}, {session.UtcTimestamp:u})");
+        if (session.DriveVendor is not null || session.DriveModel is not null)
+            Console.WriteLine($"  drive:      {session.DriveVendor} {session.DriveModel}" +
+                (session.DriveFirmware is null ? "" : $"  fw {session.DriveFirmware}"));
+        if (session.Engine is not null) Console.WriteLine($"  engine:     {session.Engine}");
+        if (session.MediaProfile is not null) Console.WriteLine($"  media:      {session.MediaProfile}");
+        if (session.RetryCount is int rc) Console.WriteLine($"  retries:    {rc}");
+        if (session.ContinueOnError is bool coe) Console.WriteLine($"  continue-on-error: {coe}");
+        if (session.ReadOffsetSamples is int ro) Console.WriteLine($"  read offset: {ro} samples");
+        if (session.C2Requested is bool c2) Console.WriteLine($"  C2 requested: {c2}");
+        if (session.JitterCorrection is bool jc) Console.WriteLine($"  jitter correction: {jc}");
+        if (session.WriteSpeedMultiplier is int ws) Console.WriteLine($"  write speed: {ws}x");
+        if (session.Outcome is not null) Console.WriteLine($"  outcome:    {session.Outcome}");
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
 static int BurnCmd(string[] args)
 {
     if (args.Length < 2)
@@ -12052,7 +12700,7 @@ static int BurnCmd(string[] args)
 static int ReadDiscCmd(string[] args)
 {
     if (args.Length < 3)
-        return Fail("usage: dforge read-disc <drive> <out.iso> [--continue-on-error] [--retries N]\n" +
+        return Fail("usage: dforge read-disc <drive> <out.iso> [--continue-on-error] [--retries N] [--resume]\n" +
                     "  Image a data disc (DVD, Blu-ray, or a data CD/DVD) to a flat .iso by copying every\n" +
                     "  2048-byte sector. Pair it with `burn` to clone a personal, unencrypted disc:\n" +
                     "      dforge read-disc D: game.iso      (Windows: <drive> is the drive letter)\n" +
@@ -12061,11 +12709,15 @@ static int ReadDiscCmd(string[] args)
                     "  and stops on a copy-protected sector — DiscForge images unencrypted discs only.\n" +
                     "  For an audio or mixed-mode CD, rip it track-by-track in the GUI (Read Disc) instead.\n" +
                     "  --continue-on-error zero-fills unreadable sectors and lists them (partial image);\n" +
-                    "  --retries N sets per-sector re-reads before giving up (default 3).");
+                    "  --retries N sets per-sector re-reads before giving up (default 3).\n" +
+                    "  --resume picks up an interrupted dump of the SAME disc where it left off, using the\n" +
+                    "  <out.iso>.resume.json checkpoint written during the previous attempt (refused if the\n" +
+                    "  checkpoint's disc capacity doesn't match — that means a different disc, not this one).");
 
     string outPath = args[2];
     bool cont = args.Contains("--continue-on-error");
     int retries = int.TryParse(OptVal(args, "--retries"), out var rt) && rt >= 0 ? rt : 3;
+    bool resume = args.Contains("--resume");
 
 #if WINDOWS
     string spec = args[1].TrimEnd(':', '\\', '/');
@@ -12082,17 +12734,107 @@ static int ReadDiscCmd(string[] args)
         // Size the disc first so the user sees what they're about to copy.
         var cap = DiscForge.Devices.Reading.DataDiscImager.ReadCapacity(letter);
         Console.WriteLine($"Drive {letter}: — {cap.Sectors:N0} sectors × {cap.BlockLengthBytes} bytes = {cap.TotalBytes / (1024.0 * 1024.0):N1} MiB");
+
+        // Resume: pick up from a prior checkpoint if one exists and --resume asked for it.
+        // A checkpoint that doesn't match THIS disc's capacity is refused outright rather than
+        // silently splicing two different images together.
+        uint startLba = 0;
+        var existingCheckpoint = DiscForge.Core.Preservation.DumpCheckpointRecorder.ReadSidecar(outPath);
+        if (resume)
+        {
+            if (existingCheckpoint is null)
+                Console.WriteLine("  --resume: no checkpoint found — starting a fresh read.");
+            else if (!existingCheckpoint.MatchesCapacity(cap.Sectors, cap.BlockLengthBytes))
+                return Fail($"--resume: the checkpoint at {Path.GetFileName(DiscForge.Core.Preservation.DumpCheckpointRecorder.SidecarPath(outPath))} " +
+                            $"is for a {existingCheckpoint.TotalSectors:N0}-sector disc, but this one reports {cap.Sectors:N0} sectors — " +
+                            "that looks like a different disc. Delete the .resume.json to start fresh instead.");
+            else
+            {
+                startLba = existingCheckpoint.NextLba;
+                Console.WriteLine($"  --resume: continuing from LBA {startLba:N0}/{cap.Sectors:N0} " +
+                                  $"(checkpoint from {existingCheckpoint.UtcTimestamp:u}).");
+            }
+        }
+        else if (existingCheckpoint is not null)
+        {
+            Console.WriteLine($"  note: a checkpoint from an earlier incomplete dump of this file exists " +
+                              $"(stopped at LBA {existingCheckpoint.NextLba:N0}). Pass --resume to continue it, " +
+                              "or it will be overwritten by this fresh read.");
+        }
+
         Console.WriteLine($"Imaging to {Path.GetFileName(outPath)}…");
 
+        // Checkpoint on every progress tick, throttled to avoid hammering the disk on a fast
+        // reader — the checkpoint file is tiny, but there is no reason to rewrite it thousands
+        // of times a second. Written synchronously in-line with the read, so an abrupt stop
+        // (Ctrl+C, a crash) always leaves the LAST reported position intact, never a half-write.
+        var checkpointClock = System.Diagnostics.Stopwatch.StartNew();
         var progress = new Progress<DiscForge.Devices.Reading.ReadProgress>(p =>
-            Console.Write($"\r  {p.Detail}    "));
+        {
+            Console.Write($"\r  {p.Detail}    ");
+            if (checkpointClock.ElapsedMilliseconds >= 500 && p.SectorsDone < p.SectorsTotal)
+            {
+                checkpointClock.Restart();
+                try
+                {
+                    DiscForge.Core.Preservation.DumpCheckpointRecorder.WriteSidecar(new DiscForge.Core.Preservation.DumpCheckpoint
+                    {
+                        Operation = "read-disc",
+                        NextLba = p.SectorsDone,
+                        TotalSectors = cap.Sectors,
+                        BlockLengthBytes = cap.BlockLengthBytes,
+                        RetryCount = retries,
+                        ContinueOnError = cont,
+                        UtcTimestamp = DateTime.UtcNow,
+                    }, outPath);
+                }
+                catch { /* a failed checkpoint write costs a resume, not the dump in progress */ }
+            }
+        });
 
         DiscForge.Devices.Reading.ReadReport report;
-        using (var fs = File.Create(outPath))
-            report = DiscForge.Devices.Reading.DataDiscImager.ReadToIso(letter, fs, progress, opts);
+        // FileMode.OpenOrCreate + explicit seek (not File.Create, which truncates) so a resumed
+        // read appends onto the sectors the previous attempt already wrote, instead of starting
+        // the file over.
+        using (var fs = new FileStream(outPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None))
+        {
+            fs.Seek((long)startLba * cap.BlockLengthBytes, SeekOrigin.Begin);
+            report = DiscForge.Devices.Reading.DataDiscImager.ReadToIso(letter, fs, progress, opts, startLba: startLba);
+        }
+
+        // The read finished (whether complete or a deliberate partial with --continue-on-error)
+        // — either way there is nothing left to resume, so the checkpoint's job is done.
+        DiscForge.Core.Preservation.DumpCheckpointRecorder.DeleteSidecar(outPath);
 
         Console.WriteLine();
         foreach (var n in report.Notes) Console.WriteLine($"  note: {n}");
+
+        // Record HOW this dump was made alongside it — drive, firmware, retry policy — so that
+        // context survives the dump changing hands instead of living only in scrollback. Read-only
+        // metadata: this never touches the drive itself, only describes what the read above already did.
+        try
+        {
+            var caps = DiscForge.Devices.DriveDetector.Detect(letter);
+            var session = new DiscForge.Core.Preservation.DumpSessionInfo
+            {
+                Operation = "read-disc",
+                ToolVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown",
+                UtcTimestamp = DateTime.UtcNow,
+                DriveVendor = caps.Vendor,
+                DriveModel = caps.Model,
+                DriveFirmware = caps.FirmwareRevision,
+                DevicePath = caps.DevicePath,
+                MediaProfile = caps.MediaProfile.ToString(),
+                Engine = "spti",
+                RetryCount = retries,
+                ContinueOnError = cont,
+                Outcome = report.Complete ? "complete" : $"{report.BadSectors.Count} bad sector(s)",
+            };
+            DiscForge.Core.Preservation.DumpSessionRecorder.WriteSidecar(session, outPath);
+            Console.WriteLine($"  session record: {Path.GetFileName(DiscForge.Core.Preservation.DumpSessionRecorder.SidecarPath(outPath))}");
+        }
+        catch (Exception ex) { Console.WriteLine($"  note: could not write the session record ({ex.Message})."); }
+
         if (report.Complete)
         {
             Console.WriteLine($"Done — every sector read cleanly. `dforge burn {Path.GetFileName(outPath)} <drive>` to write a copy.");
@@ -12124,6 +12866,233 @@ static int ReadDiscCmd(string[] args)
             "  (DiscForge only clones unencrypted discs — do not use this on protected media.)");
     }
     return Fail("`read-disc`: no disc-reading backend for this platform.");
+#endif
+}
+
+static int ReadCdiCmd(string[] args)
+{
+    if (args.Length < 3)
+        return Fail("usage: dforge read-cdi <drive> <out.cdi> [--raw] [--continue-on-error] [--retries N]\n" +
+                    "                        [--jitter] [--adaptive-reread] [--resume] [--json]\n" +
+                    "  Rip a CD — audio, mixed-mode, or plain data — track-by-track to a DiscJuggler-format .cdi\n" +
+                    "  image, the same reader the GUI's Read Disc / Copy Disc views use. Unlike `read-disc`\n" +
+                    "  (which images a DVD/BD/data-CD as one flat cooked ISO), this walks the CD's actual track\n" +
+                    "  TOC, so it's the one to use for anything with an audio track.\n" +
+                    "  --raw forces every track to 2352 bytes/sector (needed to preserve Mode 2 sub-headers;\n" +
+                    "  audio and Mode 2 Form 2 tracks are always raw regardless). Sector modes are probed from\n" +
+                    "  the disc first, so a mis-flagged TOC doesn't cause a cooked read to be attempted where\n" +
+                    "  it's impossible.\n" +
+                    "  --continue-on-error zero-fills unreadable sectors and lists them (partial image);\n" +
+                    "  --retries N sets per-sector re-reads before giving up (default 3).\n" +
+                    "  --jitter applies audio jitter correction (overlapping reads aligned by correlation) —\n" +
+                    "  slower, but needed on a drive without an accurate CD-DA stream.\n" +
+                    "  --adaptive-reread: when a raw sector's straight retries are exhausted, escalate through\n" +
+                    "  Tier-B adaptive re-read (plain re-read, then C2-assisted, then a slow C2-assisted read)\n" +
+                    "  before falling back to the boundary/type-rejection handling — the same real-hardware-\n" +
+                    "  proven logic `reread-probe` exercises standalone. Off by default; costs extra reads on\n" +
+                    "  a genuinely bad sector, so it's worth it once a disc has already proven marginal.\n" +
+                    "  --resume: each track is captured to its own <out.cdi>.trackNN.tmp before assembly; if an\n" +
+                    "  earlier attempt left some of those complete, --resume reuses them instead of re-reading —\n" +
+                    "  track granularity only (a CDI's track-data-then-descriptor layout has no mid-track byte\n" +
+                    "  offset to resume from the way a flat ISO does). Refused if the disc's TOC or the raw/cooked\n" +
+                    "  choice doesn't match what produced the existing <out.cdi>.ripstate.json checkpoint.\n" +
+                    "  Clean-room: DiscForge does not implement CSS/CPRM/AACS authentication or decryption.");
+
+    string outPath = args[2];
+    bool preferRaw = args.Contains("--raw");
+    bool cont = args.Contains("--continue-on-error");
+    int retries = int.TryParse(OptVal(args, "--retries"), out var rt) && rt >= 0 ? rt : 3;
+    bool jitter = args.Contains("--jitter");
+    bool adaptive = args.Contains("--adaptive-reread");
+    bool resume = args.Contains("--resume");
+    bool json = args.Contains("--json");
+
+#if WINDOWS
+    string spec = args[1].TrimEnd(':', '\\', '/');
+    if (spec.Length == 0) return Fail("Give the optical drive letter, e.g. `dforge read-cdi D: game.cdi`. Run `dforge drives` to list recorders.");
+    char letter = char.ToUpperInvariant(spec[0]);
+    string TempPathFor(int trackNumber) => $"{outPath}.track{trackNumber:D2}.tmp";
+    try
+    {
+        var caps = DiscForge.Devices.DriveDetector.Detect(letter);
+        var toc = DiscForge.Devices.Reading.DiscReader.ReadToc(letter);
+        var modes = DiscForge.Devices.Reading.TrackModeProber.Probe(letter, toc);
+        var plan = DiscForge.Core.Reading.ReadPlanner.Plan(toc, caps, preferRaw, modes);
+        string sig = DiscForge.Core.Preservation.CdiRipCheckpointRecorder.ComputePlanSignature(plan);
+
+        if (!json)
+        {
+            foreach (var line in DiscForge.Devices.Reading.DiscReader.DescribePlan(plan)) Console.WriteLine($"  {line}");
+            foreach (var w in plan.Warnings) Console.WriteLine($"  note: {w}");
+            Console.WriteLine($"Ripping to {Path.GetFileName(outPath)} ({plan.TotalSectors:N0} sectors, {plan.TotalBytes / (1024.0 * 1024.0):N1} MiB)…");
+        }
+
+        // Resume: reuse a previous attempt's per-track temp files, but only the ones a matching
+        // checkpoint says are complete AND whose size on disk still agrees with the plan — either
+        // check alone can be stale (a checkpoint from a different disc, or a temp file left over
+        // from an unrelated earlier run); both must hold before a track is trusted unread.
+        var existingCheckpoint = DiscForge.Core.Preservation.CdiRipCheckpointRecorder.ReadSidecar(outPath);
+        var completed = new HashSet<int>();
+        if (resume)
+        {
+            if (existingCheckpoint is null)
+                Console.WriteLine("  --resume: no checkpoint found — starting a fresh rip.");
+            else if (existingCheckpoint.PlanSignature != sig)
+                return Fail($"--resume: the checkpoint at {Path.GetFileName(DiscForge.Core.Preservation.CdiRipCheckpointRecorder.SidecarPath(outPath))} " +
+                            "was made against a different disc, or a different --raw choice, than what's in the drive now. " +
+                            "Delete the .ripstate.json (and any .trackNN.tmp files) to start fresh instead.");
+            else
+            {
+                completed = new HashSet<int>(existingCheckpoint.CompletedTracks);
+                if (!json) Console.WriteLine($"  --resume: {completed.Count}/{plan.Tracks.Count} track(s) already captured " +
+                                              $"(checkpoint from {existingCheckpoint.UtcTimestamp:u}).");
+            }
+        }
+        else
+        {
+            if (existingCheckpoint is not null)
+                Console.WriteLine("  note: a checkpoint from an earlier incomplete rip exists. Pass --resume to continue it, " +
+                                  "or it (and any captured tracks) will be discarded by this fresh rip.");
+            // Fresh rip: never silently reuse a stale partial capture from an unrelated attempt.
+            foreach (var t in plan.Tracks) { try { File.Delete(TempPathFor(t.Number)); } catch { /* nothing to remove */ } }
+        }
+
+        var options = new DiscForge.Devices.Reading.ReadOptions
+        {
+            ContinueOnError = cont,
+            RetriesPerSector = retries,
+            CorrectJitter = jitter,
+            AdaptiveReread = adaptive,
+        };
+
+        var badSectors = new List<uint>();
+        var boundarySectors = new List<uint>();
+        var notes = new List<string>();
+
+        using (var dev = new DiscForge.Devices.Spti.SptiDevice(letter))
+        {
+            foreach (var t in plan.Tracks)
+            {
+                string tmp = TempPathFor(t.Number);
+                if (completed.Contains(t.Number) && File.Exists(tmp) && new FileInfo(tmp).Length == t.StoredBytes)
+                {
+                    if (!json) Console.WriteLine($"  track {t.Number}: reusing previous capture ({t.StoredBytes:N0} bytes).");
+                    continue;
+                }
+                completed.Remove(t.Number);   // about to (re)capture: not complete until it returns
+
+                var trackProgress = json ? null : new Progress<DiscForge.Devices.Reading.ReadProgress>(p =>
+                    Console.Write($"\r  {p.Detail}    "));
+                using (var fs = File.Create(tmp))
+                    DiscForge.Devices.Reading.DiscReader.ReadTrack(dev, t, fs, trackProgress, default,
+                        options, badSectors, boundarySectors, notes);
+                if (!json) Console.WriteLine();
+
+                completed.Add(t.Number);
+                DiscForge.Core.Preservation.CdiRipCheckpointRecorder.WriteSidecar(new DiscForge.Core.Preservation.CdiRipCheckpoint
+                {
+                    PlanSignature = sig,
+                    CompletedTracks = completed.OrderBy(n => n).ToList(),
+                }, outPath);
+            }
+        }
+
+        // Every track is now captured (fresh or reused) — assemble the final CDI by streaming each
+        // track's temp file straight through, so this never holds more than one track in memory.
+        var inputs = plan.Tracks.Select(t => new DiscForge.Core.Cdi.CdiWriter.TrackInput
+        {
+            Mode = t.Mode, SectorSize = t.SectorSize, PregapSectors = 0,
+            LengthSectors = t.LengthSectors, StartLba = t.StartLba,
+            Filename = $"TRACK{t.Number:D2}.BIN",
+            DataWriter = os => { using var fs = File.OpenRead(TempPathFor(t.Number)); fs.CopyTo(os); },
+        }).ToList();
+
+        var partial = outPath + ".partial";
+        try
+        {
+            using (var os = File.Create(partial))
+                DiscForge.Core.Cdi.CdiWriter.Write(os, DiscForge.Core.Cdi.CdiVersion.V35,
+                    new[] { (IReadOnlyList<DiscForge.Core.Cdi.CdiWriter.TrackInput>)inputs });
+        }
+        catch
+        {
+            try { File.Delete(partial); } catch { /* best-effort cleanup */ }
+            throw;
+        }
+        if (File.Exists(outPath)) File.Delete(outPath);
+        File.Move(partial, outPath);
+
+        // Assembled successfully — nothing left to resume. Every per-track temp file and the
+        // checkpoint have done their job.
+        foreach (var t in plan.Tracks) { try { File.Delete(TempPathFor(t.Number)); } catch { /* best-effort */ } }
+        DiscForge.Core.Preservation.CdiRipCheckpointRecorder.DeleteSidecar(outPath);
+
+        var report = new DiscForge.Devices.Reading.ReadReport
+        {
+            BadSectors = badSectors, SectorsRead = plan.TotalSectors,
+            BoundarySectors = boundarySectors, Notes = notes,
+        };
+
+        // Record HOW this rip was made alongside it, same as `read-disc` — drive, firmware, retry
+        // policy — so that context survives the image changing hands. Read-only metadata: this never
+        // touches the drive itself, only describes what the read above already did.
+        try
+        {
+            var session = new DiscForge.Core.Preservation.DumpSessionInfo
+            {
+                Operation = "read-cdi",
+                ToolVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown",
+                UtcTimestamp = DateTime.UtcNow,
+                DriveVendor = caps.Vendor,
+                DriveModel = caps.Model,
+                DriveFirmware = caps.FirmwareRevision,
+                DevicePath = caps.DevicePath,
+                MediaProfile = caps.MediaProfile.ToString(),
+                Engine = "spti",
+                RetryCount = retries,
+                ContinueOnError = cont,
+                JitterCorrection = jitter,
+                Outcome = report.Complete ? "complete" : $"{report.BadSectors.Count} bad sector(s)",
+            };
+            DiscForge.Core.Preservation.DumpSessionRecorder.WriteSidecar(session, outPath);
+            if (!json) Console.WriteLine($"  session record: {Path.GetFileName(DiscForge.Core.Preservation.DumpSessionRecorder.SidecarPath(outPath))}");
+        }
+        catch (Exception ex) { if (!json) Console.WriteLine($"  note: could not write the session record ({ex.Message})."); }
+
+        if (json)
+        {
+            EmitJson(new
+            {
+                output = Path.GetFileName(outPath), report.SectorsRead,
+                badSectors = report.BadSectors.Count, boundarySectors = report.BoundarySectors.Count,
+                report.Complete, completeExceptBoundaries = report.CompleteExceptBoundaries,
+                notes = report.Notes,
+            });
+            return report.Complete || report.CompleteExceptBoundaries ? 0 : 1;
+        }
+
+        foreach (var n in report.Notes) Console.WriteLine($"  note: {n}");
+        if (report.Complete)
+        {
+            Console.WriteLine("Done — every sector read cleanly.");
+            return 0;
+        }
+        if (report.CompleteExceptBoundaries)
+        {
+            Console.WriteLine($"Done — {report.BoundarySectors.Count:N0} track-boundary sector(s) zero-filled (drive geometry, not damage); the payload is intact.");
+            return 0;
+        }
+        Console.WriteLine($"Done, but {report.BadSectors.Count:N0} sector(s) could not be read — the image is INCOMPLETE.");
+        Console.WriteLine("  First unreadable LBAs: " +
+            string.Join(", ", report.BadSectors.Take(10)) + (report.BadSectors.Count > 10 ? " …" : ""));
+        return 2;
+    }
+    catch (DiscForge.Core.Reading.ReadNotSupportedException ex) { return Fail(ex.Message); }
+    catch (DiscForge.Devices.Reading.DiscReadException ex) { return Fail(ex.Message); }
+    catch (Exception ex) { return Fail(ex.Message); }
+#else
+    _ = (outPath, preferRaw, cont, retries, jitter, adaptive, resume, json);
+    return Fail("`read-cdi` reads a disc through the SPTI stack, which is Windows-only.");
 #endif
 }
 
@@ -12532,11 +13501,11 @@ static int DriveProfileCmd(string[] args)
         return Fail("usage: dforge drive-profile <drive-letter> [--out profile.json]\n" +
                     "  Consolidate a drive's capabilities into ONE per-drive profile: read/write reach\n" +
                     "  (CD/DVD/BD), write modes (TAO, DAO/SAO, RAW-DAO-96) and read fidelity (raw sub-channel\n" +
-                    "  read, C2 error pointers, buffer-underrun protection). The empirical fidelity probes a\n" +
-                    "  Redump-grade dump depends on — C2 ACCURACY, CACHE-DEFEAT and the audio READ-OFFSET — need a\n" +
-                    "  calibration/known-defective disc, so they are reported honestly as unprobed rather than\n" +
-                    "  guessed (get the read-offset via `read-offset`). LEAD-OUT OVERREAD is probed empirically\n" +
-                    "  when a disc is loaded (one non-destructive read at the lead-out); --no-probe skips it.\n" +
+                    "  read, C2 error pointers, buffer-underrun protection). LEAD-OUT OVERREAD and CACHE-DEFEAT\n" +
+                    "  are probed empirically when a disc is loaded (non-destructive reads/timing; --no-probe\n" +
+                    "  skips both). C2 ACCURACY still needs a known-defective disc (no probe can fabricate\n" +
+                    "  that) and the audio READ-OFFSET needs an AccurateRip reference (get it via `read-offset`)\n" +
+                    "  — those two are reported honestly as unprobed/undetermined rather than guessed.\n" +
                     "  --out writes the profile as JSON for a per-drive record. Read-only.");
 #if WINDOWS
     string spec = args[1].TrimEnd(':', '\\', '/');
@@ -12564,9 +13533,27 @@ static int DriveProfileCmd(string[] args)
             catch (Exception ex) { probeDetail = $"not run ({ex.Message})"; }
         }
 
-        var profile = DiscForge.Core.Devices.DriveProfile.FromCapabilities(caps, overread: overread);
+        // Empirical cache-defeat probe — non-destructive timing comparison; needs a disc loaded.
+        var cacheDefeat = DiscForge.Core.Devices.ProbeState.NotProbed;
+        string? cacheDetail = null;
+        if (!args.Contains("--no-probe"))
+        {
+            try
+            {
+                using var dev = new DiscForge.Devices.Spti.SptiDevice(letter);
+                var cr = DiscForge.Devices.Reading.DriveCacheDefeatProbe.Probe(dev);
+                cacheDefeat = !cr.DiscPresent ? DiscForge.Core.Devices.ProbeState.NotDetermined
+                            : cr.Defeats ? DiscForge.Core.Devices.ProbeState.Yes
+                            : DiscForge.Core.Devices.ProbeState.No;
+                cacheDetail = cr.Detail;
+            }
+            catch (Exception ex) { cacheDetail = $"not run ({ex.Message})"; }
+        }
+
+        var profile = DiscForge.Core.Devices.DriveProfile.FromCapabilities(caps, overread: overread, cacheDefeat: cacheDefeat);
         Console.WriteLine(profile.Render());
         if (probeDetail is not null) Console.WriteLine($"  overread probe: {probeDetail}");
+        if (cacheDetail is not null) Console.WriteLine($"  cache-defeat probe: {cacheDetail}");
 
         // The bundled knowledge base: community-reference values for drives the
         // preservation scene has already measured. Reference data, clearly labelled —
@@ -12594,6 +13581,217 @@ static int DriveProfileCmd(string[] args)
 #else
     _ = args;
     return Fail("`drive-profile` uses the Windows SPTI device path; run it on Windows with the drive attached.");
+#endif
+}
+
+static int RereadProbeCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge reread-probe <drive-letter> --lba N [--max-per-strategy N] [--plateau N] [--json]\n" +
+                    "  Tier B: drive the adaptive re-read controller (DiscForge.Core.Recovery.AdaptiveReread)\n" +
+                    "  against ONE real sector on the disc currently loaded, using three escalating strategies\n" +
+                    "  (plain re-read -> C2-guided re-read -> slow/careful re-read with C2). Reports whether the\n" +
+                    "  sector was recovered, how many reads and strategy switches it took, and the full read\n" +
+                    "  history. Read-only and scoped to a single sector — a diagnostic/validation tool, not part\n" +
+                    "  of the main dump path. Run `dforge inspect-raw`/`writeinfo`/TOC tools first to find an LBA\n" +
+                    "  worth probing (a sector `disc-scan` or a prior dump flagged as marginal).");
+#if WINDOWS
+    string spec = args[1].TrimEnd(':', '\\', '/');
+    if (spec.Length == 0) return Fail("Give the optical drive letter, e.g. `dforge reread-probe D: --lba 12345`.");
+    char letter = char.ToUpperInvariant(spec[0]);
+    if (OptVal(args, "--lba") is not { } lbaStr || !uint.TryParse(lbaStr, out uint lba))
+        return Fail("`--lba N` is required — the sector address to probe.");
+    int maxPerStrategy = OptVal(args, "--max-per-strategy") is { } mps ? int.Parse(mps) : 8;
+    int plateau = OptVal(args, "--plateau") is { } pl ? int.Parse(pl) : 3;
+
+    try
+    {
+        using var dev = new DiscForge.Devices.Spti.SptiDevice(letter);
+        var toc = DiscForge.Devices.Reading.DiscReader.ReadToc(dev);
+        if (toc.Tracks.Count == 0) return Fail("No readable TOC — load a disc first.");
+        var track = toc.Tracks.Where(t => t.StartLba <= lba).OrderByDescending(t => t.StartLba).FirstOrDefault()
+                    ?? toc.Tracks[0];
+        bool isAudio = track.IsAudio;
+
+        var source = new DiscForge.Devices.Reading.DriveRereadSource(dev, lba, isAudio);
+        var config = new DiscForge.Core.Recovery.AdaptiveRereadConfig
+        {
+            MaxReadsPerStrategy = maxPerStrategy,
+            PlateauReads = plateau,
+            StrategyCount = 3,
+        };
+        var run = DiscForge.Core.Recovery.AdaptiveReread.Run(source, config);
+
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                drive = $"{letter}:", lba, track = track.Number, isAudio,
+                recovered = run.Recovered, totalReads = run.TotalReads, strategiesUsed = run.StrategiesUsed,
+                history = run.History.Select(h => new { h.Strategy, h.EdcValid, h.UncertainBytes }),
+            });
+            return run.Recovered ? 0 : 2;
+        }
+
+        Console.WriteLine($"Sector LBA {lba} (track {track.Number}, {(isAudio ? "audio" : "data")}) on {letter}:");
+        Console.WriteLine($"  Strategies: 0 = plain re-read, 1 = C2-guided, 2 = slow (4x) + C2");
+        foreach (var h in run.History)
+            Console.WriteLine($"    strategy {h.Strategy}: EDC {(h.EdcValid ? "valid" : "invalid/n-a")}, {h.UncertainBytes} uncertain byte(s)");
+        Console.WriteLine($"  Result: {(run.Recovered ? "RECOVERED" : "GAVE UP")} after {run.TotalReads} read(s), {run.StrategiesUsed} strategy/strategies used.");
+        if (!run.Recovered)
+            Console.WriteLine("  note: every strategy was exhausted without a clean/consensus read — this sector is genuinely marginal or bad, not a tool failure.");
+        return run.Recovered ? 0 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+#else
+    _ = args;
+    return Fail("`reread-probe` uses the Windows SPTI device path; run it on Windows with the drive attached.");
+#endif
+}
+
+// Closes the loop DiscMri's --plan-reread only diagnosed: drives the SAME real Tier-B controller
+// `reread-probe` already proved against actual hardware (DriveRereadSource + AdaptiveReread, unchanged),
+// looped over every sector in a disc-mri plan, patching each recovered sector's bytes into a target
+// image. Deliberately does NOT touch RawDiscReader/SectorExtraction or any path a normal dump depends
+// on — same scoping discipline reread-probe already established, just extended from one diagnostic
+// sector to a whole plan's worth of them.
+static int DiscMriRereadCmd(string[] args)
+{
+    if (args.Length < 4)
+        return Fail("usage: dforge disc-mri-reread <drive-letter> <plan.json> <target.bin>\n" +
+                    "                       [--cue <sheet.cue>] [--max-per-strategy N] [--plateau N] [--json]\n" +
+                    "  Loads a `dforge disc-mri --plan-reread out.json` plan and drives EVERY sector in its\n" +
+                    "  ranges through the real Tier-B adaptive re-read controller (DiscForge.Core.Recovery.\n" +
+                    "  AdaptiveReread) against the disc currently loaded in <drive-letter> — the exact same\n" +
+                    "  proven escalation ladder `reread-probe` exercises on one sector, run here across a whole\n" +
+                    "  plan. Every sector the controller recovers is patched into <target.bin> at its correct\n" +
+                    "  2352-byte offset; sectors that still fail after every strategy are left untouched and\n" +
+                    "  reported, never guessed at. <target.bin> must already exist and be at least as long as\n" +
+                    "  the plan's furthest range — run this against the same (or a copy of the same) image\n" +
+                    "  `disc-mri` diagnosed. --cue supplies per-track audio/data knowledge, same as `disc-mri`\n" +
+                    "  itself; without it every sector is treated as data for EDC purposes, which only costs\n" +
+                    "  the fast EDC-valid path on genuine audio sectors (byte-agreement still recovers them).\n" +
+                    "  This is real drive time, not a simulation: worst case per sector is StrategyCount (3) ×\n" +
+                    "  --max-per-strategy (default 8) reads.");
+#if WINDOWS
+    string spec = args[1].TrimEnd(':', '\\', '/');
+    if (spec.Length == 0) return Fail("Give the optical drive letter, e.g. `dforge disc-mri-reread D: plan.json target.bin`.");
+    char letter = char.ToUpperInvariant(spec[0]);
+    string planPath = args[2], targetPath = args[3];
+    if (!File.Exists(planPath)) return Fail($"Plan not found: {planPath}");
+    if (!File.Exists(targetPath)) return Fail($"Target image not found: {targetPath} — this patches an EXISTING image, it doesn't create one.");
+    string? cuePath = OptVal(args, "--cue");
+    int maxPerStrategy = OptVal(args, "--max-per-strategy") is { } mps ? int.Parse(mps) : 8;
+    int plateau = OptVal(args, "--plateau") is { } pl ? int.Parse(pl) : 3;
+    bool json = args.Contains("--json");
+
+    try
+    {
+        var jsonOpts = new System.Text.Json.JsonSerializerOptions
+        {
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+        };
+        var plan = System.Text.Json.JsonSerializer.Deserialize<DiscForge.Core.Forensics.DiscMri.RereadPlan>(
+            File.ReadAllText(planPath), jsonOpts)
+            ?? throw new InvalidDataException("Empty or unreadable plan file.");
+        if (plan.Nothing)
+        {
+            Console.WriteLine("Plan has nothing to re-read — no ranges recorded. Nothing to do.");
+            return 0;
+        }
+
+        // Same span-parsing disc-mri itself uses, so a given sector's audio/data classification here
+        // matches exactly what --plan-reread saw when it diagnosed that sector in the first place.
+        List<(long Start, long End, bool Audio)>? spans = null;
+        if (cuePath is not null)
+        {
+            if (!File.Exists(cuePath)) return Fail($"Cue not found: {cuePath}");
+            var cue = DiscForge.Core.Cue.CueSheet.Parse(File.ReadAllText(cuePath));
+            if (cue.Tracks.Count == 0) return Fail("The cue lists no tracks.");
+            long totalSectors = new FileInfo(targetPath).Length / 2352;
+            var ordered = cue.Tracks.OrderBy(t => t.Number).ToList();
+            spans = new List<(long, long, bool)>();
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                long start = ordered[i].Indices.Min(x => x.Time.ToSectors());
+                long end = (i + 1 < ordered.Count
+                    ? ordered[i + 1].Indices.Min(x => x.Time.ToSectors()) : totalSectors) - 1;
+                if (end >= start) spans.Add((start, end, ordered[i].Type == DiscForge.Core.Cue.CueTrackType.Audio));
+            }
+        }
+        bool IsAudio(long sector) => spans?.Any(s => sector >= s.Start && sector <= s.End && s.Audio) ?? false;
+
+        long totalPlanSectors = plan.Ranges.Sum(r => r.Count);
+        long furthestSector = plan.Ranges.Max(r => r.StartSector + r.Count);
+        long targetSectors = new FileInfo(targetPath).Length / 2352;
+        if (furthestSector > targetSectors)
+            return Fail($"{Path.GetFileName(targetPath)} is only {targetSectors:N0} sector(s) — the plan reaches sector " +
+                        $"{furthestSector - 1:N0}. Wrong image, or it was truncated?");
+
+        Console.WriteLine($"disc-mri-reread: {plan.Ranges.Count} range(s), {totalPlanSectors:N0} sector(s) total, " +
+                          $"drive {letter}: → {Path.GetFileName(targetPath)}" + (cuePath is null ? " (no cue: all sectors treated as data)" : ""));
+        Console.WriteLine($"  worst case: up to 3 × {maxPerStrategy} = {3 * maxPerStrategy} read(s) per sector.");
+
+        using var dev = new DiscForge.Devices.Spti.SptiDevice(letter);
+        using var target = new FileStream(targetPath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+        var config = new DiscForge.Core.Recovery.AdaptiveRereadConfig
+        {
+            MaxReadsPerStrategy = maxPerStrategy, PlateauReads = plateau, StrategyCount = 3,
+        };
+
+        long recovered = 0, stillBad = 0, totalReads = 0;
+        var failedSectors = new List<long>();
+        foreach (var range in plan.Ranges)
+        {
+            for (long s = range.StartSector; s < range.StartSector + range.Count; s++)
+            {
+                var source = new DiscForge.Devices.Reading.DriveRereadSource(dev, (uint)s, IsAudio(s));
+                var run = DiscForge.Core.Recovery.AdaptiveReread.Run(source, config);
+                totalReads += run.TotalReads;
+                if (run.Recovered && source.LastMain is { Length: 2352 } main)
+                {
+                    target.Seek(s * 2352L, SeekOrigin.Begin);
+                    target.Write(main, 0, main.Length);
+                    recovered++;
+                }
+                else
+                {
+                    stillBad++;
+                    failedSectors.Add(s);
+                }
+                if (!json && (s - range.StartSector) % 100 == 0)
+                    Console.WriteLine($"  [{s:N0}] {(run.Recovered ? "recovered" : "still bad")} after {run.TotalReads} read(s)");
+            }
+        }
+        target.Flush();
+
+        if (json)
+        {
+            EmitJson(new
+            {
+                drive = $"{letter}:", target = Path.GetFileName(targetPath),
+                totalSectors = totalPlanSectors, recovered, stillBad, totalReads,
+                failedSectors = failedSectors.Take(200),
+            });
+        }
+        else
+        {
+            Console.WriteLine();
+            Console.WriteLine($"Done: {recovered:N0}/{totalPlanSectors:N0} sector(s) recovered and patched into " +
+                              $"{Path.GetFileName(targetPath)}; {stillBad:N0} still bad after every strategy; {totalReads:N0} read(s) total.");
+            if (stillBad > 0)
+            {
+                Console.WriteLine("  Still-bad sector(s): " + string.Join(", ", failedSectors.Take(50).Select(x => x.ToString("N0"))) +
+                                  (failedSectors.Count > 50 ? $", … and {failedSectors.Count - 50} more." : "."));
+                Console.WriteLine("  These are genuinely marginal/bad, not a tool failure — every strategy was exhausted.");
+            }
+        }
+        return stillBad == 0 ? 0 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+#else
+    _ = args;
+    return Fail("`disc-mri-reread` uses the Windows SPTI device path; run it on Windows with the drive attached.");
 #endif
 }
 
@@ -12904,9 +14102,25 @@ static int ProveCmd(string[] args)
                                      : DiscForge.Devices.Reading.RawDiscReader.FieldSelect.Audio;
             string rbPath = $"{baseName}.prove-track{t.Number:D2}.bin";
             var readProgress = new Progress<double>(p => Console.Write($"\r    {p * 100,5:0.0}%    "));
-            using (var fs = File.Create(rbPath))
+            string? readNote = null;
+            try
+            {
+                using var fs = File.Create(rbPath);
                 DiscForge.Devices.Reading.RawDiscReader.Read(dev, (int)t.StartLba, t.LengthSectors, fs, readProgress, fieldSel);
+            }
+            catch (IOException ex)
+            {
+                // A data track immediately followed by an audio track carries a few sectors of
+                // audio-format pregap inside its own TOC-reported length; the drive refuses those
+                // in a forced (single) field mode. RawDiscReader.Read already flushed everything it
+                // COULD read to rbPath before throwing, so this is a short, honest partial capture
+                // right at the track boundary — not a burn defect. Compare() below runs with
+                // partial: true for exactly this reason. See docs/NEXT.md 2026-08-27: `read-raw
+                // --field auto` stopping at this same boundary was confirmed expected, not corruption.
+                readNote = $"read stopped at the track boundary ({ex.Message})";
+            }
             Console.WriteLine();
+            if (readNote is not null) Console.WriteLine($"    note: {readNote}");
 
             RawReadbackCompare.Report r;
             long goldenLen, rbLen;
@@ -14919,9 +16133,8 @@ static int RvzDecodeCmd(string[] args)
     try
     {
         var rvz = File.ReadAllBytes(inPath);
-        DiscForge.Core.GameCube.RvzDecoder.DecodeReport report;
-        using (var fs = File.Create(outPath))
-            report = DiscForge.Core.GameCube.RvzDecoder.Decode(rvz, fs);
+        DiscForge.Core.GameCube.RvzDecoder.DecodeReport report = default!;
+        WriteFileAtomically(outPath, fs => report = DiscForge.Core.GameCube.RvzDecoder.Decode(rvz, fs));
         Console.WriteLine($"Reconstructed {Path.GetFileName(outPath)} — {report.IsoBytes:N0} bytes, {report.Groups:N0} group(s).");
         if (report.BitExact)
             Console.WriteLine("  Bit-exact (no junk regions in this image).");
@@ -14985,9 +16198,12 @@ static int GcVerifyCmd(string[] args)
     if (args.Length < 2)
         return Fail("usage: dforge gc-verify <image> [--json]\n" +
                     "  A single-image GameCube health check (no second dump needed): verifies the DVD magic,\n" +
-                    "  the DOL/FST offsets and sizes fall inside the image, the boot chain is present, the\n" +
-                    "  region agrees between the bi2 country code and the game-code letter, and the byte length\n" +
-                    "  matches a standard GameCube single-layer disc (flagging scrubbed/trimmed/truncated dumps).");
+                    "  the DOL/FST offsets and sizes fall inside the image, the FULL boot chain (bi2.bin ->\n" +
+                    "  apploader -> DOL -> FST) is present and internally consistent, the region agrees between\n" +
+                    "  the bi2 country code and the game-code letter, whether bi2.bin flags a debug/dev-kit build,\n" +
+                    "  whether the padding reads as intact/scrubbed/mixed/suspicious junk (see gc-junk-map), and\n" +
+                    "  the byte length matches a standard GameCube single-layer disc (flagging scrubbed/trimmed/\n" +
+                    "  truncated dumps).");
     var path = args[1];
     if (!File.Exists(path)) return Fail($"'{path}' not found.");
     try
@@ -15002,12 +16218,67 @@ static int GcVerifyCmd(string[] args)
                 h.BiRegion, h.CodeRegion, h.RegionConsistent,
                 h.DiscSize, sizeClass = h.SizeClass.ToString(),
                 dolOffset = h.DolOffset, fstOffset = h.FstOffset, h.FstSize,
+                paddingVerdict = h.PaddingVerdict?.ToString(), h.LooksLikeDebugBuild,
                 h.Healthy, h.Warnings,
             });
             return h.Healthy ? 0 : 2;
         }
         Console.WriteLine($"{Path.GetFileName(path)}: {h.Summary()}");
         return h.Healthy ? 0 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int GcRingCodeCmd(string[] args)
+{
+    if (args.Length < 4)
+        return Fail("usage: dforge gc-ringcode <red> <blue> <green> [--game-code X] [--disc N] [--rev N] [--json]\n" +
+                    "  Decodes a GameCube disc's three inner-ring codes (typed, or OCR'd from a photo): the red\n" +
+                    "  manufacturing-date code (AYYMDDBB), the blue disc-identity code (which embeds the disc's own\n" +
+                    "  4-char game code + disc number + ROM revision), and the green anomaly flag (normally \"S0\").\n" +
+                    "  Pass \"-\" for any ring you don't have. --game-code/--disc/--rev cross-check the blue code\n" +
+                    "  against values you already know (e.g. from the disc header or a specific Redump entry) —\n" +
+                    "  this tool bundles no Redump database, so it only confirms what you supply.");
+    string? red = args[1] == "-" ? null : args[1];
+    string? blue = args[2] == "-" ? null : args[2];
+    string? green = args[3] == "-" ? null : args[3];
+
+    static string? OptArg(string[] a, string flag)
+    {
+        int i = Array.IndexOf(a, flag);
+        return i >= 0 && i + 1 < a.Length ? a[i + 1] : null;
+    }
+    string? expectGameCode = OptArg(args, "--game-code");
+    int? expectDisc = int.TryParse(OptArg(args, "--disc"), out int d) ? d : null;
+    int? expectRev = int.TryParse(OptArg(args, "--rev"), out int rv) ? rv : null;
+
+    try
+    {
+        var ring = DiscForge.Core.GameCube.GcRingCodeParser.Parse(red, blue, green);
+        DiscForge.Core.GameCube.GcRingCodeCheck.Result? check = null;
+        if (expectGameCode is not null || expectDisc is not null || expectRev is not null)
+            check = DiscForge.Core.GameCube.GcRingCodeCheck.CrossCheck(ring, expectGameCode, expectDisc, expectRev);
+
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                ring.RedRaw, ring.ManufactureDate, ring.ManufacturedInUsa, ring.RedTrailer,
+                ring.BlueRaw, ring.ConsoleCode, ring.GameCode, ring.DiscNumber, ring.RomRevision, ring.ManufacturingRegionName,
+                ring.GreenRaw, ring.GreenIsStandard,
+                check?.GameCodeMatches, check?.DiscNumberMatches, check?.RevisionMatches,
+                issues = check?.Issues ?? Array.Empty<string>(),
+            });
+            return check is { Issues.Count: > 0 } ? 2 : 0;
+        }
+
+        Console.WriteLine(ring.Summary());
+        if (check is not null)
+        {
+            foreach (var issue in check.Issues) Console.WriteLine($"  ! {issue}");
+            if (check.Issues.Count == 0) Console.WriteLine("  cross-check: all supplied values match.");
+        }
+        return check is { Issues.Count: > 0 } ? 2 : 0;
     }
     catch (Exception ex) { return Fail(ex.Message); }
 }
@@ -15055,22 +16326,32 @@ static int GcJunkMapCmd(string[] args)
 static int GcJunkFillCmd(string[] args)
 {
     if (args.Length < 3)
-        return Fail("usage: dforge gc-junk-fill <in.iso> <out.iso>\n" +
+        return Fail("usage: dforge gc-junk-fill <in.iso> <out.iso> [--expect-crc32 <hex>]\n" +
                     "  Reconstruct the deterministic junk padding of a SCRUBBED GameCube image. This is\n" +
                     "  EXPERIMENTAL: the junk PRNG is a clean-room reconstruction not yet confirmed byte-exact\n" +
                     "  against a real disc, so the fill is gated by SELF-VALIDATION — it regenerates the image's\n" +
                     "  OWN surviving junk first and only fills the scrubbed regions if that matches byte-for-byte.\n" +
                     "  A fully-scrubbed image (no surviving junk to check against) is declined on purpose: it\n" +
-                    "  won't write bytes it can't prove. Reconstructs padding only; defeats no protection.");
+                    "  won't write bytes it can't prove. The output's CRC-32 is always reported; pass\n" +
+                    "  --expect-crc32 with a Redump entry's known-good value for an independent confirmation on\n" +
+                    "  top of self-validation (DiscForge bundles no Redump database — supply it yourself).\n" +
+                    "  Reconstructs padding only; defeats no protection.");
     var inPath = args[1];
     var outPath = args[2];
     if (!File.Exists(inPath)) return Fail($"'{inPath}' not found.");
+    uint? expectCrc = null;
+    int ci = Array.IndexOf(args, "--expect-crc32");
+    if (ci >= 0 && ci + 1 < args.Length)
+    {
+        if (!uint.TryParse(args[ci + 1], System.Globalization.NumberStyles.HexNumber, null, out var v))
+            return Fail($"--expect-crc32 '{args[ci + 1]}' isn't valid hex.");
+        expectCrc = v;
+    }
     try
     {
-        DiscForge.Core.GameCube.GcJunkReconstructor.Report report;
+        DiscForge.Core.GameCube.GcJunkReconstructor.Report report = default!;
         using (var input = File.OpenRead(inPath))
-        using (var output = File.Create(outPath))
-            report = DiscForge.Core.GameCube.GcJunkReconstructor.Reconstruct(input, output);
+            WriteFileAtomically(outPath, output => report = DiscForge.Core.GameCube.GcJunkReconstructor.Reconstruct(input, output, expectCrc));
 
         Console.WriteLine($"Self-validated: {(report.SelfValidated ? "yes" : "NO")}" +
                           (report.IntactRegionsChecked > 0
@@ -15079,9 +16360,16 @@ static int GcJunkFillCmd(string[] args)
         if (report.Reconstructed)
             Console.WriteLine($"Rebuilt: {report.ScrubbedRegionsFilled} scrubbed region(s), {report.BytesFilled:N0} bytes → {Path.GetFileName(outPath)}");
         Console.WriteLine(report.Message);
-        // Exit 0 when we either rebuilt or there was nothing to do; 3 when we declined a scrubbed image.
+        Console.WriteLine($"Output CRC-32: {report.OutputCrc32:X8}" +
+                          (report.CrcConfirmed is { } ok
+                              ? ok ? " — MATCHES the expected value." : $" — does NOT match expected {report.ExpectedCrc32:X8}."
+                              : ""));
+        // Exit 0 when we either rebuilt or there was nothing to do; 3 when we declined a scrubbed image;
+        // 2 when the caller supplied an expected CRC-32 and it didn't match.
         bool declinedWork = !report.SelfValidated && report.Message.Contains("declin", StringComparison.OrdinalIgnoreCase);
-        return declinedWork ? 3 : 0;
+        if (declinedWork) return 3;
+        if (report.CrcConfirmed == false) return 2;
+        return 0;
     }
     catch (Exception ex) { return Fail(ex.Message); }
 }
@@ -15765,9 +17053,8 @@ static int CreateXiso(string[] args)
         // Stream straight to disk: files are opened on demand, so a full-size XISO
         // (well past 2 GB) never has to fit in memory.
         var children = WalkFolderToXiso(args[1]);
-        IReadOnlyList<string> warnings;
-        using (var output = File.Create(args[2]))
-            warnings = XdvdfsBuilder.BuildToStream(output, children);
+        IReadOnlyList<string> warnings = Array.Empty<string>();
+        WriteFileAtomically(args[2], output => warnings = XdvdfsBuilder.BuildToStream(output, children));
 
         foreach (var w in warnings) Console.WriteLine($"  warning: {w}");
         long size = new FileInfo(args[2]).Length;
@@ -15937,9 +17224,8 @@ static int CreateUdf(string[] args)
     {
         // Stream straight to disk so a full-size UDF image needn't fit in memory.
         var children = WalkFolderToUdf(folder);
-        IReadOnlyList<string> warnings;
-        using (var output = File.Create(outPath))
-            warnings = UdfBuilder.BuildToStream(volumeId, output, children, revision);
+        IReadOnlyList<string> warnings = Array.Empty<string>();
+        WriteFileAtomically(outPath, output => warnings = UdfBuilder.BuildToStream(volumeId, output, children, revision));
         foreach (var w in warnings) Console.WriteLine($"  warning: {w}");
         long size = new FileInfo(outPath).Length;
         string ver = revision switch
@@ -16099,9 +17385,8 @@ static int DvdVideoBuildCmd(string[] args)
             IsoBuilder.Node.Dir("VIDEO_TS", videoTsChildren),
         };
 
-        IReadOnlyList<string> warnings;
-        using (var output = File.Create(outPath))
-            warnings = UdfBridgeBuilder.BuildToStream(volumeId, output, root);
+        IReadOnlyList<string> warnings = Array.Empty<string>();
+        WriteFileAtomically(outPath, output => warnings = UdfBridgeBuilder.BuildToStream(volumeId, output, root));
         foreach (var w in warnings) Console.WriteLine($"  note: {w}");
         long size = new FileInfo(outPath).Length;
         Console.WriteLine($"Wrote {Path.GetFileName(outPath)}: DVD-Video ISO+UDF, {plan.OrderedFiles.Count} files, " +
@@ -16281,9 +17566,8 @@ static int BdmvBuildCmd(string[] args)
     try
     {
         // BD uses a pure UDF 2.50 filesystem (no ISO 9660).
-        IReadOnlyList<string> warnings;
-        using (var output = File.Create(outPath))
-            warnings = UdfBuilder.BuildToStream(volumeId, output, resolved.Value.Nodes, UdfBuilder.UdfRevision.Udf250);
+        IReadOnlyList<string> warnings = Array.Empty<string>();
+        WriteFileAtomically(outPath, output => warnings = UdfBuilder.BuildToStream(volumeId, output, resolved.Value.Nodes, UdfBuilder.UdfRevision.Udf250));
         foreach (var w in warnings) Console.WriteLine($"  note: {w}");
         long size = new FileInfo(outPath).Length;
         Console.WriteLine($"Wrote {Path.GetFileName(outPath)}: BD-Video (UDF 2.50), {size:N0} bytes " +
@@ -16313,9 +17597,8 @@ static int CreateUdfBridge(string[] args)
         // One image, two filesystems, one copy of the data: the ISO 9660 (Joliet)
         // directory records and the UDF File Entries point at the same sectors.
         var children = WalkFolderToBridge(folder);
-        IReadOnlyList<string> warnings;
-        using (var output = File.Create(outPath))
-            warnings = UdfBridgeBuilder.BuildToStream(volumeId, output, children);
+        IReadOnlyList<string> warnings = Array.Empty<string>();
+        WriteFileAtomically(outPath, output => warnings = UdfBridgeBuilder.BuildToStream(volumeId, output, children));
 
         long size = new FileInfo(outPath).Length;
         if (json)
@@ -16869,6 +18152,242 @@ static long WriteFileAtomically(string outPath, Action<Stream> writer)
         try { File.Delete(tmp); } catch { /* best-effort cleanup */ }
         throw;
     }
+}
+
+// A public, append-only, hash-chained ledger of independently signed dump-certificate claims — the
+// cross-submitter counterpart to `lineage` (one dump's chain of custody) and `merge-cert` (one merge's
+// audited reconstruction). Lets strangers converge on "this disc dumps to these exact bytes" checkably,
+// without trusting DiscForge or any single submitter.
+static int DumpLedgerCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage:\n" +
+                    "  dforge dump-ledger keygen <private-key-file>\n" +
+                    "  dforge dump-ledger init <ledger.json>\n" +
+                    "  dforge dump-ledger submit <ledger.json> --fingerprint <f> --output-sha256 <h> --key <private-key-file>\n" +
+                    "                     [--label L] [--evidence-sha256 H] [--detail D] [--utc U]\n" +
+                    "  dforge dump-ledger verify <ledger.json>\n" +
+                    "  dforge dump-ledger consensus <ledger.json> --fingerprint <f>\n" +
+                    "  dforge dump-ledger show <ledger.json>\n" +
+                    "  A public, hash-chained log of independently signed claims ('this disc dumps to these\n" +
+                    "  exact bytes'), so strangers can see for themselves how many independent submitters agree —\n" +
+                    "  without trusting DiscForge or any single submitter. --fingerprint is a disc-genome ShortId\n" +
+                    "  (see 'dforge disc-genome') or any other stable, offset-invariant disc identity string.");
+
+    string sub = args[1];
+    try
+    {
+        if (sub == "keygen")
+        {
+            if (args.Length < 3) return Fail("usage: dforge dump-ledger keygen <private-key-file>");
+            var (priv, pub) = DiscForge.Core.Provenance.DumpCertificateLedgerLog.GenerateKey();
+            File.WriteAllText(args[2], priv);
+            Console.WriteLine($"Wrote private key: {Path.GetFileName(args[2])}  (keep it secret; it signs your submissions).");
+            Console.WriteLine($"Public key (embedded automatically when you submit):\n  {pub}");
+            return 0;
+        }
+
+        if (sub == "init")
+        {
+            if (args.Length < 3) return Fail("usage: dforge dump-ledger init <ledger.json>");
+            string path = args[2];
+            if (File.Exists(path)) return Fail($"{path} already exists — use 'submit' to add to it.");
+            var ledger = new DiscForge.Core.Provenance.DumpCertificateLedger();
+            File.WriteAllText(path, DiscForge.Core.Provenance.DumpCertificateLedgerLog.ToJson(ledger));
+            Console.WriteLine($"Started {Path.GetFileName(path)}: an empty dump-certificate ledger.");
+            return 0;
+        }
+
+        if (sub == "submit")
+        {
+            if (args.Length < 3) return Fail("usage: dforge dump-ledger submit <ledger.json> --fingerprint <f> --output-sha256 <h> --key <private-key-file> [...]");
+            string path = args[2];
+            string? fingerprint = null, outputSha256 = null, keyFile = null, label = null, evidenceSha256 = null, detail = null, utc = null;
+            for (int i = 3; i < args.Length; i++)
+            {
+                switch (args[i])
+                {
+                    case "--fingerprint" when i + 1 < args.Length: fingerprint = args[++i]; break;
+                    case "--output-sha256" when i + 1 < args.Length: outputSha256 = args[++i]; break;
+                    case "--key" when i + 1 < args.Length: keyFile = args[++i]; break;
+                    case "--label" when i + 1 < args.Length: label = args[++i]; break;
+                    case "--evidence-sha256" when i + 1 < args.Length: evidenceSha256 = args[++i]; break;
+                    case "--detail" when i + 1 < args.Length: detail = args[++i]; break;
+                    case "--utc" when i + 1 < args.Length: utc = args[++i]; break;
+                }
+            }
+            if (string.IsNullOrWhiteSpace(fingerprint)) return Fail("--fingerprint is required.");
+            if (string.IsNullOrWhiteSpace(outputSha256)) return Fail("--output-sha256 is required.");
+            if (keyFile == null) return Fail("--key <private-key-file> is required.");
+            if (!File.Exists(path)) return Fail($"File not found: {path} — use 'init' to start a ledger.");
+            if (!File.Exists(keyFile)) return Fail($"Key not found: {keyFile}");
+
+            var ledger = DiscForge.Core.Provenance.DumpCertificateLedgerLog.FromJson(File.ReadAllText(path));
+            DiscForge.Core.Provenance.LedgerEntry submission;
+            using (var key = DiscForge.Core.Provenance.DumpCertificateLedgerLog.LoadPrivateKey(File.ReadAllText(keyFile).Trim()))
+                submission = DiscForge.Core.Provenance.DumpCertificateLedgerLog.CreateSubmission(
+                    fingerprint, outputSha256, key, label, evidenceSha256, detail, utc);
+            var entry = DiscForge.Core.Provenance.DumpCertificateLedgerLog.Append(ledger, submission);
+            File.WriteAllText(path, DiscForge.Core.Provenance.DumpCertificateLedgerLog.ToJson(ledger));
+            Console.WriteLine($"Submitted to {Path.GetFileName(path)}: entry [{entry.Seq}] for {fingerprint} " +
+                              $"-> {outputSha256[..Math.Min(12, outputSha256.Length)]}…, head {ledger.HeadHash?[..12]}…");
+            return 0;
+        }
+
+        if (sub == "verify")
+        {
+            if (args.Length < 3) return Fail("usage: dforge dump-ledger verify <ledger.json>");
+            if (!File.Exists(args[2])) return Fail($"File not found: {args[2]}");
+            var ledger = DiscForge.Core.Provenance.DumpCertificateLedgerLog.FromJson(File.ReadAllText(args[2]));
+            bool chain = DiscForge.Core.Provenance.DumpCertificateLedgerLog.VerifyChain(ledger);
+            bool sigs = DiscForge.Core.Provenance.DumpCertificateLedgerLog.VerifyAllSubmitterSignatures(ledger);
+
+            Console.WriteLine($"{Path.GetFileName(args[2])}: {ledger.Entries.Count} entr{(ledger.Entries.Count == 1 ? "y" : "ies")}");
+            Console.WriteLine($"  chain       : {(chain ? "INTACT" : "BROKEN — the ledger was altered")}");
+            Console.WriteLine($"  signatures  : {(sigs ? "ALL VALID" : "AT LEAST ONE INVALID — an unattested claim is present")}");
+            if (chain && sigs)
+                Console.WriteLine("  => Verified: every entry is intact, in order, and genuinely attested by the key it names.");
+            return (chain && sigs) ? 0 : 1;
+        }
+
+        if (sub == "consensus")
+        {
+            if (args.Length < 3) return Fail("usage: dforge dump-ledger consensus <ledger.json> --fingerprint <f>");
+            string path = args[2];
+            string? fingerprint = null;
+            for (int i = 3; i < args.Length; i++)
+                if (args[i] == "--fingerprint" && i + 1 < args.Length) fingerprint = args[++i];
+            if (string.IsNullOrWhiteSpace(fingerprint)) return Fail("--fingerprint is required.");
+            if (!File.Exists(path)) return Fail($"File not found: {path}");
+
+            var ledger = DiscForge.Core.Provenance.DumpCertificateLedgerLog.FromJson(File.ReadAllText(path));
+            var consensus = DiscForge.Core.Provenance.DumpCertificateLedgerLog.Consensus(ledger, fingerprint);
+            Console.WriteLine(consensus.Summary());
+            foreach (var g in consensus.Groups)
+                Console.WriteLine($"  {g.OutputSha256[..Math.Min(16, g.OutputSha256.Length)]}…  " +
+                                  $"{g.SubmitterCount} submitter(s)");
+            return consensus.Disputed ? 1 : 0;
+        }
+
+        if (sub == "show")
+        {
+            if (args.Length < 3) return Fail("usage: dforge dump-ledger show <ledger.json>");
+            if (!File.Exists(args[2])) return Fail($"File not found: {args[2]}");
+            var ledger = DiscForge.Core.Provenance.DumpCertificateLedgerLog.FromJson(File.ReadAllText(args[2]));
+            foreach (var e in ledger.Entries)
+            {
+                Console.WriteLine($"  [{e.Seq}] {e.DiscFingerprint}  {e.Utc}");
+                Console.WriteLine($"       -> {e.OutputSha256}");
+                if (e.Label is { Length: > 0 }) Console.WriteLine($"       label: {e.Label}");
+                if (e.Detail is { Length: > 0 }) Console.WriteLine($"       {e.Detail}");
+                Console.WriteLine($"       submitter: {e.SubmitterPublicKey[..Math.Min(20, e.SubmitterPublicKey.Length)]}…");
+            }
+            Console.WriteLine($"{ledger.Entries.Count} entr{(ledger.Entries.Count == 1 ? "y" : "ies")}, head {ledger.HeadHash?[..12] ?? "(empty)"}…");
+            return 0;
+        }
+
+        return Fail($"Unknown dump-ledger sub-command '{sub}' (expected keygen, init, submit, verify, consensus or show).");
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+// The federated media-mortality model: fold a disc-actuary kinetics fit into a shareable, aggregate-only
+// cohort model (no disc identity, no scan history — just two numbers per disc), merge any two contributors'
+// models exactly (Chan/Golub/LeVeque parallel variance — order-independent, no coordinator needed), and
+// estimate a cohort's mean decay rate once enough independent contributors back it (a privacy floor, not
+// an accuracy one — see DiscForge.Core.Forensics.MediaMortality's class doc comment).
+static int MediaMortalityCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage:\n" +
+                    "  dforge media-mortality observe <model.json> --cohort <c> --growth <k/yr> --samples <n>\n" +
+                    "  dforge media-mortality merge <model.json> <other-model.json>   (writes into <model.json>)\n" +
+                    "  dforge media-mortality estimate <model.json> --cohort <c>\n" +
+                    "  dforge media-mortality show <model.json>\n" +
+                    "  A shareable, aggregate-only model of how fast a cohort of discs (a manufacturer/mold-SID\n" +
+                    "  code, a media type + brand — you choose the taxonomy) decays: fold in one disc's own\n" +
+                    "  rot-kinetics fit (--growth = GrowthPerYear, --samples = SampleCount from 'disc-actuary'),\n" +
+                    "  merge with anyone else's model, and get a community estimate once >= 3 independent discs\n" +
+                    "  back it. No disc id, title, or scan history ever appears in the model file.");
+
+    string sub = args[1];
+    try
+    {
+        if (sub == "observe")
+        {
+            if (args.Length < 3) return Fail("usage: dforge media-mortality observe <model.json> --cohort <c> --growth <k/yr> --samples <n>");
+            string path = args[2];
+            string? cohort = OptVal(args, "--cohort");
+            string? growthStr = OptVal(args, "--growth");
+            string? samplesStr = OptVal(args, "--samples");
+            if (string.IsNullOrWhiteSpace(cohort)) return Fail("--cohort is required.");
+            if (growthStr is null || !double.TryParse(growthStr, out double growth)) return Fail("--growth <k/yr> is required.");
+            if (samplesStr is null || !int.TryParse(samplesStr, out int samples) || samples < 2) return Fail("--samples <n> (>= 2) is required.");
+
+            var model = File.Exists(path)
+                ? DiscForge.Core.Forensics.MediaMortality.Load(path)
+                : new DiscForge.Core.Forensics.MediaMortalityModel();
+            DiscForge.Core.Forensics.MediaMortality.Observe(model, cohort,
+                new DiscForge.Core.Forensics.CohortObservation(growth, samples));
+            DiscForge.Core.Forensics.MediaMortality.Save(model, path);
+            var s = model.Cohorts[cohort];
+            Console.WriteLine($"Observed into {Path.GetFileName(path)}: cohort '{cohort}' now has {s.ContributorCount} " +
+                              $"contributor(s), mean growth {s.MeanGrowthPerYear:0.####}/yr.");
+            return 0;
+        }
+
+        if (sub == "merge")
+        {
+            if (args.Length < 4) return Fail("usage: dforge media-mortality merge <model.json> <other-model.json>");
+            string path = args[2], otherPath = args[3];
+            if (!File.Exists(path)) return Fail($"File not found: {path}");
+            if (!File.Exists(otherPath)) return Fail($"File not found: {otherPath}");
+            var a = DiscForge.Core.Forensics.MediaMortality.Load(path);
+            var b = DiscForge.Core.Forensics.MediaMortality.Load(otherPath);
+            var merged = DiscForge.Core.Forensics.MediaMortality.Merge(a, b);
+            DiscForge.Core.Forensics.MediaMortality.Save(merged, path);
+            Console.WriteLine($"Merged {Path.GetFileName(otherPath)} into {Path.GetFileName(path)}: " +
+                              $"{merged.Cohorts.Count} cohort(s) total.");
+            return 0;
+        }
+
+        if (sub == "estimate")
+        {
+            if (args.Length < 3) return Fail("usage: dforge media-mortality estimate <model.json> --cohort <c>");
+            string path = args[2];
+            string? cohort = OptVal(args, "--cohort");
+            if (string.IsNullOrWhiteSpace(cohort)) return Fail("--cohort is required.");
+            if (!File.Exists(path)) return Fail($"File not found: {path}");
+            var model = DiscForge.Core.Forensics.MediaMortality.Load(path);
+            var estimate = DiscForge.Core.Forensics.MediaMortality.Estimate(model, cohort);
+            if (estimate is null)
+            {
+                int have = model.Cohorts.TryGetValue(cohort, out var s) ? s.ContributorCount : 0;
+                Console.WriteLine($"No estimate for '{cohort}': {have} contributor(s), need " +
+                                  $"{DiscForge.Core.Forensics.MediaMortality.MinContributorsToReport} (privacy floor).");
+                return 1;
+            }
+            Console.WriteLine(estimate.Summary());
+            return 0;
+        }
+
+        if (sub == "show")
+        {
+            if (args.Length < 3) return Fail("usage: dforge media-mortality show <model.json>");
+            if (!File.Exists(args[2])) return Fail($"File not found: {args[2]}");
+            var model = DiscForge.Core.Forensics.MediaMortality.Load(args[2]);
+            foreach (var (key, s) in model.Cohorts.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+                Console.WriteLine($"  {key}: {s.ContributorCount} contributor(s), mean {s.MeanGrowthPerYear:0.####}/yr, " +
+                                  $"stddev {s.StdDev:0.####}" +
+                                  (s.ContributorCount < DiscForge.Core.Forensics.MediaMortality.MinContributorsToReport
+                                      ? "  (below privacy floor — not reportable via 'estimate')" : ""));
+            Console.WriteLine($"{model.Cohorts.Count} cohort(s) total.");
+            return 0;
+        }
+
+        return Fail($"Unknown media-mortality sub-command '{sub}' (expected observe, merge, estimate or show).");
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
 }
 
 static int Fail(string message)

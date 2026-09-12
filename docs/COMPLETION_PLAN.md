@@ -1,5 +1,14 @@
 # DiscForge — completion plan (2026-08-12)
 
+> **Superseded — kept for historical context only.** As of v1.76.0 (2026-09-05), several items
+> below marked as still-open in "Tier 1" had, in fact, already shipped by the time this very
+> document's own "Progress & reconciliation" note (just below) was written — e.g. DVD-Video
+> navigation tables (`IfoWriter`'s VTS_PGCIT/C_ADT/VOBU_ADMAP), UDF extended attributes and named
+> streams (`UdfBuilder`), and the multi-sector XISO directory table (`XdvdfsBuilder`) are all
+> implemented and tested today. **`docs/NEXT.md`'s "State as of …" section at the top of that file
+> is the current, maintained source of truth for what's actually still open** — check there first;
+> this file is left as-is below for the historical reasoning, not as an active task list.
+
 A prioritized map of what's left to finish, split by what *gates* each item: pure code
 (provable in the cloud with synthetic tests), a reference file (unblocked by dropping one
 sample into `DFORGE_FIXTURES/`), the physical drive, or an external dependency. Written from a

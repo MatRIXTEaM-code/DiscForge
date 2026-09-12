@@ -684,4 +684,178 @@ public class SectorExtractionTests
         Assert.Equal(2048, SectorExtraction.PayloadSize(ExtractDataType.DvdUserData2048));
         Assert.Equal(2048, SectorExtraction.DvdSectorSize);
     }
+
+    // ---- Tier-B adaptive-reread escalation (IExtractionRereadEscalation) ----
+    //
+    // SectorExtraction itself has no idea a real drive or Tier-B controller exists —
+    // it only ever sees the small IExtractionRereadEscalation seam, exactly like it
+    // only ever sees IExtractionReader. These tests script a fake escalation the
+    // same way FakeDrive scripts a fake reader, so the engine's own decisions (when
+    // to call it, what to do with what it returns) are provable without any hardware.
+
+    /// <summary>A scripted stand-in for the real Tier-B controller.</summary>
+    private sealed class FakeEscalation : IExtractionRereadEscalation
+    {
+        public readonly Dictionary<long, byte[]?> Recoverable = new();
+        public int CallCount;
+        public readonly List<(long Lba, bool IsAudio)> Calls = new();
+
+        public byte[]? TryRecover(long lba, bool isAudio)
+        {
+            CallCount++;
+            Calls.Add((lba, isAudio));
+            return Recoverable.TryGetValue(lba, out var b) ? b : null;
+        }
+    }
+
+    private static ExtractionResult RunWithEscalation(
+        FakeDrive d, long start, long end, ExtractionOptions o, IExtractionRereadEscalation? esc,
+        out byte[] output)
+    {
+        using var ms = new MemoryStream();
+        var r = SectorExtraction.Extract(d, start, end, o, ms, null, null, esc);
+        output = ms.ToArray();
+        return r;
+    }
+
+    [Fact]
+    public void AdaptiveReread_NotConsulted_WhenOptionIsOff_EvenIfEscalationGiven()
+    {
+        var d = new FakeDrive();
+        d.Fallback[7] = new SectorReadAttempt { Ok = false, Main = [], Error = "medium error" };
+        var esc = new FakeEscalation();
+        esc.Recoverable[7] = MakeAudio(7);   // would recover it if ever asked
+
+        var o = new ExtractionOptions { ReadRetries = 0, AdaptiveReread = false };
+        var r = RunWithEscalation(d, 7, 7, o, esc, out _);
+
+        Assert.Equal(0, esc.CallCount);
+        Assert.NotNull(r.AbortedAtLba);   // sanity: it did still fail, just without consulting escalation
+    }
+
+    [Fact]
+    public void AdaptiveReread_NotConsulted_WhenNoEscalationSupplied_EvenIfOptionIsOn()
+    {
+        var d = new FakeDrive();
+        d.Fallback[7] = new SectorReadAttempt { Ok = false, Main = [], Error = "medium error" };
+
+        var o = new ExtractionOptions { ReadRetries = 0, AdaptiveReread = true };
+        var r = RunWithEscalation(d, 7, 7, o, esc: null, out _);
+
+        Assert.NotNull(r.AbortedAtLba);   // no escalation given — flag alone is a no-op
+    }
+
+    [Fact]
+    public void AdaptiveReread_RecoversASectorEveryPlainRetryFailed()
+    {
+        var d = new FakeDrive();
+        d.Fallback[42] = new SectorReadAttempt { Ok = false, Main = [], Error = "medium error" };
+        var esc = new FakeEscalation();
+        esc.Recoverable[42] = MakeAudio(42);
+
+        var o = new ExtractionOptions { ReadRetries = 1, AdaptiveReread = true };
+        var r = RunWithEscalation(d, 42, 42, o, esc, out var bytes);
+
+        Assert.Equal("COMPLETE", r.Grade);
+        Assert.Equal(1, r.Recovered);
+        Assert.Equal(MakeAudio(42), bytes);
+        Assert.Equal(1, esc.CallCount);
+        Assert.Equal((42L, false), esc.Calls[0]);   // DataType defaults to Raw2352, not audio —
+                                                      // see AdaptiveReread_PassesTheCorrectIsAudioFlag
+    }
+
+    [Fact]
+    public void AdaptiveReread_PassesTheCorrectIsAudioFlag()
+    {
+        var d = new FakeDrive();
+        d.Fallback[9] = new SectorReadAttempt { Ok = false, Main = [], Error = "medium error" };
+        var esc = new FakeEscalation();
+        esc.Recoverable[9] = MakeAudio(9);
+
+        var o = new ExtractionOptions
+        {
+            DataType = ExtractDataType.Audio2352, ReadRetries = 0, AdaptiveReread = true,
+        };
+        RunWithEscalation(d, 9, 9, o, esc, out _);
+
+        Assert.Single(esc.Calls);
+        Assert.True(esc.Calls[0].IsAudio);
+    }
+
+    [Fact]
+    public void AdaptiveReread_StillFails_WhenEscalationCannotRecoverEither()
+    {
+        var d = new FakeDrive();
+        d.Fallback[3] = new SectorReadAttempt { Ok = false, Main = [], Error = "medium error" };
+        var esc = new FakeEscalation();   // nothing registered — TryRecover returns null
+
+        var o = new ExtractionOptions { ReadRetries = 0, AdaptiveReread = true };
+        var r = RunWithEscalation(d, 3, 3, o, esc, out _);
+
+        Assert.Equal(1, esc.CallCount);
+        Assert.Equal(3, r.AbortedAtLba);
+    }
+
+    [Fact]
+    public void AdaptiveReread_RecoveredBytes_AreStillStructurallyReProven_NotBlindlyTrusted()
+    {
+        // The escalation hands back bytes that are NOT a valid Mode 1 sector for this
+        // datatype (it's just random junk) — SectorExtraction must still catch that,
+        // exactly as it would for a normal read. Recovering *something* is never
+        // itself proof.
+        var d = new FakeDrive();
+        d.Fallback[11] = new SectorReadAttempt { Ok = false, Main = [], Error = "medium error" };
+        var esc = new FakeEscalation();
+        esc.Recoverable[11] = new byte[SS];   // all-zero: no sync, fails Mode1 structural check
+
+        var o = new ExtractionOptions
+        {
+            DataType = ExtractDataType.Mode1_2048, ReadRetries = 0, AdaptiveReread = true,
+        };
+        var r = RunWithEscalation(d, 11, 11, o, esc, out _);
+
+        Assert.Equal(1, esc.CallCount);
+        Assert.Equal(11, r.AbortedAtLba);
+        Assert.Contains("sync", r.AbortReason);
+    }
+
+    [Fact]
+    public void AdaptiveReread_ValidMode1SectorFromEscalation_IsAccepted()
+    {
+        var d = new FakeDrive();
+        d.Fallback[55] = new SectorReadAttempt { Ok = false, Main = [], Error = "medium error" };
+        var esc = new FakeEscalation();
+        esc.Recoverable[55] = MakeMode1(55);   // structurally valid, real sector
+
+        var o = new ExtractionOptions
+        {
+            DataType = ExtractDataType.Mode1_2048, ReadRetries = 0, AdaptiveReread = true,
+        };
+        var r = RunWithEscalation(d, 55, 55, o, esc, out var bytes);
+
+        Assert.Equal("COMPLETE", r.Grade);
+        Assert.Equal(1, r.Recovered);
+        Assert.Equal(MakeMode1(55)[16..2064], bytes);
+    }
+
+    [Fact]
+    public void AdaptiveReread_NeverConsulted_WhenTheOrdinaryRetryAlreadySucceeded()
+    {
+        // The whole point is "last resort" — a sector that recovers through the
+        // engine's own retry loop must never touch the escalation at all.
+        var d = new FakeDrive();
+        d.Script[8] = new Queue<SectorReadAttempt>(new[]
+        {
+            new SectorReadAttempt { Ok = false, Main = [], Error = "medium error" },
+            new SectorReadAttempt { Ok = true, Main = MakeAudio(8) },
+        });
+        var esc = new FakeEscalation();
+        esc.Recoverable[8] = MakeAudio(8);
+
+        var o = new ExtractionOptions { ReadRetries = 2, AdaptiveReread = true };
+        var r = RunWithEscalation(d, 8, 8, o, esc, out _);
+
+        Assert.Equal("COMPLETE", r.Grade);
+        Assert.Equal(0, esc.CallCount);
+    }
 }

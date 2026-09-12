@@ -33,9 +33,10 @@ public enum ProbeState
 /// about — C2 accuracy, lead-out overread, cache-defeat, and the drive's audio read offset.
 ///
 /// The advertised half is real and complete. The empirical half is reported HONESTLY: C2 accuracy
-/// needs a known-defective disc to validate, overread and cache-defeat need hardware timing probes
-/// that aren't implemented, and the read offset needs a known-offset AccurateRip reference — so
-/// each is carried as an explicit <see cref="ProbeState"/> (<c>NotProbed</c> / <c>NotDetermined</c>)
+/// needs a known-defective disc to validate (no probe can fabricate that), overread and cache-defeat
+/// are settled by non-destructive hardware timing/read probes when a disc is loaded, and the read
+/// offset needs a known-offset AccurateRip reference — so each is carried as an explicit
+/// <see cref="ProbeState"/> (<c>NotProbed</c> / <c>NotDetermined</c>)
 /// rather than a fabricated number. That is the whole point of this type: a drive profile you can
 /// trust field-by-field, in the same "provably correct or declined" spirit as the rest of DiscForge.
 /// This class is pure and unit-tested; the live capability read lives in the CLI (Windows SPTI).
@@ -73,7 +74,8 @@ public sealed record DriveProfile
     /// is filled only when a caller has determined it (e.g. from an AccurateRip reference);
     /// otherwise the profile honestly leaves the offset undetermined.</summary>
     public static DriveProfile FromCapabilities(DriveCapabilities caps, int? readOffsetSamples = null,
-                                                ProbeState overread = ProbeState.NotProbed)
+                                                ProbeState overread = ProbeState.NotProbed,
+                                                ProbeState cacheDefeat = ProbeState.NotProbed)
     {
         ArgumentNullException.ThrowIfNull(caps);
         return new DriveProfile
@@ -98,7 +100,7 @@ public sealed record DriveProfile
             // disc with known-bad sectors proves that. Leave it undetermined unless advertised-false.
             C2Accuracy = caps.C2ErrorReporting ? ProbeState.NotDetermined : ProbeState.No,
             Overread = overread,
-            CacheDefeat = ProbeState.NotProbed,
+            CacheDefeat = cacheDefeat,
             ReadOffsetSamples = readOffsetSamples,
 
             MediaProfile = caps.MediaProfile.ToString(),
@@ -132,7 +134,7 @@ public sealed record DriveProfile
         sb.AppendLine($"    C2 error pointers    : {P(C2ErrorPointers)}");
         sb.AppendLine($"    C2 accuracy          : {P(C2Accuracy)}  (needs a known-defective disc to validate)");
         sb.AppendLine($"    overread (lead-out)  : {P(Overread)}  (single-sector lead-out probe; needs a disc loaded)");
-        sb.AppendLine($"    cache defeat         : {P(CacheDefeat)}  (timing probe not implemented)");
+        sb.AppendLine($"    cache defeat         : {P(CacheDefeat)}  (timing probe; needs a disc loaded)");
         sb.AppendLine($"    read offset (samples): {(ReadOffsetSamples is int o ? o.ToString() : "not determined")}" +
                        "  (run `read-offset` against a known-offset AccurateRip reference)");
         sb.Append(     "  note: advertised flags come from INQUIRY + MMC GET CONFIGURATION + mode page 2Ah; the " +

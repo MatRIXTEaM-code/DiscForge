@@ -168,6 +168,17 @@ public readonly record struct SptiResult(bool Success, byte ScsiStatus, byte[] S
     public bool IsDriverLevelFailure => !Success && ScsiStatus == 0 && Win32Error != 0
         && SenseData is not { Length: > 2 };
 
+    /// <summary>The command failed, but neither a Win32 error nor real SCSI sense data came
+    /// back to say why — DeviceIoControl returned false, yet the last-error code read back
+    /// as 0. This happens with some drive/miniport stacks (seen in practice on an older
+    /// Plextor CD-R burner reading a mixed-mode disc right at a data/audio track boundary).
+    /// Without this case, <see cref="SenseKey"/> silently defaults to 0 ("No sense") and
+    /// <see cref="Describe"/> would report "No sense (status 0x00)" — which reads as "the
+    /// drive said everything is fine", the opposite of what actually happened. Distinct
+    /// from <see cref="IsDriverLevelFailure"/>, which at least has a Win32 error to show.</summary>
+    public bool IsUnexplainedFailure => !Success && ScsiStatus == 0 && Win32Error == 0
+        && SenseData is not { Length: > 2 };
+
     /// <summary>SPC sense key (low nibble of sense byte 2).</summary>
     public byte SenseKey => SenseData is { Length: > 2 } ? (byte)(SenseData[2] & 0x0F) : (byte)0;
     /// <summary>Additional Sense Code.</summary>
@@ -185,6 +196,15 @@ public readonly record struct SptiResult(bool Success, byte ScsiStatus, byte[] S
         if (IsDriverLevelFailure)
             return $"I/O request failed at the driver level (Win32 error {Win32Error}) — " +
                    "usually a transient link or spin-up glitch, not damaged media; a retry normally clears it";
+
+        // Same idea as IsDriverLevelFailure, but there isn't even a Win32 error code to
+        // show — say plainly that the request didn't complete rather than reporting a
+        // fabricated-sounding "No sense", which implies the drive said this was fine.
+        if (IsUnexplainedFailure)
+            return "I/O request did not complete, and neither Windows nor the drive gave a " +
+                   "reason (this is NOT a real \"no sense\" response from the drive — that would " +
+                   "mean it reported success); often clears on retry, and is not evidence of " +
+                   "damaged media by itself";
 
         string key = SenseKey switch
         {

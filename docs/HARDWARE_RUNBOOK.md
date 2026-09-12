@@ -10,18 +10,20 @@ dotnet publish src\DiscForge.Cli\DiscForge.Cli.csproj -c Release -f net8.0-windo
 
 The burn-day rung details live in [RAW_DAO.md](RAW_DAO.md); this is the operational checklist.
 
-## 1. Finish rung 7 — mixed-mode audio (the one open burn-day step)
+## 1. Rung 7 — mixed-mode audio — CLOSED 2026-08-29
 
-The mixed disc is already burned and its data track is PASS. Only the audio read remains. `--track`
-pulls the track's start LBA, length and field mode from the TOC (so the unreadable pregap is
-skipped automatically):
+Done. A fresh `mixed.cue` disc was burned on the PX-W5224A and both tracks verified
+independently via `--track N`: data track PASS (450 sectors, byte-identical), audio track
+PASS (350 sectors, byte-identical, 1 benign sub-timing note). The entire RAW-DAO ladder
+(rungs 1–7) is now PASS on real hardware — see `RAW_DAO.md`'s 2026-08-29 status block for
+the full result.
 
-```
-dforge read-raw D: audio_rb.bin --track 2
-dforge raw-verify-readback golden.img audio_rb.bin --partial --report cert-audio.html
-```
-
-Expected: PASS or PASS-with-notes. That closes the entire RAW-DAO ladder (rungs 1–7).
+Note for next time: `golden.img`, `data.bin`, `a.bin` and `mixed.cue` are **generic
+filenames reused across every fixture in this runbook** — after running a different rung's
+loop, these get silently overwritten with that rung's content. Before reusing an old
+`golden.img`, sanity-check it against the fixture you actually want with
+`dforge inspect-raw golden.img --deep` (sector count and track layout should match the CUE),
+or just regenerate the source files fresh from the recipe below before rebuilding.
 
 ## 2. Drive read-offset calibration
 
@@ -87,16 +89,53 @@ dforge drives            # list recorders
 dforge blank D:          # fast-erase a CD-RW before re-burning (--full for a full erase)
 ```
 
----
+> **Status 2026-08-29:** both new probes confirmed on the PX-W5224A. **Cache-defeat: genuinely
+> re-read** (cold/warm read times both ~0.7 ms, ratio 0.98 — no cache short-circuit), consistent
+> with this drive family's community reputation as a reliable dumper. **Overread: yes**, matching
+> the bundled knowledge-base reference exactly. **`reread-probe` at LBA 0: RECOVERED in 1 read**,
+> correctly identified track 1 as a data track and validated it via real EDC/ECC against the actual
+> disc. That run only exercises the "accept on first read" path, not escalation — a genuinely
+> marginal/scratched sector is needed to prove the SwitchStrategy → GiveUp ladder end to end;
+> worth doing if a scratched disc turns up.
 
-## Still needs a command built first (then hardware)
+## 7. Drive-capabilities profile (advertised + empirically probed)
 
-These are drive-bound *and* not yet a single command — noted so the backlog is honest:
+`drive-profile` consolidates a drive's read/write reach, write modes, and read-fidelity flags from
+INQUIRY + GET CONFIGURATION + mode page 2Ah, then runs two non-destructive hardware probes when a
+disc is loaded — lead-out OVERREAD and CACHE-DEFEAT (a timing comparison: read a sector, read it
+again immediately, and check whether the drive actually went back to the media or just served its
+own cache — see `DriveCacheDefeatProbe` for the method). `--no-probe` skips both if you only want
+the advertised half.
 
-- **Drive-capabilities profile** — one command that probes read offset, C2 accuracy, cache-defeat
-  and overread and writes a per-drive profile. The pieces exist (`read-offset`, C2 handling); the
-  consolidated profiler does not.
-- **Adaptive re-read Tier B** — wire the Tier-A controller (`AdaptiveReread`, already built and
-  tested) to real `read-raw` retries with actual speed/flag strategies.
-- **GUI burn Verify/Test** — the `BurnView` verify/test buttons still throw `NotImplementedException`;
-  the CLI path (`raw-verify-readback`) is what to route them through.
+```
+dforge drive-profile D: --out profile.json
+```
+
+C2 ACCURACY still needs a known-defective disc (no probe can prove pointer accuracy without one),
+and audio READ-OFFSET still needs an AccurateRip reference (`read-offset`) — both are reported
+honestly as unprobed/undetermined rather than guessed.
+
+## 8. Adaptive re-read, Tier B (real hardware)
+
+`reread-probe` drives the Tier-A decision logic (`AdaptiveReread`, proven hardware-free by its own
+test suite) against ONE real sector, escalating through three strategies — plain re-read, C2-guided
+re-read, then a slow (4x) C2-guided re-read — until the sector is recovered (EDC valid for data, or
+every read agrees with no C2 flags for audio) or every strategy is exhausted:
+
+```
+dforge reread-probe D: --lba <n>
+```
+
+Point it at a sector you already suspect is marginal (flagged by `disc-scan`, or one a prior dump
+had to retry). It's scoped to a single sector by design — a validation/diagnostic tool proving the
+real-hardware path works, not (yet) wired into `read-disc`'s own retry loop.
+
+## 9. GUI burn Verify/Test
+
+Already wired for the path that matters for preservation: `BurnView`'s Verify and Test buttons call
+`VerifyDiscAsync`/`VerifyRawDiscAsync`/`TestRawDiscAsync`, all implemented, for both plain-ISO
+verify and RAW/CUE verify+test. The one `NotImplementedException` left is Test on a plain ISO via
+the IMAPI2 data path specifically — Windows' own IMAPI2 API has no simulated-write mode for data
+discs, so there is nothing to route to a CLI equivalent; the message the button shows explains
+this and suggests a rewritable disc instead. (An earlier version of this runbook described the
+Verify/Test buttons as unimplemented outright — that was stale; corrected 2026-08-29.)

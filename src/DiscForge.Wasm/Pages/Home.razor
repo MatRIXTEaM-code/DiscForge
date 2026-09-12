@@ -1,0 +1,158 @@
+@page "/"
+@using DiscForge.Core.Provenance
+@using DiscForge.Core.Recovery
+@inject IJSRuntime JS
+
+<PageTitle>DiscForge Verify</PageTitle>
+
+<h1>DiscForge Verify</h1>
+
+<p>
+    Runs DiscForge's own verification code &mdash; the exact same <code>DumpCertificateLedgerLog</code> and
+    <code>MergeCertificate</code> classes <code>dforge dump-ledger verify</code> and <code>dforge merge-cert
+    verify</code> use &mdash; compiled to WebAssembly. Paste a JSON file below and click Verify: the check
+    runs entirely in this browser tab. Nothing you paste here is uploaded, sent to a server, or stored
+    anywhere &mdash; this page has no backend at all.
+</p>
+
+<p style="border-left:4px solid #2e7d32;padding-left:0.75em;">
+    <strong>ECDSA note:</strong> .NET 8's browser-wasm runtime has no ECDSA implementation of its own
+    (<code>ECDsa.Create()</code> throws <code>PlatformNotSupportedException</code> here). Signature checks
+    below fall back to the browser's own Web Crypto (<code>SubtleCrypto</code>) API instead, verifying the
+    exact same bytes DiscForge.Core would hand to ECDSA &mdash; via
+    <code>DumpCertificateLedgerLog.GetSubmitterSigningBytes</code> /
+    <code>MergeCertificate.GetSigningBytes</code>, the same public helpers a real <code>ECDsa</code> path
+    uses. If SubtleCrypto is also unavailable (an insecure, non-localhost origin), that's reported plainly
+    too, never silently treated as valid.
+</p>
+
+<h3>Dump-certificate ledger (<code>dforge dump-ledger</code>)</h3>
+<textarea @bind="ledgerJson" @bind:event="oninput" rows="8" style="width:100%;font-family:monospace;"
+          placeholder="Paste a dump-ledger.json here…"></textarea>
+<p>
+    <button class="btn btn-primary" @onclick="VerifyLedger">Verify ledger</button>
+</p>
+@if (ledgerResult is not null)
+{
+    <pre style="white-space:pre-wrap;">@ledgerResult</pre>
+}
+
+<h3>Merge certificate (<code>dforge merge-cert</code>)</h3>
+<textarea @bind="certJson" @bind:event="oninput" rows="8" style="width:100%;font-family:monospace;"
+          placeholder="Paste a .dmc.json here…"></textarea>
+<p>
+    <button class="btn btn-primary" @onclick="VerifyCert">Verify certificate</button>
+</p>
+@if (certResult is not null)
+{
+    <pre style="white-space:pre-wrap;">@certResult</pre>
+}
+
+@code {
+    private string ledgerJson = "";
+    private string? ledgerResult;
+    private string certJson = "";
+    private string? certResult;
+    private IJSObjectReference? ecdsaModule;
+
+    private async Task<IJSObjectReference> EcdsaModuleAsync() =>
+        ecdsaModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/ecdsaFallback.js");
+
+    /// <summary>Verify one ECDSA signature via the browser's SubtleCrypto, since .NET's own ECDsa is
+    /// unavailable on browser-wasm. Returns a human-readable verdict line, never throwing.</summary>
+    private async Task<string> VerifyViaSubtleCryptoAsync(byte[] spki, byte[] data, byte[] signature, string label)
+    {
+        try
+        {
+            var module = await EcdsaModuleAsync();
+            bool ok = await module.InvokeAsync<bool>("verifyEcdsaP256Sha256", spki, data, signature);
+            return $"  {label} : {(ok ? "VALID" : "INVALID")}  (verified via browser SubtleCrypto — .NET's ECDsa is unavailable on browser-wasm)";
+        }
+        catch (Exception ex)
+        {
+            return $"  {label} : NOT CHECKED — SubtleCrypto fallback failed: {ex.Message}";
+        }
+    }
+
+    private async Task VerifyLedger()
+    {
+        DumpCertificateLedger ledger;
+        try
+        {
+            ledger = DumpCertificateLedgerLog.FromJson(ledgerJson);
+        }
+        catch (Exception ex)
+        {
+            ledgerResult = $"Could not parse as a dump-ledger.json: {ex.Message}";
+            return;
+        }
+
+        bool chain = DumpCertificateLedgerLog.VerifyChain(ledger);   // SHA-256 only — no ECDSA involved
+        string sigLine;
+        try
+        {
+            bool sigs = DumpCertificateLedgerLog.VerifyAllSubmitterSignatures(ledger);
+            sigLine = $"  signatures : {(sigs ? "ALL VALID" : "AT LEAST ONE INVALID")}";
+        }
+        catch (PlatformNotSupportedException)
+        {
+            // Fall back to SubtleCrypto, one entry at a time, so a single bad signature is still pinpointed.
+            bool allOk = true;
+            foreach (var entry in ledger.Entries)
+            {
+                var module = await EcdsaModuleAsync();
+                byte[] spki = Convert.FromBase64String(entry.SubmitterPublicKey);
+                byte[] data = DumpCertificateLedgerLog.GetSubmitterSigningBytes(entry);
+                byte[] sig = Convert.FromBase64String(entry.SubmitterSignature);
+                bool ok;
+                try { ok = await module.InvokeAsync<bool>("verifyEcdsaP256Sha256", spki, data, sig); }
+                catch { ok = false; }
+                if (!ok) allOk = false;
+            }
+            sigLine = $"  signatures : {(allOk ? "ALL VALID" : "AT LEAST ONE INVALID")}  (verified via browser SubtleCrypto — .NET's ECDsa is unavailable on browser-wasm)";
+        }
+
+        ledgerResult = $"{ledger.Entries.Count} entr{(ledger.Entries.Count == 1 ? "y" : "ies")}\n" +
+                       $"  chain      : {(chain ? "INTACT" : "BROKEN — the ledger was altered")}\n" + sigLine;
+    }
+
+    private async Task VerifyCert()
+    {
+        MergeCertificate cert;
+        try
+        {
+            cert = System.Text.Json.JsonSerializer.Deserialize<MergeCertificate>(certJson,
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+                })
+                ?? throw new InvalidDataException("Empty certificate.");
+        }
+        catch (Exception ex)
+        {
+            certResult = $"Could not parse as a merge certificate (.dmc.json): {ex.Message}";
+            return;
+        }
+
+        string sigLine;
+        if (cert.Signature is null)
+        {
+            sigLine = "  signature  : (unsigned)";
+        }
+        else
+        {
+            try
+            {
+                sigLine = $"  signature  : {(cert.VerifySignature() ? "VALID" : "INVALID")}";
+            }
+            catch (PlatformNotSupportedException)
+            {
+                byte[] spki = Convert.FromBase64String(cert.PublicKey!);
+                byte[] data = cert.GetSigningBytes();
+                byte[] sig = Convert.FromBase64String(cert.Signature);
+                sigLine = await VerifyViaSubtleCryptoAsync(spki, data, sig, "signature ");
+            }
+        }
+        certResult = cert.Summary() + "\n" + sigLine;
+    }
+}

@@ -5,12 +5,21 @@
 #
 # Usage (PowerShell, from C:\dev\DiscForge - note the .\):
 #   .\build.ps1                     build + tests
-#   .\build.ps1 -Rebuild            clean rebuild (-t:Rebuild) + tests
-#   .\build.ps1 -Publish            build + standalone .exe's in dist\ + tests
+#   .\build.ps1 -Rebuild            clean rebuild (-t:Rebuild) + tests - USE THIS after
+#                                    pulling in a delivered fix; plain `dotnet build` is an
+#                                    incremental build and can silently skip recompiling a
+#                                    changed file (bit us on 2026-08-29 - a "still failing"
+#                                    test run turned out to be a stale binary, not a bad fix)
+#   .\build.ps1 -Publish             build + standalone .exe's in dist\ + tests
 #   .\build.ps1 -Publish -NoTest    build + standalone .exe's, skip tests
 #   .\build.ps1 -StrictTest         build + tests, and FAIL the script if any test fails
 #   .\build.ps1 -Docs               regenerate docs\GUI.md (from HelpContent.cs) first
 #   .\build.ps1 -Run                build, then launch the GUI (elevated)
+#
+# Every run ends by printing `dforge version` from the just-built CLI - its build
+# timestamp is the ground truth for whether the binary you're about to test is actually
+# fresh. If that timestamp doesn't look like just now, the build silently didn't happen -
+# re-run with -Rebuild rather than guessing.
 #
 # If PowerShell blocks this ("running scripts is disabled"), run it once as:
 #   powershell -ExecutionPolicy Bypass -File .\build.ps1
@@ -105,6 +114,26 @@ Write-Host ""
 Write-Host "== Done in ${elapsed}s ==" -ForegroundColor Green
 $guiExe = Get-ChildItem (Join-Path $root "src\DiscForge.App\bin\$Configuration") -Filter DiscForge.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($guiExe) { Write-Host ("Framework GUI: " + $guiExe.FullName + "   (run as administrator)") -ForegroundColor Green }
+
+# Ground truth for "did this actually rebuild": dforge.dll's own build timestamp, not
+# just an exit code. Prefer the freshly-published standalone exe when -Publish ran;
+# otherwise the framework-dependent one from the plain build.
+$cliExe = $null
+if ($Publish) {
+    $publishedCli = Join-Path $root "dist\cli\dforge.exe"
+    if (Test-Path $publishedCli) { $cliExe = $publishedCli }
+}
+if (-not $cliExe) {
+    $cliExe = Get-ChildItem (Join-Path $root "src\DiscForge.Cli\bin\$Configuration") -Filter dforge.exe -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+}
+if ($cliExe) {
+    Write-Host ""
+    Write-Host "== CLI build check ==" -ForegroundColor Cyan
+    & $cliExe version
+} else {
+    Write-Host "dforge.exe not found after build - something's wrong; don't trust this build." -ForegroundColor Red
+}
 
 if ($Run -and $guiExe) {
     Write-Host "Launching the GUI (elevated)..." -ForegroundColor Cyan

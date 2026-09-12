@@ -50,8 +50,41 @@ public class DriveKnowledgeBaseTests
     [Fact]
     public void UnknownDrive_IsNull_NotAGuess()
     {
-        Assert.Null(DriveKnowledgeBase.Find("HL-DT-ST", "DVDRAM GH24NSC0"));
+        Assert.Null(DriveKnowledgeBase.Find("HL-DT-ST", "DVDRAM ZZZ9999"));
         Assert.Null(DriveKnowledgeBase.Find("", ""));
+    }
+
+    [Fact]
+    public void GrowthBatch_MatchesRealInquiryStrings()
+    {
+        // LG BD-RE units report the OEM chipset vendor "HL-DT-ST", not "LG Electronics".
+        var wh16 = DriveKnowledgeBase.Find("HL-DT-ST", "BD-RE  WH16NS40 ");
+        Assert.NotNull(wh16);
+        Assert.Equal(6, wh16!.ReadOffsetSamples);
+
+        var gh24 = DriveKnowledgeBase.Find("HL-DT-ST", "DVDRAM GH24NSC0");
+        Assert.NotNull(gh24);
+        Assert.Equal(6, gh24!.ReadOffsetSamples);
+
+        var bdr209 = DriveKnowledgeBase.Find("PIONEER", "BD-RW    BDR-209D");
+        Assert.NotNull(bdr209);
+        Assert.Equal(667, bdr209!.ReadOffsetSamples);
+
+        var asus = DriveKnowledgeBase.Find("ASUS", "DRW-24B1ST c");
+        Assert.NotNull(asus);
+        Assert.Equal(6, asus!.ReadOffsetSamples);
+
+        var sh224 = DriveKnowledgeBase.Find("TSSTcorp", "CDDVDW SH-224DB");
+        Assert.NotNull(sh224);
+        Assert.Equal(6, sh224!.ReadOffsetSamples);
+
+        var px716 = DriveKnowledgeBase.Find("PLEXTOR", "DVDR   PX-716A");
+        Assert.NotNull(px716);
+        Assert.Equal(30, px716!.ReadOffsetSamples);
+
+        // Vendor-agnostic entry: Sony- and Optiarc-branded units of the identical drive both match.
+        Assert.NotNull(DriveKnowledgeBase.Find("SONY", "DVD RW AD-7200A"));
+        Assert.NotNull(DriveKnowledgeBase.Find("Optiarc", "DVD RW AD-7200S"));
     }
 
     [Fact]

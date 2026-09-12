@@ -35,6 +35,15 @@ public sealed record GameCubeHealth
     public required long FstSize { get; init; }
     public required GcSizeClass SizeClass { get; init; }
 
+    /// <summary>Whether the padding (junk) regions read as intact, scrubbed, mixed, or suspicious —
+    /// see <see cref="GcJunkMapper"/>. Classified by entropy, not byte-compared against the (unvalidated)
+    /// junk generator; a high-entropy region reads as "plausible junk" without claiming an exact match to
+    /// Nintendo's real algorithm. Null when the image was too short/malformed to even map padding.</summary>
+    public GcPaddingVerdict? PaddingVerdict { get; init; }
+    /// <summary>True when bi2.bin carries non-zero debug-monitor/simulated-memory fields — a signal this
+    /// dump came from a dev-kit/debug build rather than a retail pressing.</summary>
+    public bool LooksLikeDebugBuild { get; init; }
+
     public required IReadOnlyList<string> Warnings { get; init; }
     public bool Healthy => Warnings.Count == 0;
 
@@ -49,6 +58,8 @@ public sealed record GameCubeHealth
         };
         var sb = new StringBuilder(
             $"{GameCode} \"{GameName}\" v1.{Version:00} ({BiRegion}) — {DiscSize:N0} bytes, {cls}. ");
+        if (LooksLikeDebugBuild) sb.Append("bi2.bin flags this as a debug/dev-kit build. ");
+        if (PaddingVerdict is { } pv) sb.Append($"Padding: {pv}. ");
         sb.Append(Healthy ? "Boot structure sane; dump looks healthy."
                           : $"{Warnings.Count} concern(s): {string.Join("; ", Warnings)}.");
         return sb.ToString();
@@ -93,6 +104,25 @@ public static class GameCubeVerify
         if (fstOff + fstSize > size) warnings.Add("FST extends past the end of the image (truncated?)");
         if (disc.Entries.Count == 0) warnings.Add("the file table is empty");
 
+        // Confirm the whole boot chain (bi2 -> apploader -> DOL -> FST), not just each piece in isolation —
+        // this can catch a header pointer that's internally inconsistent even when each piece parses fine.
+        foreach (var issue in GcBoot.CheckChain(stream, dol, fstOff, fstSize))
+            warnings.Add($"boot chain ({issue.Stage}): {issue.Detail}");
+
+        bool debugBuild = false;
+        try { debugBuild = GcBoot.ReadBi2(stream).LooksLikeDebugBuild; }
+        catch { /* already reported via CheckChain above if bi2.bin itself didn't parse */ }
+
+        GcPaddingVerdict? paddingVerdict = null;
+        try
+        {
+            var map = GcJunkMapper.Analyze(stream);
+            paddingVerdict = map.Verdict;
+            if (map.Verdict is GcPaddingVerdict.Scrubbed or GcPaddingVerdict.Mixed or GcPaddingVerdict.Suspicious)
+                warnings.Add($"padding: {map.Summary()}");
+        }
+        catch { /* padding mapping is best-effort on top of the checks above, not load-bearing */ }
+
         GcSizeClass cls =
             size == GameCubeSingleLayerBytes ? GcSizeClass.GameCubeSingleLayer :
             size < GameCubeSingleLayerBytes ? GcSizeClass.GameCubeSmaller :
@@ -118,6 +148,8 @@ public static class GameCubeVerify
             FstOffset = fstOff,
             FstSize = fstSize,
             SizeClass = cls,
+            PaddingVerdict = paddingVerdict,
+            LooksLikeDebugBuild = debugBuild,
             Warnings = warnings,
         };
     }

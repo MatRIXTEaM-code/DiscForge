@@ -1,0 +1,15 @@
+{
+  "Operation": "read-cdi",
+  "ToolVersion": "1.75.0",
+  "UtcTimestamp": "2026-09-05T12:39:55.3806123Z",
+  "DriveVendor": "PLEXTOR",
+  "DriveModel": "CD-R   PX-W5224A",
+  "DriveFirmware": "1.03",
+  "DevicePath": "\\\\.\\D:",
+  "MediaProfile": "CdR",
+  "Engine": "spti",
+  "RetryCount": 3,
+  "ContinueOnError": false,
+  "JitterCorrection": false,
+  "Outcome": "complete"
+}

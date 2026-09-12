@@ -23,7 +23,7 @@ public sealed record GcDol(uint EntryPoint, int TextSections, int DataSections, 
 /// sections, a BSS region and an entry point. This reads that metadata — the shape of what the disc boots
 /// — from the disc's own unencrypted structures. Reads and reports; changes nothing.
 /// </summary>
-public static class GcBoot
+public static partial class GcBoot
 {
     /// <summary>The apploader always sits at this fixed offset on a GameCube disc.</summary>
     public const int ApploaderOffset = 0x2440;

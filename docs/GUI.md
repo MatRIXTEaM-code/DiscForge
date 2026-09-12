@@ -35,7 +35,7 @@ Quality** need raw device access, which generally means running as administrator
 
 ## Tiles
 
-The launcher shows **49 tiles**, defined by the `_tiles` array in
+The launcher shows **64 tiles**, defined by the `_tiles` array in
 `CdrwinLauncher.cs`. Each is described below; the full write-ups are in the Help
 tile (source: `HelpContent.cs`).
 
@@ -98,6 +98,7 @@ tile (source: `HelpContent.cs`).
 | **Library** | Scan, verify and rename a collection. |
 | **Submit** | redump.org submission info. |
 | **Tools** | Checksums, split / join. |
+| **Verify & Lint** | Structural and filesystem conformance checks. |
 
 ### Console & cartridge preservation
 
@@ -113,6 +114,7 @@ tile (source: `HelpContent.cs`).
 | **PSX Build** | Build a Mode 2 bin/cue. |
 | **Compressed** | CSO/ZSO ↔ ISO, identify CHD. |
 | **ScummVM** | Fingerprint or export for ScummVM. |
+| **Textures** | Decode GameCube/Wii TPL textures. |
 
 ### Extract, cheats & game media
 
@@ -128,6 +130,21 @@ tile (source: `HelpContent.cs`).
 |------|--------------|
 | **Playlists** | Export front-end library files. |
 | **Sets** | 1G1R filter and rebuild a set. |
+| **DAT Build** | Hash a folder into a Redump-style DAT. |
+
+### Preservation certificates & forensics
+
+| Tile | What it does |
+|------|--------------|
+| **Merge Rips** | Combine several rips into one. |
+| **Merge + Certify** | Merge rips with a signed provenance certificate. |
+| **Dump Certificate** | Certify or verify a single dump. |
+| **Prove** | Burn, read back, and verify byte-for-byte — one verdict. |
+| **Pressing DNA** | Fingerprint a pressing offline; compare two. |
+| **Drive Dossier** | Per-drive memory: quirks accumulate into warnings. |
+| **Disc Actuary** | How long a disc has left, from its scan history. |
+| **Disc MRI** | Polar damage map on the physical disc. |
+| **Secure-Rip Plan** | Grade rip evidence and plan re-reads. |
 
 ### Utility
 
@@ -137,6 +154,14 @@ tile (source: `HelpContent.cs`).
 | **Settings** | Preferences and diagnostics. |
 | **About** | Version, licence and diagnostics. |
 | **Exit** | Close DiscForge. |
+
+### Other
+
+| Tile | What it does |
+|------|--------------|
+| **VOB Demux** | Split a VOB/MPG into streams. |
+| **Video CD** | Write VCD control sectors. |
+| **IFO Editor** | Edit and rebuild DVD IFOs. |
 
 ## Notes
 

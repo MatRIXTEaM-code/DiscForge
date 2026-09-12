@@ -102,6 +102,18 @@ Awaiting real-drive validation (all documented, all easy to flip):
 > unchanged). The program-area **Q — carrying ISRC + MCN — is byte-faithful**. On-disc CD-TEXT
 > (lead-in R–W) is proven in software; a lead-in rip is the only thing left to confirm it
 > physically. Rung 4/5 is a **PASS**.
+>
+> **Status 2026-08-29 (rung 7, closing the ladder):** `mixed.cue` (data track LBA 0–299 +
+> audio track LBA 300–799 with its 150-sector INDEX-00 pregap) burned on the PX-W5224A. Both
+> tracks read back and verified independently via `--track N` (which pulls each track's start
+> LBA, length and field mode from the TOC, so the audio track's unreadable pregap is skipped
+> automatically): **data track — main channel byte-identical across all 450 compared sectors**
+> (300 real data sectors, descrambled-on-read as expected — a read-path representation
+> difference, not a defect — plus 1 benign sub-timing note); **audio track — main channel
+> byte-identical across all 350 compared sectors**, 1 benign sub-timing note. Both graded
+> **PASS (with notes)**, notes being exclusively drive-introduced and explicitly benign
+> (descrambled-on-read, sub-timing) — no addressing, protection, or user-data defects on
+> either track. **Rung 7 is a PASS**, closing the entire RAW-DAO ladder (rungs 1–7) end to end.
 
 1. **`SupportedSectorTypes` probe**: insert a blank CD-R; `dforge writeinfo D:` and the burn
    log show the negotiated type / next-writable-address. ✅ PX-W5224A: raw P-W accepted,
@@ -115,10 +127,14 @@ Awaiting real-drive validation (all documented, all easy to flip):
    program-area Q (ISRC + MCN) read back byte-faithful; main channel identical, 1 timing-only.
 6. **MODE1/2048 data CUE** — the full synthesis + scrambling path. Mount it. ✅ **PASS**
    (PX-W5224A, `data.cue`) — disc byte-perfect; see the rung 6 note below.
-7. **Mixed-mode CUE** — the final boss. Compare against a DiscJuggler burn if one survives.
+7. **Mixed-mode CUE** — the final boss. ✅ **PASS** (PX-W5224A, `mixed.cue`) — both tracks
+   verified independently, see the rung 7 note above. Ladder complete.
 
 Each failure mode is isolated by this ordering: 2 tests transport, 6 tests
-synthesis, and anything wrong in between is subcode layout.
+synthesis, and anything wrong in between is subcode layout. All seven rungs are now PASS
+on real hardware (PX-W5224A) — the RAW-DAO/SAO transport, synthesis, and subcode paths are
+proven end to end for plain audio, gapless audio, CD-TEXT, ISRC/MCN, MODE1 data, and
+mixed-mode discs.
 
 ## Ready-to-run burn-day fixtures
 
@@ -206,6 +222,10 @@ dforge raw-verify-readback golden.img audio_rb.bin --partial --report cert-audio
 > INDEX 01 instead). Manual equivalents if you prefer explicit LBAs: `--start 0 --length 300 --field
 > data` for the data track, and `--start 450 --length 350 --field audio` for the audio (LBA 450 =
 > track 2's INDEX 01 from `inspect-raw`).
+>
+> **Status 2026-08-29:** the audio track closed out — **PASS**, main channel byte-identical
+> across all 350 compared sectors (1 benign sub-timing note only). Rung 7 complete; see the
+> status block above the checklist for the full result.
 
 The `mixed.cue` fixture itself:
 

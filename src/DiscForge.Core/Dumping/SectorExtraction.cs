@@ -107,6 +107,18 @@ public sealed record ExtractionOptions
     /// status byte says.
     /// </summary>
     public bool RequireDataSync { get; init; }
+
+    /// <summary>
+    /// Opt-in, off by default. When every plain retry has already failed a sector,
+    /// try one more escalation — Tier-B adaptive re-read — before giving up on it.
+    /// Only takes effect when <see cref="Extract"/> is also given a non-null
+    /// <see cref="IExtractionRereadEscalation"/>; setting this flag with no
+    /// escalation supplied is a silent no-op (there is nothing to escalate to), the
+    /// same shape as <c>DiscReader.ReadOptions.AdaptiveReread</c> for the CD track
+    /// ripper. Purely additive: unset, extraction behaves exactly as before this
+    /// existed.
+    /// </summary>
+    public bool AdaptiveReread { get; init; }
 }
 
 /// <summary>One attempt at one sector, as the reader saw it.</summary>
@@ -131,6 +143,30 @@ public interface IExtractionReader
 {
     long TotalSectors { get; }
     SectorReadAttempt Read(long lba, bool wantC2, bool wantSubcode);
+}
+
+/// <summary>
+/// An optional last-resort escalation for a sector that has exhausted every plain
+/// retry <see cref="SectorExtraction.Extract"/> would otherwise have given it — the
+/// same Tier-B adaptive re-read (<c>DiscForge.Core.Recovery.AdaptiveReread</c>,
+/// wired to real hardware via <c>DiscForge.Devices.Reading.DriveRereadSource</c>)
+/// already proven against real marginal media through <c>reread-probe</c> and wired
+/// into the CD track ripper (<c>dforge read-cdi --adaptive-reread</c>). This
+/// interface exists so <see cref="SectorExtraction"/> — pure, hardware-agnostic,
+/// fake-testable — never has to know an <c>SptiDevice</c> exists; the live
+/// implementation lives in <c>DiscForge.Devices</c> and is injected by the caller.
+/// </summary>
+public interface IExtractionRereadEscalation
+{
+    /// <summary>
+    /// Try to recover sector <paramref name="lba"/> after every ordinary retry has
+    /// already failed it. Returns the raw 2352-byte sector once the escalation's own
+    /// correctness signal (EDC for a data sector, full cross-read consensus for
+    /// audio) accepts it, or null if every escalation strategy was exhausted too.
+    /// The caller re-runs its own structural proof on whatever comes back — this
+    /// method recovering bytes is never, by itself, treated as sufficient proof.
+    /// </summary>
+    byte[]? TryRecover(long lba, bool isAudio);
 }
 
 /// <summary>What one extraction did, sector by sector, with nothing hidden.</summary>
@@ -206,7 +242,8 @@ public static class SectorExtraction
     /// </summary>
     public static ExtractionResult Extract(
         IExtractionReader reader, long startLba, long endLba, ExtractionOptions options,
-        Stream output, Stream? subOutput = null, Action<long, long>? progress = null)
+        Stream output, Stream? subOutput = null, Action<long, long>? progress = null,
+        IExtractionRereadEscalation? adaptiveReread = null)
     {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(options);
@@ -238,7 +275,7 @@ public static class SectorExtraction
 
         for (long lba = startLba; lba <= endLba; lba++)
         {
-            var (good, attempt, attemptsUsed, why) = ReadProven(reader, lba, options);
+            var (good, attempt, attemptsUsed, why) = ReadProven(reader, lba, options, adaptiveReread);
 
             if (good && attemptsUsed > baselineAttempts) recovered++;
 
@@ -338,7 +375,7 @@ public static class SectorExtraction
     // ---- proving one sector -------------------------------------------------
 
     private static (bool good, SectorReadAttempt? last, int attempts, string? why) ReadProven(
-        IExtractionReader reader, long lba, ExtractionOptions o)
+        IExtractionReader reader, long lba, ExtractionOptions o, IExtractionRereadEscalation? adaptiveReread)
     {
         int maxAttempts = 1 + o.ReadRetries;
         SectorReadAttempt? last = null;
@@ -369,6 +406,27 @@ public static class SectorExtraction
             pendingConsensus = a.Main;
             why = "reads disagree (jitter): no two attempts returned the same bytes";
         }
+
+        // Every plain retry (and, for audio, every consensus attempt) has failed this
+        // sector. Before giving up, offer it once to Tier-B — the same escalation the
+        // CD track ripper already uses — if the caller opted in and supplied one.
+        // Whatever comes back is re-proven through the exact same structural gate
+        // every other attempt went through: a recovered byte array is a candidate,
+        // never an automatic accept.
+        if (o.AdaptiveReread && adaptiveReread is not null)
+        {
+            bool isAudio = o.DataType == ExtractDataType.Audio2352;
+            byte[]? recovered = adaptiveReread.TryRecover(lba, isAudio);
+            if (recovered is not null)
+            {
+                var synthetic = new SectorReadAttempt { Ok = true, Main = recovered };
+                string? synthWhy = Failure(synthetic, o);
+                if (synthWhy is null) return (true, synthetic, maxAttempts + 1, null);
+                last = synthetic;
+                why = synthWhy;
+            }
+        }
+
         return (false, last, maxAttempts, why);
     }
 

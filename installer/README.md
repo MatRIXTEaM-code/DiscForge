@@ -6,7 +6,21 @@ Builds a single `DiscForge-Setup-<version>.exe` for Windows, using
 
 ## Build it
 
-On a Windows machine with the .NET 8 SDK and Inno Setup 6 installed:
+On a Windows machine with the .NET 8 SDK and Inno Setup 6 installed, the
+one-shot way is from the repo root:
+
+```powershell
+.\build-app.ps1 -Publish
+```
+
+That builds the app, runs `publish.ps1` for you, then finds and runs Inno
+Setup's `ISCC.exe` against `DiscForge.iss` automatically — the setup
+executable lands in `installer\Output\`. If Inno Setup isn't installed (or
+isn't on PATH and isn't in either of its usual `Program Files` locations),
+`-Publish` says so plainly and stops after the self-contained payload in
+`.\publish\`; install Inno Setup 6 and run `-Publish` again.
+
+To do the same two steps by hand instead:
 
 ```powershell
 # 1. From the repo root — publish self-contained win-x64 binaries:
@@ -15,8 +29,6 @@ powershell -ExecutionPolicy Bypass .\installer\publish.ps1
 # 2. Compile the installer:
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\DiscForge.iss
 ```
-
-The setup executable lands in `installer\Output\`.
 
 (Step 2 can also be done by opening `installer\DiscForge.iss` in the Inno
 Setup IDE and pressing F9.)

@@ -5,6 +5,8 @@
 // the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY;
 // see the GNU General Public License (LICENSE at the repository root) for details.
 
+using DiscForge.Core.Util;
+
 namespace DiscForge.Core.GameCube;
 
 /// <summary>
@@ -25,11 +27,23 @@ namespace DiscForge.Core.GameCube;
 /// So a fully-scrubbed image (no surviving junk) is intentionally declined until a real
 /// Redump/NKit oracle confirms the generator; a partially-scrubbed image is self-validating and
 /// can be completed today. Clean-room; defeats no protection and reconstructs only padding.
+///
+/// The self-validation above proves the generator against THIS disc's own surviving junk — it does
+/// NOT by itself prove the reconstructed image is byte-identical to a specific Redump-verified
+/// dump (a self-validated generator could in principle still diverge somewhere the surviving junk
+/// never sampled). <see cref="Reconstruct"/> therefore always reports the finished output's CRC-32,
+/// and a caller who has a Redump entry's known-good CRC-32 for this exact title can pass it in as
+/// <c>expectedCrc32</c> for a genuine independent confirmation — the "confirm by CRC32" step the
+/// roadmap asks for. Nothing here fabricates or bundles Redump data; this session has no such
+/// database to draw from, so the check only runs when the caller supplies the value themselves.
 /// </summary>
 public static class GcJunkReconstructor
 {
     /// <summary>Bytes validated per surviving-junk region (bounded; spans block seams).</summary>
     public const int ValidationSampleBytes = 0x80000;   // 512 KiB → crosses 0x40000 block seams
+
+    /// <summary>Chunk size used to stream-hash the finished output for its CRC-32.</summary>
+    private const int HashChunkBytes = 1024 * 1024;
 
     public sealed record Report
     {
@@ -40,11 +54,24 @@ public static class GcJunkReconstructor
         public required int ScrubbedRegionsFilled { get; init; }
         public required long BytesFilled { get; init; }
         public required string Message { get; init; }
+        /// <summary>CRC-32 of the finished output, always computed regardless of whether anything
+        /// was reconstructed — a plain declined-and-copied output still gets one, so it can be
+        /// checked against a Redump entry even when this call didn't need to fill anything.</summary>
+        public uint OutputCrc32 { get; init; }
+        /// <summary>The CRC-32 the caller expected, when one was supplied.</summary>
+        public uint? ExpectedCrc32 { get; init; }
+        /// <summary>True/false only when <see cref="ExpectedCrc32"/> was supplied — an independent
+        /// confirmation against a caller-known-good value, separate from the self-validation above.</summary>
+        public bool? CrcConfirmed => ExpectedCrc32 is { } e ? e == OutputCrc32 : null;
     }
 
     /// <summary>Copy <paramref name="input"/> to <paramref name="output"/>, filling scrubbed junk
-    /// only if the generator self-validates against the image's surviving junk.</summary>
-    public static Report Reconstruct(Stream input, Stream output)
+    /// only if the generator self-validates against the image's surviving junk. <paramref name="output"/>
+    /// must support seeking and reading back (a <see cref="FileStream"/> or <see cref="MemoryStream"/>) so
+    /// the finished image's CRC-32 can be computed after writing. When <paramref name="expectedCrc32"/> is
+    /// supplied, the report's <see cref="Report.CrcConfirmed"/> says whether it matches — an independent
+    /// check against a known-good value, on top of (not instead of) the self-validation gate.</summary>
+    public static Report Reconstruct(Stream input, Stream output, uint? expectedCrc32 = null)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(output);
@@ -83,6 +110,8 @@ public static class GcJunkReconstructor
                       "fully scrubbed). The junk regenerator is unconfirmed, so filling is declined to " +
                       "avoid writing bytes that can't be proven correct. A partially-scrubbed dump, or a " +
                       "Redump/NKit oracle for this title, would unblock it.",
+                OutputCrc32 = HashOutput(output),
+                ExpectedCrc32 = expectedCrc32,
             };
         }
 
@@ -109,6 +138,8 @@ public static class GcJunkReconstructor
                     Message = $"The junk generator does not match this disc's surviving junk (mismatch in " +
                               $"the region at 0x{r.Start:X}). Reconstruction declined — the padding PRNG is " +
                               "not yet confirmed for this title, and a guess must not be written.",
+                    OutputCrc32 = HashOutput(output),
+                    ExpectedCrc32 = expectedCrc32,
                 };
             }
             matchedBytes += sample;
@@ -146,6 +177,21 @@ public static class GcJunkReconstructor
                   $"({matchedBytes:N0} bytes); rebuilt {scrubbed.Count} scrubbed region(s), {filled:N0} bytes."
                 : $"Generator self-validated against {intact.Count} surviving-junk region(s); no scrubbed " +
                   "padding needed rebuilding.",
+            OutputCrc32 = HashOutput(output),
+            ExpectedCrc32 = expectedCrc32,
         };
+    }
+
+    /// <summary>Stream-hash the finished output for its CRC-32 without loading it into memory —
+    /// safe for a multi-hundred-MB/GB disc image. Leaves the stream positioned at its end.</summary>
+    private static uint HashOutput(Stream output)
+    {
+        output.Seek(0, SeekOrigin.Begin);
+        var crc = new Crc32();
+        var buf = new byte[HashChunkBytes];
+        int n;
+        while ((n = output.Read(buf, 0, buf.Length)) > 0)
+            crc.Update(buf.AsSpan(0, n));
+        return crc.Value;
     }
 }

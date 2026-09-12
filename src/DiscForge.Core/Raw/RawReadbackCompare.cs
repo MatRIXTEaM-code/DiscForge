@@ -81,6 +81,171 @@ public static class RawReadbackCompare
     private const int MainSize = 2352;
     private const int MaxExamplesPerCategory = 8;
 
+    /// <summary>
+    /// Diagnostic-only: runs exactly the alignment setup <see cref="Compare"/> does (layout
+    /// detection, lead-in boundary, header-vs-Q base address, skew correction) and reports every
+    /// intermediate value instead of comparing sectors. For working out WHY an alignment landed
+    /// where it did on a real capture, without re-deriving the algorithm by hand.
+    /// </summary>
+    public static string DebugAlignment(Stream golden, Stream readback)
+    {
+        var (gSize, gForm) = RawImageInspector.DetectLayout(golden);
+        var (rSize, rForm) = RawImageInspector.DetectLayout(readback);
+        int gSub = gSize - MainSize, rSub = rSize - MainSize;
+        long gTotal = golden.Length / gSize, rTotal = readback.Length / rSize;
+
+        long gProg = gForm is null ? 0 : RawImageInspector.FindLeadInLength(golden, gSize, gForm.Value);
+        long rProg = rForm is null ? 0 : RawImageInspector.FindLeadInLength(readback, rSize, rForm.Value);
+
+        long gBaseAbs = MainChannelBaseAbs(golden, gSize, gProg, out bool gAddr);
+        string gSrc = gAddr ? "header" : "header-FAILED";
+        if (!gAddr) { gBaseAbs = ProgramBaseAbs(golden, gSize, gForm, gSub, gProg, out gAddr); gSrc = gAddr ? "Q-fallback" : "NONE"; }
+        long rBaseAbs = MainChannelBaseAbs(readback, rSize, rProg, out bool rAddr);
+        string rSrc = rAddr ? "header" : "header-FAILED";
+        if (!rAddr) { rBaseAbs = ProgramBaseAbs(readback, rSize, rForm, rSub, rProg, out rAddr); rSrc = rAddr ? "Q-fallback" : "NONE"; }
+        bool byAddress = gAddr && rAddr;
+
+        long startAbs = byAddress ? Math.Max(gBaseAbs, rBaseAbs) : 0;
+        long gStartIdx = gProg + (byAddress ? startAbs - gBaseAbs : 0);
+        long rStartIdx = rProg + (byAddress ? startAbs - rBaseAbs : 0);
+
+        long gQBase = ProgramBaseAbs(golden, gSize, gForm, gSub, gProg, out bool gQAddr);
+        long rQBase = ProgramBaseAbs(readback, rSize, rForm, rSub, rProg, out bool rQAddr);
+        long gSkew = gQAddr ? gQBase - gBaseAbs : 0;
+        long rSkew = rQAddr ? rQBase - rBaseAbs : 0;
+
+        return $"gSize={gSize} gForm={gForm} gTotal={gTotal} gProg={gProg} gBaseAbs={gBaseAbs} gAddr={gAddr} ({gSrc})\n" +
+               $"rSize={rSize} rForm={rForm} rTotal={rTotal} rProg={rProg} rBaseAbs={rBaseAbs} rAddr={rAddr} ({rSrc})\n" +
+               $"byAddress={byAddress} startAbs={startAbs} gStartIdx={gStartIdx} rStartIdx={rStartIdx}\n" +
+               $"gQBase={gQBase} gQAddr={gQAddr} gSkew={gSkew}\n" +
+               $"rQBase={rQBase} rQAddr={rQAddr} rSkew={rSkew}\n" +
+               $"gAvail={gTotal - gStartIdx} rAvail={rTotal - rStartIdx}";
+    }
+
+    /// <summary>
+    /// Diagnostic-only: takes the SAME computed gStartIdx as <see cref="DebugAlignment"/>, then
+    /// brute-force-tries every golden offset in [-window, +window] sectors around it, counting how
+    /// many of the first <paramref name="sampleSectors"/> compared sectors' MAIN channel come out
+    /// byte-identical at each candidate offset. Reports the true best-matching offset regardless of
+    /// what the address-based computation landed on — the ground-truth check for "is the computed
+    /// alignment actually a few sectors off, and by how much."
+    /// </summary>
+    public static string DebugAlignmentSearch(Stream golden, Stream readback, int window = 32, int sampleSectors = 3000)
+    {
+        var (gSize, gForm) = RawImageInspector.DetectLayout(golden);
+        var (rSize, _) = RawImageInspector.DetectLayout(readback);
+        long gTotal = golden.Length / gSize, rTotal = readback.Length / rSize;
+        long gProg = gForm is null ? 0 : RawImageInspector.FindLeadInLength(golden, gSize, gForm.Value);
+
+        long gBaseAbs = MainChannelBaseAbs(golden, gSize, gProg, out bool gAddr);
+        if (!gAddr) gBaseAbs = ProgramBaseAbs(golden, gSize, gForm, gSize - MainSize, gProg, out gAddr);
+        long rBaseAbs = MainChannelBaseAbs(readback, rSize, 0, out bool rAddr);
+        var (_, rForm) = RawImageInspector.DetectLayout(readback);
+        if (!rAddr) rBaseAbs = ProgramBaseAbs(readback, rSize, rForm, rSize - MainSize, 0, out rAddr);
+
+        long startAbs = (gAddr && rAddr) ? Math.Max(gBaseAbs, rBaseAbs) : 0;
+        long gStartIdx0 = gProg + ((gAddr && rAddr) ? startAbs - gBaseAbs : 0);
+
+        int n = (int)Math.Min(sampleSectors, rTotal);
+        var gMain = new byte[MainSize];
+        var rMain = new byte[MainSize];
+        var results = new List<(int offset, int matches)>();
+        for (int off = -window; off <= window; off++)
+        {
+            long gStart = gStartIdx0 + off;
+            if (gStart < 0 || gStart + n > gTotal) continue;
+            int matches = 0;
+            for (int i = 0; i < n; i++)
+            {
+                golden.Position = (gStart + i) * (long)gSize;
+                golden.ReadExactly(gMain, 0, MainSize);
+                readback.Position = i * (long)rSize;
+                readback.ReadExactly(rMain, 0, MainSize);
+                if (gMain.AsSpan().SequenceEqual(rMain)) matches++;
+            }
+            results.Add((off, matches));
+        }
+        results.Sort((a, b) => b.matches.CompareTo(a.matches));
+        var top = results.Take(5);
+        return $"computed gStartIdx={gStartIdx0}, searched offsets [{-window}..{window}] over {n} sectors\n" +
+               "top candidates (offset, matching-sector-count):\n" +
+               string.Join("\n", top.Select(t => $"  offset {t.offset,+4}: {t.matches}/{n} match" +
+                   (t.offset == 0 ? "  <-- what Compare() actually uses" : "")));
+    }
+
+    /// <summary>
+    /// Diagnostic-only: divides the full overlap between golden and readback into
+    /// <paramref name="buckets"/> equal regions and, for each, reports how many sectors have a
+    /// CRC-valid Q on BOTH sides and what fraction of those decode to the SAME address at the
+    /// CURRENT (uncorrected) alignment — plus, for mismatches, the most common decoded-address
+    /// delta in that region. Built to answer one question a single-window search can't: is a
+    /// Q-address discrepancy a CONSTANT the sampled window near the track start just missed, or
+    /// does it change partway through the track (a materially different, bigger problem)? A flat
+    /// mismatch rate with the SAME dominant delta in every region says "constant, just needs a
+    /// bigger/differently-placed sample." A rate or dominant delta that changes across regions
+    /// says the track's Q behavior itself isn't uniform — no single offset fixes it.
+    /// </summary>
+    public static string DebugQScan(Stream golden, Stream readback, int buckets = 20)
+    {
+        var (gSize, gForm) = RawImageInspector.DetectLayout(golden);
+        var (rSize, rForm) = RawImageInspector.DetectLayout(readback);
+        int gSub = gSize - MainSize, rSub = rSize - MainSize;
+        long gTotal = golden.Length / gSize, rTotal = readback.Length / rSize;
+        long gProg = gForm is null ? 0 : RawImageInspector.FindLeadInLength(golden, gSize, gForm.Value);
+        long rProg = rForm is null ? 0 : RawImageInspector.FindLeadInLength(readback, rSize, rForm.Value);
+
+        long gBaseAbs = MainChannelBaseAbs(golden, gSize, gProg, out bool gAddr);
+        if (!gAddr) gBaseAbs = ProgramBaseAbs(golden, gSize, gForm, gSub, gProg, out gAddr);
+        long rBaseAbs = MainChannelBaseAbs(readback, rSize, rProg, out bool rAddr);
+        if (!rAddr) rBaseAbs = ProgramBaseAbs(readback, rSize, rForm, rSub, rProg, out rAddr);
+        long startAbs = (gAddr && rAddr) ? Math.Max(gBaseAbs, rBaseAbs) : 0;
+        long gStartIdx = gProg + ((gAddr && rAddr) ? startAbs - gBaseAbs : 0);
+        long rStartIdx = rProg + ((gAddr && rAddr) ? startAbs - rBaseAbs : 0);
+
+        long n = Math.Min(gTotal - gStartIdx, rTotal - rStartIdx);
+        if (n <= 0 || gSub <= 0 || rSub != gSub || gForm is null || rForm is null)
+            return "nothing to scan: no golden/readback overlap, or no comparable sub-channel.";
+
+        var gsBuf = new byte[gSub];
+        var rsBuf = new byte[rSub];
+        Span<byte> gq = stackalloc byte[12];
+        Span<byte> rq = stackalloc byte[12];
+        var lines = new List<string>
+        {
+            $"gStartIdx={gStartIdx} rStartIdx={rStartIdx} overlap={n} sectors — Q match rate across {buckets} regions:"
+        };
+        long bucketSize = Math.Max(1, n / buckets);
+        for (long lo = 0; lo < n; lo += bucketSize)
+        {
+            long hi = Math.Min(n, lo + bucketSize);
+            int considered = 0, matches = 0;
+            var deltaVotes = new Dictionary<long, int>();
+            for (long i = lo; i < hi; i++)
+            {
+                ReadSub(golden, gSize, gStartIdx + i, gsBuf, gSub);
+                ReadSub(readback, rSize, rStartIdx + i, rsBuf, rSub);
+                ExtractQForm(gsBuf, gForm.Value, gq);
+                ExtractQForm(rsBuf, rForm.Value, rq);
+                if (!RawSubchannel.QCrcValid(gq) || !RawSubchannel.QCrcValid(rq)) continue;
+                considered++;
+                if (SameAddress(gq, rq)) matches++;
+                else
+                {
+                    long delta = AbsFromQ(rq) - AbsFromQ(gq);
+                    deltaVotes[delta] = deltaVotes.GetValueOrDefault(delta) + 1;
+                }
+            }
+            string topDeltas = deltaVotes.Count > 0
+                ? string.Join(", ", deltaVotes.OrderByDescending(kv => kv.Value).Take(3)
+                    .Select(kv => $"{kv.Key:+#;-#;0}×{kv.Value}"))
+                : "-";
+            double pct = considered > 0 ? 100.0 * matches / considered : 0;
+            lines.Add($"  sectors {lo,8}-{hi - 1,8}: {matches,5}/{considered,5} match ({pct,5:0.0}%)  " +
+                      $"top mismatch delta(s): {topDeltas}");
+        }
+        return string.Join("\n", lines);
+    }
+
     /// <summary>Compare a golden generated image against a raw read-back capture.
     /// When <paramref name="partial"/> is true the read-back is treated as an intentional
     /// SUB-RANGE of the golden (e.g. one track of a multi-track disc read on its own): golden
@@ -111,9 +276,11 @@ public static class RawReadbackCompare
         // Falls back to Q (audio tracks have no header at all) or plain index
         // alignment when neither source yields an address.
         long gBaseAbs = MainChannelBaseAbs(golden, gSize, gProg, out bool gAddr);
-        if (!gAddr) gBaseAbs = ProgramBaseAbs(golden, gSize, gForm, gSub, gProg, out gAddr);
+        bool gQFallback = false;
+        if (!gAddr) { gBaseAbs = ProgramBaseAbs(golden, gSize, gForm, gSub, gProg, out gAddr); gQFallback = gAddr; }
         long rBaseAbs = MainChannelBaseAbs(readback, rSize, rProg, out bool rAddr);
-        if (!rAddr) rBaseAbs = ProgramBaseAbs(readback, rSize, rForm, rSub, rProg, out rAddr);
+        bool rQFallback = false;
+        if (!rAddr) { rBaseAbs = ProgramBaseAbs(readback, rSize, rForm, rSub, rProg, out rAddr); rQFallback = rAddr; }
         bool byAddress = gAddr && rAddr;
         if (!byAddress)
             notes.Add("One capture has no readable sub-channel address; aligned by program offset instead.");
@@ -121,6 +288,66 @@ public static class RawReadbackCompare
         long startAbs = byAddress ? Math.Max(gBaseAbs, rBaseAbs) : 0;
         long gStartIdx = gProg + (byAddress ? startAbs - gBaseAbs : 0);
         long rStartIdx = rProg + (byAddress ? startAbs - rBaseAbs : 0);
+
+        // Guarded local-content refinement: real hardware has shown a Q sub-channel
+        // addressing quirk where, on a track with no main-channel header to anchor on
+        // (an audio track — ProgramBaseAbs/Q supplies the base address instead), the
+        // decoded absolute address lands a small, constant number of sectors short of
+        // the disc's true address (confirmed on real captures: a clean, deterministic
+        // +2-sector residual, see docs/NEXT.md 2026-08-29). That is a read-path/TOC
+        // addressing artifact, not a burn defect, but left uncorrected it turns a
+        // byte-perfect track into a false "everything mismatches" verdict. When either
+        // side used the Q fallback, probe a small window of candidate offsets by actual
+        // main-channel content match and snap onto the true one — but ONLY when the
+        // evidence is overwhelming and unambiguous (near-100% match at exactly one
+        // offset, near-zero at every other), so a genuinely defective burn is never
+        // silently "corrected" into a false pass.
+        // Compensating adjustments applied to a fallback side's OWN decoded Q absolute
+        // value when checking per-sector Q address equality below. Measured independently,
+        // further down (after gSkew/rSkew) — NOT derived from whether the main-channel
+        // search just below found anything to fix. First draft tied the two together
+        // (only set an adjustment when this search also shifted gStartIdx) and that was a
+        // real bug: real hardware showed a track whose base-address vote (ProgramBaseAbs,
+        // a small early-exit-prone window) coincidentally locked onto a minority of
+        // correctly-decoded frames near the track start, so this main-channel search
+        // correctly found no index shift was needed — yet the dominant Q delta across the
+        // REST of that same track (99.6% of it) was still short by the same constant every
+        // other track needed compensating for. See docs/NEXT.md 2026-08-29.
+        long qAdjustG = 0, qAdjustR = 0;
+        if (byAddress && (gQFallback ^ rQFallback))   // exactly one side used the Q fallback
+        {
+            const int window = 16;
+            int sample = (int)Math.Min(1500, Math.Min(gTotal - gStartIdx, rTotal - rStartIdx));
+            if (sample >= 200)
+            {
+                var probeG = new byte[MainSize];
+                var probeR = new byte[MainSize];
+                int bestOffset = 0, bestMatches = -1, secondBest = 0;
+                for (int off = -window; off <= window; off++)
+                {
+                    long gs = gStartIdx + off;
+                    if (gs < 0 || gs + sample > gTotal) continue;
+                    int matches = 0;
+                    for (int i = 0; i < sample; i++)
+                    {
+                        ReadMain(golden, gSize, gs + i, probeG);
+                        ReadMain(readback, rSize, rStartIdx + i, probeR);
+                        if (probeG.AsSpan().SequenceEqual(probeR)) matches++;
+                    }
+                    if (matches > bestMatches) { secondBest = bestMatches < 0 ? 0 : bestMatches; bestOffset = off; bestMatches = matches; }
+                    else if (matches > secondBest) secondBest = matches;
+                }
+                if (bestOffset != 0 && bestMatches >= sample * 0.95 && secondBest <= sample * 0.10)
+                {
+                    notes.Add($"Alignment auto-corrected by {bestOffset:+#;-#;0} sector(s): the address-based " +
+                              "alignment (Q sub-channel, no main-channel header available) landed a few sectors " +
+                              $"short of a content-verified exact match ({bestMatches}/{sample} sectors byte-identical " +
+                              $"at the corrected offset, vs. at most {secondBest} at any other offset tried) — " +
+                              "a known real-drive Q addressing quirk, not a burn defect. See docs/NEXT.md 2026-08-29.");
+                    gStartIdx += bestOffset;
+                }
+            }
+        }
 
         // Q sub-channel vs main-channel skew: some real drives extract the P-W
         // sub-channel a small, constant number of sectors out of step with the
@@ -143,6 +370,78 @@ public static class RawReadbackCompare
         if (rSkew != 0)
             notes.Add($"The read-back's sub-channel is offset {rSkew:+#;-#;0} sector(s) from its main " +
                       "channel — a drive read-path quirk, not a burn defect; corrected before comparing.");
+
+        // Independent, decoupled measurement of the per-sector Q address delta for whichever
+        // side used the Q fallback. Deliberately NOT inferred from whether the main-channel
+        // search above found anything to fix (see the comment where qAdjustG/qAdjustR are
+        // declared for why that coupling was wrong) — instead measured directly, at scale,
+        // strided evenly across the WHOLE available range (not just a prefix) so a small
+        // early cluster of coincidentally-correct frames can't dominate a small sample the
+        // way it fooled ProgramBaseAbs's own small early-exit-prone vote. Only acts when one
+        // single delta clearly dominates (≥60% of a decently-sized, CRC-valid-on-both-sides
+        // sample) — high enough to catch a track that's "only" 92-100% affected (real
+        // hardware), low enough to still refuse on a genuinely mixed/defective track.
+        if (byAddress && (gQFallback ^ rQFallback) && gSub > 0 && rSub == gSub && gForm is not null && rForm is not null)
+        {
+            long avail = Math.Min(gTotal - gStartIdx, rTotal - rStartIdx);
+            int censusN = (int)Math.Min(5000, avail);
+            if (censusN >= 200)
+            {
+                long stride = Math.Max(1, avail / censusN);
+                var gsBuf = new byte[gSub];
+                var rsBuf = new byte[rSub];
+                Span<byte> gqq = stackalloc byte[12];
+                Span<byte> rqq = stackalloc byte[12];
+                var votes = new Dictionary<long, int>();
+                int considered = 0;
+                for (long k = 0; k < censusN; k++)
+                {
+                    long i = k * stride;
+                    if (i >= avail) break;
+                    long gsi = gStartIdx + i - gSkew;
+                    long rsi = rStartIdx + i - rSkew;
+                    if (gsi < 0 || gsi >= gTotal || rsi < 0 || rsi >= rTotal) continue;
+                    ReadSub(golden, gSize, gsi, gsBuf, gSub);
+                    ReadSub(readback, rSize, rsi, rsBuf, rSub);
+                    ExtractQForm(gsBuf, gForm.Value, gqq);
+                    ExtractQForm(rsBuf, rForm.Value, rqq);
+                    if (!RawSubchannel.QCrcValid(gqq) || !RawSubchannel.QCrcValid(rqq)) continue;
+                    considered++;
+                    long delta = AbsFromQ(rqq) - AbsFromQ(gqq);
+                    votes[delta] = votes.GetValueOrDefault(delta) + 1;
+                }
+                if (considered >= 150 && votes.Count > 0)
+                {
+                    var best = votes.OrderByDescending(kv => kv.Value).First();
+                    if (best.Key != 0 && best.Value >= considered * 0.60)
+                    {
+                        long adjust = -best.Key;
+                        notes.Add($"Q sub-channel address auto-corrected by {adjust:+#;-#;0} sector(s): " +
+                                  $"{best.Value}/{considered} sampled sectors (strided across the whole track) " +
+                                  $"consistently decoded {best.Key:+#;-#;0} sector(s) off golden's — a known " +
+                                  "real-drive Q addressing quirk, not a burn defect. See docs/NEXT.md 2026-08-29.");
+                        if (rQFallback) qAdjustR = adjust; else qAdjustG = -adjust;
+                    }
+                }
+            }
+        }
+
+        // NOTE (2026-08-29): a candidate fix for exactly this kind of Q-fallback skew was
+        // drafted and then deliberately backed out. It searched a small window of candidate
+        // sub-channel read positions the same way the main-channel offset above is
+        // recovered — but a synthetic repro built to validate it revealed the mental model
+        // was wrong: shifting only the SUB-CHANNEL bytes (leaving main untouched) still
+        // moves ProgramBaseAbs's own base-address vote (it reads Q only), so the main-
+        // channel search above fires FIRST and "explains" the shift as a value/index issue,
+        // never reaching this code path at all. That means this path, as designed, cannot
+        // be validated against a controlled repro — only against the real capture, which
+        // isn't available in this environment. Track 3's real symptom (main channel already
+        // aligned with NO correction needed, per --debug-align-search, yet ~99.6% of the
+        // WHOLE track's Q mis-addressed) is still open — see docs/NEXT.md 2026-08-29 for the
+        // live investigation and the next diagnostic step (a whole-track, region-by-region
+        // Q-match scan, to tell whether the discrepancy is a constant skew this sampling
+        // window is simply too small to see, or something that changes partway through the
+        // track — a materially different, bigger problem).
 
         long gAvail = gTotal - gStartIdx, rAvail = rTotal - rStartIdx;
         long compare = Math.Min(gAvail, rAvail);
@@ -253,7 +552,7 @@ public static class RawReadbackCompare
                         "the read-back's own Q frame fails its own CRC (a transient sub-channel " +
                         "read error, not a burn defect) — re-read with --reread/--consensus to confirm");
                 }
-                else if (!SameAddress(gq, rq))
+                else if (!SameAddress(gq, rq, qAdjustG, qAdjustR))
                 {
                     misAddr++;
                     Record(abs, "mis-addressed", Severity.Defect,
@@ -483,13 +782,20 @@ public static class RawReadbackCompare
         => ((long)Bcd.To(q[7]) * 60 + Bcd.To(q[8])) * 75 + Bcd.To(q[9]);
 
     /// <summary>Two position Q frames address the same place (track, index, absolute time).</summary>
-    private static bool SameAddress(ReadOnlySpan<byte> a, ReadOnlySpan<byte> b)
+    /// <summary>Two position Q frames address the same place (track, index, absolute time).
+    /// <paramref name="aAdjust"/>/<paramref name="rAdjust"/> compensate a known, constant,
+    /// content-verified sector offset in one side's own decoded absolute address (see the
+    /// Q-fallback refinement in <see cref="Compare"/>) — zero in the overwhelmingly common
+    /// case, which keeps this a plain byte compare exactly as before.</summary>
+    private static bool SameAddress(ReadOnlySpan<byte> a, ReadOnlySpan<byte> b, long aAdjust = 0, long rAdjust = 0)
     {
         bool aPos = (a[0] & 0x0F) == 1, bPos = (b[0] & 0x0F) == 1;
         if (aPos != bPos) return false;
         if (!aPos) return true;                       // both non-position: leave to byte compare
-        // TNO, INDEX, and absolute M:S:F.
-        return a[1] == b[1] && a[2] == b[2] && a[7] == b[7] && a[8] == b[8] && a[9] == b[9];
+        if (a[1] != b[1] || a[2] != b[2]) return false;   // TNO, INDEX
+        if (aAdjust == 0 && rAdjust == 0)
+            return a[7] == b[7] && a[8] == b[8] && a[9] == b[9];    // absolute M:S:F, byte-exact
+        return AbsFromQ(a) + aAdjust == AbsFromQ(b) + rAdjust;
     }
 
     /// <summary>True when two 2352 main-channel sectors are byte-identical once scramble

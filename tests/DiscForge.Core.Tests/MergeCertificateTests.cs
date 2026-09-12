@@ -111,4 +111,26 @@ public class MergeCertificateTests
         }
         finally { File.Delete(path); }
     }
+
+    [Fact]
+    public void GetSigningBytes_is_exactly_what_an_alternate_crypto_backend_would_need_to_verify()
+    {
+        // Same purpose as DumpCertificateLedgerTests' equivalent: a runtime without a usable ECDsa
+        // (browser-wasm in .NET 8) needs the exact signed bytes to hand to a different backend, and an
+        // independently-constructed ECDsa must accept the recorded signature against exactly these bytes.
+        var r = ProvenanceMerge.Merge(new[] { Image(5), Image(5, new Dictionary<int, byte> { [2] = 9 }) });
+        var (privB64, _) = DumpLineageLog.GenerateKey();
+        using var priv = DumpLineageLog.LoadPrivateKey(privB64);
+        var signed = r.Certificate.Sign(priv);
+
+        byte[] bytes = signed.GetSigningBytes();
+
+        using var verifier = System.Security.Cryptography.ECDsa.Create();
+        verifier.ImportSubjectPublicKeyInfo(System.Convert.FromBase64String(signed.PublicKey!), out _);
+        Assert.True(verifier.VerifyData(bytes, System.Convert.FromBase64String(signed.Signature!),
+            System.Security.Cryptography.HashAlgorithmName.SHA256));
+
+        var tampered = signed with { OutputSha256 = new string('0', 64) };
+        Assert.NotEqual(bytes, tampered.GetSigningBytes());
+    }
 }

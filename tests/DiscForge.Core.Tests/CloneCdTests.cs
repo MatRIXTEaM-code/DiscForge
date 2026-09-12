@@ -144,4 +144,54 @@ public class CloneCdTests
                                   15 * CloneCdReader.SubSectorBytes).ToArray();
         Assert.Equal(expected, dst.ToArray());
     }
+
+    // ---- via the DiscConverter hub (what BurnView now uses to burn a .ccd) ---
+
+    /// <summary>
+    /// BurnView.OpenCdi (App, WinForms — not build-verifiable in the sandbox this project's
+    /// sessions run in) converts a picked .ccd to a BIN/CUE via <see cref="DiscConverter"/>
+    /// before handing it to the existing CUE burn path, rather than teaching the burn engines a
+    /// new format. This is the Core-level part of that: it doesn't touch BurnView at all, but it
+    /// does exercise the exact same DiscConverter.Read(".ccd")-then-Write(".cue") round trip
+    /// BurnView calls, for real, in a project this session CAN build and run — the strongest
+    /// verification available for that logic.
+    /// </summary>
+    [Fact]
+    public void Converts_a_ccd_image_to_bin_cue_via_the_hub()
+    {
+        using var dir = new TempDir();
+        var ccdPath = Path.Combine(dir.Path, "disc.ccd");
+        var imgPath = Path.Combine(dir.Path, "disc.img");
+        File.WriteAllText(ccdPath, Ccd);
+        File.WriteAllBytes(imgPath, BuildImg(25, CloneCdReader.ImgSectorBytes));
+
+        var cuePath = Path.Combine(dir.Path, "disc.cue");
+        DiscConverter.Convert(ccdPath, cuePath);
+
+        Assert.True(File.Exists(cuePath));
+        var model = DiscConverter.Read(cuePath);
+        Assert.Equal(2, model.Tracks.Count);
+        Assert.Equal(10, model.Tracks[0].SectorCount);   // data track, LBA 0..9
+        Assert.Equal(15, model.Tracks[1].SectorCount);   // audio track, LBA 10..24
+        // Same identifiable-by-LBA content the .img was built with (see BuildImg), confirming
+        // the round trip didn't shuffle or truncate sector data.
+        Assert.Equal(0, model.Tracks[0].Data[0]);
+        Assert.Equal(10, model.Tracks[1].Data[0]);
+    }
+
+    /// <summary>A private temp directory that deletes itself on Dispose — local to this test
+    /// file rather than reusing DiscModel's own private TempDir helper.</summary>
+    private sealed class TempDir : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "dforge_ccd_hub_test_" + Guid.NewGuid().ToString("N"));
+
+        public TempDir() => Directory.CreateDirectory(Path);
+
+        public void Dispose()
+        {
+            try { if (Directory.Exists(Path)) Directory.Delete(Path, recursive: true); }
+            catch { /* best effort */ }
+        }
+    }
 }

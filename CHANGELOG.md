@@ -11,6 +11,328 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
+### Added — v1.107.0: GUI parity for dump-ledger/media-mortality/plan-reread, and a real live re-read command
+
+Closes the last two open items from `docs/DIFFERENTIATORS.md`'s running summary: GUI views for the
+CLI-only features shipped earlier this run, and live adaptive-reread wiring for DiscMri's plan output.
+
+**Two new tiles: Dump Ledger and Media Decay.** `Views/DumpCertificateLedgerView.cs` mirrors `dforge
+dump-ledger` end to end — open or start a ledger, Verify (chain + signatures), Consensus for a disc
+fingerprint, Generate Key, and Submit a new independently-signed claim — all the same
+`DumpCertificateLedgerLog` calls the CLI makes, called directly rather than shelling out. `Views/
+MediaMortalityView.cs` mirrors `dforge media-mortality` — Observe a disc's rot-kinetics fit into a
+cohort, Merge With another contributor's model, Estimate (gated at the same 3-contributor privacy
+floor), Show All. Both are pure local-file analysis; the only cryptography is offline ECDSA key
+generation/signing in the ledger view — neither touches a live drive.
+
+**`DiscMriView` gained Plan Re-read / Save Plan.** Mirrors `dforge disc-mri --plan-reread`: after
+rendering the polar map, Plan Re-read computes `DiscMri.PlanReread` over the same evidence and shows
+the coalesced ranges + suggested pass count; Save Plan writes the identical JSON shape the CLI writes
+(same `JsonStringEnumConverter` options), so a plan saved from the GUI is byte-for-byte interchangeable
+with one the CLI wrote — either feeds the new `disc-mri-reread` command below. This button plans; it
+never touches a live drive, same as the CLI's own `--plan-reread`.
+
+**The real hardware-facing piece: `dforge disc-mri-reread <drive> <plan.json> <target.bin>`.** DiscMri
+could diagnose damage (the polar map) and plan a targeted re-read (`--plan-reread`), but nothing before
+this closed the loop into an actual drive doing the re-reading — the gap `docs/NEXT.md` had tracked
+since `--plan-reread` shipped. This command loads a plan and drives every sector in its ranges through
+the REAL Tier-B adaptive re-read controller (`DiscForge.Core.Recovery.AdaptiveReread` +
+`DiscForge.Devices.Reading.DriveRereadSource`) — the exact same proven escalation ladder (plain re-read
+→ C2-guided → slow+C2) that `reread-probe` already exercises against one diagnostic sector, just looped
+across a whole plan. Every sector the controller recovers is patched into `<target.bin>` at its correct
+2352-byte offset; sectors that still fail after every strategy are left untouched and reported by LBA,
+never guessed at. An optional `--cue` supplies per-track audio/data classification (same span-parsing
+`disc-mri` itself uses) so audio sectors get the correctness signal appropriate to them; without one,
+every sector is treated as data for EDC purposes, which only costs the fast EDC-valid path on genuine
+audio sectors — byte-agreement across reads still recovers them correctly (`CheckDataEdc` reading real
+audio bytes as a data-sector EDC/ECC check has the same astronomically-low false-positive rate as a CRC
+collision, so this is a real trade-off, not a silent correctness gap).
+
+Deliberately reuses `DriveRereadSource`/`AdaptiveReread` completely unchanged — this does NOT touch
+`RawDiscReader`, `SectorExtraction`, or any read path a normal dump depends on, the same scoping
+discipline `reread-probe`'s own doc comment established when it was built. What's new is only the loop
+over a plan's ranges and the patch-into-target-file logic, both straightforward composition of already-
+hardware-proven pieces.
+
+**Verification tier — real for everything reachable in this sandbox, honestly flagged where it isn't.**
+`DiscForge.Core.Tests` (2730/2730, unchanged) confirms nothing regressed. Both CLI targets built for
+real in this sandbox: `net8.0` (cross-platform) AND, notably, `net8.0-windows` — the actual SPTI/Devices-
+linked target `disc-mri-reread` ships in — via the sandbox's `dotnet build -f net8.0-windows` path,
+which type-checks the whole Windows-only code path (this is a genuinely stronger check than the
+Roslyn-syntax-only verification this project has relied on for hardware-adjacent CLI code before; it
+catches wrong types, wrong overloads, missing members — everything short of actually running against a
+drive). **What this sandbox cannot do, and did not claim to do: run `disc-mri-reread` against a real
+disc.** No optical drive is reachable here, so the command's actual recovery behavior — whether it
+really spins a drive, whether the patched bytes are correct, timing — is unverified beyond compiling
+and type-checking cleanly against the real `DiscForge.Core.dll`/`DiscForge.Devices.dll`. The three new
+WinForms views (`DumpCertificateLedgerView`, `MediaMortalityView`, and `DiscMriView`'s Plan Re-read
+addition) are Roslyn-syntax-clean AND semantically cross-checked — every `DiscForge.Core` API call they
+make was independently compiled against the real built `DiscForge.Core.dll` in a throwaway program and
+confirmed to bind (catching the CS0246/CS1061 class of error a pure syntax parse misses, the same gap
+`docs/NEXT.md` flagged for earlier GUI-parity rounds) — but this sandbox still cannot build
+`DiscForge.App` itself (no WindowsDesktop SDK), so the WinForms-specific code (control layout, event
+wiring) is unverified beyond manual review against the exact patterns already used in real-build-
+confirmed sibling views (`SecureRipPlanView`, `MergeCertView`). **Run `.\build-app.ps1 -Run` and click
+through the Dump Ledger, Media Decay, and Disc MRI tiles before trusting this GUI work as shipped rather
+than merely written** — the same next step this project's GUI-parity backlog has always needed, and the
+same discipline that caught a real `CS0246` in `DiscMriView` earlier in this project's history.
+
+### Fixed — v1.106.0: ECDSA actually works in `DiscForge.Wasm` now, and a real bug it caught along the way
+
+v1.105.0 shipped `DiscForge.Wasm` with a disclosed, not-yet-fixed limitation: .NET 8's browser-wasm
+runtime has no ECDSA (`ECDsa.Create()` throws `PlatformNotSupportedException`), so signature checks
+on the page reported "NOT CHECKED" instead of an actual verdict. This round fixes that, rather than
+just documenting around it.
+
+**The fix.** New `src/DiscForge.Wasm/wwwroot/js/ecdsaFallback.js`, a small ES module that verifies an
+ECDSA P-256/SHA-256 signature using the browser's own Web Crypto (`SubtleCrypto`) API —
+`crypto.subtle.importKey('spki', ...)` then `crypto.subtle.verify({name:'ECDSA', hash:'SHA-256'}, ...)`.
+Two format assumptions were verified empirically against real DiscForge.Core output before being
+trusted, not just assumed from documentation: (1) `ECDsa.ExportSubjectPublicKeyInfo()`'s bytes import
+directly as `'spki'`, no reformatting; (2) `ECDsa.SignData`'s default signature format (raw `r||s`
+concatenation, `IeeeP1363FixedFieldConcatenation`) is exactly what Web Crypto's `verify` expects, also
+no reformatting. `Home.razor` now catches `PlatformNotSupportedException` around each signature check
+(ledger submitter signatures and merge-certificate signatures alike) and falls back to this module,
+reporting the verdict with "(verified via browser SubtleCrypto — .NET's ECDsa is unavailable on
+browser-wasm)" appended, so the UI is always honest about which backend produced the answer.
+
+To make the fallback possible without reimplementing any signing logic, `DumpCertificateLedgerLog` and
+`MergeCertificate` each gained a small new public method — `GetSubmitterSigningBytes(LedgerEntry)` and
+`MergeCertificate.GetSigningBytes()` — returning the exact bytes the existing `ECDsa`-based verify
+methods feed to SHA-256/ECDSA. Both existing verify methods were refactored to call these new methods
+internally instead of recomputing the same content inline, so the real `ECDsa` path and the browser
+`SubtleCrypto` path can never silently diverge (single source of truth for "what did we actually sign").
+Two new Core unit tests (`GetSubmitterSigningBytes_is_exactly_what_an_alternate_crypto_backend_would_need_to_verify`,
+`GetSigningBytes_is_exactly_what_an_alternate_crypto_backend_would_need_to_verify`) pin this by
+independently reconstructing an `ECDsa` verifier around only these bytes and confirming it accepts the
+real signature and rejects a tampered one.
+
+**A genuine bug this caught, not just a limitation this worked around.** Live-browser testing the
+merge-certificate path (which v1.105.0 had explicitly flagged as not independently tested, only
+"verified by code inspection") surfaced a real defect: `MergeCertificate.VerifySignature()` used a bare
+`catch { return false; }`, which swallows `PlatformNotSupportedException` along with the
+`FormatException`/`CryptographicException` it was actually meant to catch. On browser-wasm this meant a
+genuinely, correctly signed certificate silently came back "INVALID" instead of throwing so the page
+could fall back to `SubtleCrypto` — the exact bug the ledger path had already avoided
+(`DumpCertificateLedgerLog.VerifySubmitterSignature` filters its catch to
+`FormatException or CryptographicException` specifically). Fixed by narrowing `MergeCertificate
+.VerifySignature()`'s catch clause to match. This has no effect on any non-browser platform (`ECDsa
+.Create()` never throws `PlatformNotSupportedException` there), so no existing behavior for the CLI or
+desktop app changes — confirmed by re-running the full `DiscForge.Core.Tests` suite (2730/2730 passing,
+unchanged pass count) plus the merge-certificate-specific tests individually before and after.
+
+**Verification tier — real, live, both paths.** Rebuilt (`dotnet build` on the edited `DiscForge.Core`
+files) and republished (`dotnet publish -c Release`) `DiscForge.Wasm`, then re-ran the same
+Playwright-driven headless Chromium test used for v1.105.0, extended to also exercise the merge-cert
+textarea. Before the `VerifySignature()` fix, the live test caught the bug directly: a genuinely-signed
+`.dmc.json` (built with the actual `dforge merge-cert --gen-key` CLI, independently confirmed VALID via
+`dforge merge-cert verify`) came back `signature : INVALID` in-browser, with no SubtleCrypto annotation —
+proof the fallback path was never even being reached. After the fix and a rebuild/republish, the same
+input correctly reports `signature : VALID (verified via browser SubtleCrypto — .NET's ECDsa is
+unavailable on browser-wasm)`, and a hand-tampered copy (`OutputSha256` zeroed, signature left stale)
+correctly reports `signature : INVALID (verified via browser SubtleCrypto...)`. The dump-ledger path was
+re-confirmed unchanged and still correct: a real signed ledger reports `chain: INTACT` /
+`signatures: ALL VALID (verified via browser SubtleCrypto...)`, and a tampered one reports `chain:
+BROKEN — the ledger was altered` / `signatures: AT LEAST ONE INVALID (verified via browser
+SubtleCrypto...)`. Both the good and bad case, for both the ledger and the certificate, were observed
+live in an actual browser tab in this round — not inferred from one working case.
+
+### Added — v1.105.0: `DiscForge.Wasm` — the verification engine compiled to WebAssembly, plus a genuine finding
+
+The fifth and final "mind-blowing" brainstorm idea: DiscForge's verification code, running entirely
+client-side in a browser, with zero server and zero upload. New standalone project
+`src/DiscForge.Wasm` (Blazor WebAssembly Standalone App, `net8.0`, `ProjectReference` to
+`DiscForge.Core` only — no `DiscForge.Devices`/`DiscForge.App`, so nothing hardware- or Windows-specific
+is dragged in). One page (`Pages/Home.razor`) pastes a `dump-ledger.json` or a `.dmc.json` merge
+certificate into a textarea and runs the EXACT SAME `DumpCertificateLedgerLog`/`MergeCertificate` code
+the CLI uses — compiled to `.wasm`, not reimplemented.
+
+**This was validated further than "it compiled."** This sandbox did NOT have the `wasm-tools` SDK
+workload installed at the start of this round — earlier notes in this file assumed it was unreachable.
+It installed cleanly (`dotnet workload install wasm-tools`) and a full `dotnet publish -c Release`
+completed for real: emscripten/emcc native linking, IL trimming, and AOT-style asset generation all ran
+to completion, producing `DiscForge.Core.wasm` alongside the Blazor runtime. The published site was then
+served locally and driven with headless Chromium via Playwright (the same browser this sandbox already
+uses for other tasks) — not just loaded, but exercised: a real, validly-signed `dump-ledger.json` (built
+with the actual `dforge dump-ledger` CLI from v1.102.0) came back `chain: INTACT`, and a hand-tampered copy
+of the same file came back `chain: BROKEN — the ledger was altered`, live, inside an actual browser tab,
+with the disc-preservation-specific ledger logic running as compiled WebAssembly rather than server code.
+
+**The genuine finding.** The first live test surfaced a real limitation rather than a working signature
+check: .NET 8's browser-wasm runtime throws `PlatformNotSupportedException` from `ECDsa.Create()` — there
+is no ECDSA implementation in that runtime target, so `VerifyAllSubmitterSignatures`/`VerifySignature`
+cannot run in-browser today. Rather than let the page hang, silently no-op, or misreport a signature as
+valid, `Home.razor` catches `PlatformNotSupportedException` specifically around the signature-check calls
+and reports "NOT CHECKED" with the reason, while the hash-chain check (pure SHA-256, no ECDSA) runs and
+reports normally — the two are independent checks and only one of them is blocked. This is disclosed to
+the user ON THE PAGE ITSELF, not just in this changelog: a banner at the top names the exact limitation
+and points at this entry. A real ECDSA-in-browser fix is future work — likely a JS `SubtleCrypto` interop
+shim behind the same `ECDsa`-shaped API, or waiting on/upgrading to a .NET version with browser ECDSA
+support — and is explicitly NOT attempted this round.
+
+**Deliberately kept OUT of the default build.** `DiscForge.Wasm.csproj` is NOT added to `DiscForge.sln`:
+`build-app.ps1`/`dotnet build DiscForge.sln` on the user's machine must keep working exactly as before,
+and adding this project there would silently require the `wasm-tools` workload (a large one-time
+download) on every future build. Build/publish it explicitly instead: `dotnet workload install
+wasm-tools` once, then `dotnet publish src\DiscForge.Wasm -c Release` — the static site lands under
+`src\DiscForge.Wasm\bin\Release\net8.0\publish\wwwroot`, servable from any static file host (or opened
+locally with a trivial local server; `file://` won't work for a WASM app's fetch-based asset loading).
+
+**Verification tier.** Real build (`dotnet publish`, full emscripten/AOT pipeline, no errors), plus real
+runtime verification in an actual headless browser (Playwright + Chromium) exercising the exact shipped
+`DumpCertificateLedgerLog` code against a real signed ledger and a real tampered one — stronger than the
+Core-only `dotnet test` tier used for the other four ideas this run, because it proves the compiled
+WebAssembly artifact actually executes correctly in a browser engine, not just that C# unit tests pass.
+The merge-certificate page path was not independently live-browser-tested this round (it shares the
+identical try/catch-around-ECDSA pattern as the ledger path, verified by code inspection, not by a second
+Playwright run) — noted honestly rather than implied as equally proven.
+
+### Added — v1.104.0: `media-mortality` — a federated model of how fast a media cohort decays
+
+The fourth "mind-blowing" idea, and arguably the most genuinely novel: a community mortality model for
+optical media that pools statistics across independent collections WITHOUT centralizing anyone's raw disc
+data. New file `DiscForge.Core.Forensics/MediaMortality.cs` + `dforge media-mortality
+observe/merge/estimate/show`.
+
+**The gap.** `disc-actuary` fits a first-order decay rate (`RotKinetics.GrowthPerYear`) per disc from that
+disc's own scan history — but any one collection rarely has more than a handful of scans of any one disc,
+so the fit is often noisy, and with fewer than 3 scans `DiscActuary.Assess` declines to fit a trend at all.
+Meanwhile a manufacturer/mold-SID cohort's TRUE decay behavior is something thousands of independent
+collections have partial evidence of — nothing lets that evidence combine without either pooling raw disc
+data (a privacy and infrastructure non-starter) or trusting one party's numbers as ground truth.
+
+**The design.** Each contributor reduces a disc's kinetics fit to a `CohortObservation` — just two floats
+(growth rate, sample count), nothing that identifies the disc, its owner, or when it was scanned — and
+folds it into a local `MediaMortalityModel` (one running weighted mean/variance per cohort) via `Observe`.
+Any two contributors' models combine via `Merge`, using the Chan/Golub/LeVeque (1979) PARALLEL variance
+algorithm: this is mathematically exact, not an approximation — merging two partial summaries produces the
+bit-for-bit identical mean/variance (to floating-point precision) that fitting every underlying observation
+centrally would have, and it's associative and commutative, so models merge in any order, any number of
+times, with no coordinator. That's what makes this federated rather than merely aggregated: the model that
+results from a chain of pairwise merges across a whole community is provably the same model a central
+server would have computed, and no server, and no raw observation, was ever required.
+
+`Estimate` refuses to report a cohort backed by fewer than `MinContributorsToReport` (3) independent discs
+— a PRIVACY floor, not an accuracy one: a "cohort" of one or two contributors would let a recipient
+reverse-engineer roughly how fast a specific person's specific disc is decaying, exactly the re-identification
+a two-float-per-disc design exists to prevent.
+
+**Verification (real build + real test).** 12 new `MediaMortalityTests`, including three that specifically
+prove the federation claims rather than just the arithmetic: `Observing_one_by_one_matches_the_textbook_
+weighted_mean_and_variance` cross-checks `Observe` against a naive flat-list reference computation with no
+Welford tricks; `Merging_two_partial_models_gives_the_identical_result_as_one_combined_model` proves
+splitting six observations across two contributors and merging produces the exact same summary as folding
+all six into one model directly; `Merge_is_associative_regardless_of_how_observations_are_split_three_ways`
+proves `(m1+m2)+m3 == m1+(m2+m3)` for both mean and variance. Plus: the privacy floor refusing an estimate
+at 2 contributors and granting one at exactly 3; distinct cohorts never mixing; `Merge` never mutating
+either input; a 2-scan fit weighted less than a 6-scan fit (and why R² can't be used for this weighting —
+a line through exactly two points always has R²=1, which would make a 2-scan fit look maximally confident);
+JSON round-trip preserving the estimate exactly; and a structural guard (`The_shared_json_artifact_carries_
+no_disc_identifying_fields`) asserting the serialized model never contains a disc id, title, or scan field,
+so a future edit can't accidentally leak identity into the "shareable" artifact. `dotnet test`:
+2728/2728 clean on the final run (one run hit `FuzzRobustnessTests.Every_parser_fails_gracefully_on_garbage`
+— a fixed 4-second-per-call wall-clock budget across ~1500 fuzz invocations, newly observed as flaky under
+this sandbox's parallel-test CPU contention the same way the two large-buffer tests noted under v1.101.0
+already were; confirmed unrelated by running it alone, which passed in under 1ms). `DiscForge.Cli` built
+for real and smoke-tested end to end: two contributors' models built and merged via the actual `dforge.dll`,
+`estimate` correctly refusing at 2 contributors and succeeding at 3 with the exact expected weighted mean.
+**Core+CLI only again — no WinForms/App changes.**
+
+### Added — v1.103.0: `disc-mri --plan-reread` — closes the loop between DiscMri's diagnosis and an actual re-read
+
+The third "mind-blowing" idea this run — the "DiscMri + adaptive-reread loop closure" from the original
+brainstorm. `DiscMri.Classify` has always produced per-sector evidence and rendered it as a polar map of
+the physical disc, but that evidence was diagnosis only: nothing turned "this sector's EDC failed" into
+"go re-read this sector." `DiscForge.Core.Audio.SecureRip` already closes exactly this loop for audio
+tracks (`PlanReread`: coalesce bad sectors into padded ranges, pick an escalating odd pass count) — this
+change gives `DiscMri` the same shape, over its own whole-disc evidence instead of SecureRip's audio-only
+C2/pass-mismatch evidence.
+
+`DiscMri.RereadPlan`/`RereadRange` mirror `SecureRip`'s records; `DiscMri.NeedsReread(Evidence)` is the
+single source of truth for what counts as damage (`>= EdcFailed` — EDC-failed data, a sync-less void in a
+known data span, or a recorded-unreadable sector; `Boundary` stays excluded, it's geometry, not damage —
+matching the threshold `disc-mri`'s own CLI summary already used for its "N sectors carry damage evidence"
+line, now shared instead of duplicated). `DiscMri.PlanReread(evidence, padSectors=2)` coalesces damaged
+runs, pads them, merges runs padding brings into contact, and escalates: 3 passes for EDC-failed, 5 for a
+sync-less void (treated with the same suspicion as an audio pass-mismatch — it could be a muted-drive
+artifact or genuine damage), 7 for a sector the dump never read at all, with unreadable sectors staying
+recorded as holes rather than being silently zero-filled if they still fail.
+
+Wired into the CLI: `dforge disc-mri <image> --plan-reread [out.json]` prints the plan (ranges + pass
+count + strategy) and optionally writes it as JSON.
+
+**Verification (real build + real test).** 11 new `DiscMriRereadPlanTests`: an all-clean disc plans
+nothing; `Boundary` sectors are confirmed excluded (geometry, not damage); a single damaged sector becomes
+a correctly-padded range; padding clamps at both ends of the disc without going negative or past the end;
+adjacent damaged runs merge once padding brings them into contact, distant ones stay separate; pass count
+escalates correctly across all three severities (`[Theory]`); a plan with two ranges of different severity
+escalates its overall strategy to the worst evidence found anywhere, not just the first range; and a
+dedicated test (`NeedsReread_matches_disc_mri_cmds_own_damage_threshold`) pins `NeedsReread` against every
+`Evidence` value so the CLI's damage count and the planner's re-read threshold can never silently drift
+apart. `dotnet build`/`dotnet test` on `DiscForge.Core`: 2716/2716 on a clean run (the same two
+sandbox-memory-pressure flaky tests flagged in the v1.101.0 entry below intermittently fail under full-
+suite parallel execution — confirmed unrelated again this round by two repeat runs, one clean, one with a
+single different flaky failure each time, never the same test twice, never a DiscMri or ledger test).
+`DiscForge.Cli` built for real and smoke-tested end to end against the actual `dforge.dll`: a synthetic
+30-sector all-EDC-failed image correctly planned one 30-sector range at 3 passes, printed to the console
+and written to `plan.json` with the exact same numbers. **Core+CLI only again this round — no WinForms/App
+changes**, so this is real-build-and-real-test verified throughout, not Roslyn-syntax-only.
+
+### Added — v1.102.0: `dump-ledger` — a public, multi-submitter, hash-chained dump-certificate ledger
+
+The second "mind-blowing" idea from the differentiators brainstorm, and the second initiative-3-adjacent
+build this run: `DiscForge.Core.Provenance.DumpCertificateLedger` (`Provenance/DumpCertificateLedger.cs`,
+new namespace) plus the `dforge dump-ledger` CLI command (`keygen`/`init`/`submit`/`verify`/`consensus`/`show`).
+
+**The gap.** `merge-cert` already produces a signed, checkable account of one merge. `lineage` already
+produces a signed, hash-chained history of one dump's custody. Neither can answer the question that
+actually establishes a dump is trustworthy: did anyone *else*, working independently, get the same bytes?
+Redump answers this informally (a human maintainer counts submissions); no tool makes the agreement — or
+disagreement — itself a checkable, tamper-evident, cryptographic artifact.
+
+**The design.** A `LedgerEntry` is a compact claim: "disc X (by a stable fingerprint — a `disc-genome`
+`ShortId` or any other offset-invariant identity string) dumps to output hash Y, and I attest it" — signed
+by the submitter's own ECDSA (P-256) key over the claim content alone. That signature is deliberately
+independent of the claim's position in any particular ledger: the same signed claim verifies whether it
+lands in this ledger, a fork of it, or none at all — it is the claim that is portable, not the log. On top
+of that, `DumpCertificateLedgerLog.Append` hash-chains every accepted entry to the one before it, exactly
+the way `DumpLineage` chains one dump's events — except here the chain runs across many independent
+submitters and many different discs in one append-only log, so nobody (including whoever hosts the ledger
+file) can quietly edit, reorder, insert or drop a past entry without breaking every hash downstream of it.
+`Append` also refuses outright to add a submission whose own signature doesn't verify — a public ledger
+must never carry a claim nobody actually made.
+
+`DumpCertificateLedgerLog.Consensus(ledger, fingerprint)` is the payoff: every distinct output hash
+submitted for a disc, grouped by DISTINCT submitter public key (one submitter re-attesting the same claim
+twice never inflates the count — covered by a dedicated test), ranked by submitter count, and flagged
+`Disputed` when more than one group has independent submitters. This is Redump-style multi-dumper
+corroboration made cryptographic and self-checkable by anyone, not just the maintainer running the
+database.
+
+An `EvidenceSha256` field lets a submission reference a fuller `MergeCertificate` or `DumpLineage` by hash
+without bloating the ledger with every dump's complete forensic record — the ledger stays a thin, fast,
+append-only spine; the heavy evidence stays out-of-band.
+
+**Verification (real build + real test, `DiscForge.Core`/`DiscForge.Cli` only — no WinForms/App changes
+this round).** `dotnet build`/`dotnet test` on `DiscForge.Core` — 2705/2705 passing, including 11 new
+`DumpCertificateLedgerTests` covering: chain linking, round-trip through JSON, tamper detection (editing a
+past entry's claim breaks the chain; splicing out a middle entry breaks the chain for everything after
+it), `Append` refusing a forged/altered submission, a submitter's signature verifying identically across
+two different ledgers with different chain positions, consensus agreement vs. dispute, and same-submitter
+re-attestation not inflating the count. `DiscForge.Cli` was built for real (`bash build.sh cli`) and
+smoke-tested end to end from the actual `dforge.dll`: two independent keys submitting matching claims for
+one disc, a third submitting a divergent claim, `verify` confirming chain+signatures both intact, and
+`consensus` correctly reporting `DISPUTED — 2 distinct results` with the 2-submitter group leading. A
+hand-tampered copy of the same ledger file was separately confirmed to fail `verify` on both the chain
+check and the signature check, exactly as designed.
+
+**What this is not.** It does not decide which dump is "correct" — it makes agreement or disagreement
+visible and auditable. It doesn't replace `merge-cert`/`lineage` (either can be cited by hash from
+`EvidenceSha256`); it's the cross-submitter layer neither of them can express alone. GUI integration
+(a `DumpCertView` extension or a new ledger view) was NOT attempted this round — this stayed CLI+Core so
+every claim above is real-build-and-real-test verified rather than Roslyn-syntax-only, the same tradeoff
+called out for the v1.101.0 EFM table.
+
 ### Added — v1.101.0: the flux/RF moonshot's last blocker is gone — Efm.cs now carries the real ECMA-130 table
 
 - Asked for a deep dive into something genuinely ambitious rather than another incremental addition.

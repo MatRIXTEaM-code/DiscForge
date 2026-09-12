@@ -1,0 +1,81 @@
+name: CI
+
+# Fast cross-platform sanity check on every push/PR: builds and tests the
+# net8.0 Core (the platform-independent half) on Linux, which is quick and
+# cheap. The full Windows build + installer lives in build.yml; the tagged
+# release downloads live in release.yml.
+#
+# Also runs the doc-sync checks here rather than only in build.yml: catching
+# drift on the cheap/fast Linux runner means a PR gets that signal well before
+# the slower full Windows build + installer compile in build.yml finishes.
+# `gen_gui_doc.py --check` needs nothing but the source files. The CLI-help
+# checks (`check-commands-sync.sh`, and `gen_cli_doc.ps1 -Check` in build.yml)
+# need a real built `dforge` to shell out to — but only the CLI's net8.0
+# target, which is fully cross-platform (no Devices/WinForms code), so that
+# part is built here too rather than waiting for build.yml's full solution
+# build. `check-commands-sync.ps1`/`gen_cli_doc.ps1` still also run for real
+# in build.yml against the actual Windows target, as a second, authoritative
+# check — this job is a fast early warning, not a replacement for that one.
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  doc-sync:
+    name: Check generated docs are in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: docs/GUI.md matches HelpContent.cs / CdrwinLauncher.cs
+        run: python3 scripts/gen_gui_doc.py --check
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Only the CLI's net8.0 target — cross-platform, no Devices/WinForms
+      # dependency — so this builds fast without needing a Windows runner.
+      - name: Build the CLI (net8.0)
+        run: dotnet build src/DiscForge.Cli/DiscForge.Cli.csproj -c Release -f net8.0
+
+      - name: docs/COMMANDS.md matches the CLI's own help (fast Linux check)
+        run: bash scripts/check-commands-sync.sh
+
+  test-core:
+    name: Test Core (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Core and its tests are net8.0 (cross-platform). The Devices/App projects
+      # target net8.0-windows and are covered by the Windows build in build.yml,
+      # so on Linux we build and test only the Core test project.
+      - name: Restore
+        run: dotnet restore tests/DiscForge.Core.Tests/DiscForge.Core.Tests.csproj
+
+      - name: Build
+        run: dotnet build tests/DiscForge.Core.Tests/DiscForge.Core.Tests.csproj -c Release --no-restore
+
+      - name: Test
+        run: >
+          dotnet test tests/DiscForge.Core.Tests/DiscForge.Core.Tests.csproj
+          -c Release --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory ./test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-linux
+          path: ./test-results/*.trx

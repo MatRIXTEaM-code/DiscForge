@@ -125,6 +125,12 @@ public static class Assert
             Fail($"Assert.DoesNotContain failure — found {Show(unexpectedSubstring)} in {Show(actual)}");
     }
 
+    public static void DoesNotContain(string unexpectedSubstring, string? actual, StringComparison comparison)
+    {
+        if (actual is not null && actual.Contains(unexpectedSubstring, comparison))
+            Fail($"Assert.DoesNotContain failure — found {Show(unexpectedSubstring)} in {Show(actual)}");
+    }
+
     public static void DoesNotContain<T>(T unexpected, IEnumerable<T> collection)
     {
         if (collection.Any(x => StructurallyEqual(x, unexpected)))

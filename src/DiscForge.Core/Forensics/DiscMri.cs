@@ -177,6 +177,93 @@ public static class DiscMri
         return Evidence.NoEdc;
     }
 
+    // ---- re-read planning ----------------------------------------------------
+
+    /// <summary>One coalesced run of sectors the plan wants re-read, and the worst evidence found in it.</summary>
+    public sealed record RereadRange(long StartSector, long Count, Evidence Worst);
+
+    /// <summary>
+    /// A targeted re-read plan derived directly from <see cref="Classify"/>'s evidence — the loop
+    /// <see cref="DiscMri"/> never closed: the polar map SHOWS where a disc is damaged, but until now
+    /// nothing turned that diagnosis into sectors an adaptive re-read pass should actually target.
+    /// Mirrors <c>DiscForge.Core.Audio.SecureRip.PlanReread</c>'s shape (coalesced ranges, escalating
+    /// pass count by worst evidence) but over DiscMri's own whole-disc evidence rather than SecureRip's
+    /// audio-only C2/pass-mismatch evidence, so a data disc gets the same diagnosis-to-action loop an
+    /// audio track already had.
+    /// </summary>
+    public sealed record RereadPlan
+    {
+        public required IReadOnlyList<RereadRange> Ranges { get; init; }
+        /// <summary>Suggested passes for the re-read: odd, so best-of-N voting can't tie.</summary>
+        public required int SuggestedPasses { get; init; }
+        public required string Strategy { get; init; }
+        public bool Nothing => Ranges.Count == 0;
+    }
+
+    /// <summary>Evidence severities worth re-reading — everything <see cref="Evidence.EdcFailed"/> or
+    /// worse: proven-damaged data, a void inside a known data span, or a sector the dump never read at
+    /// all. Everything below that (including <see cref="Evidence.Boundary"/>, which is geometry, not
+    /// damage) is left alone: re-reading a clean sector teaches nothing and wastes drive time.</summary>
+    public static bool NeedsReread(Evidence e) => e >= Evidence.EdcFailed;
+
+    /// <summary>
+    /// Plan the targeted re-read implied by a Classify() evidence array: damaged/void/unreadable
+    /// sectors coalesced into ranges (padded by <paramref name="padSectors"/> so the drive settles
+    /// before the sector that matters), with an escalating odd pass count driven by the worst evidence
+    /// actually found — the same shape <c>SecureRip.PlanReread</c> uses for audio, applied here to
+    /// DiscMri's whole-disc physical evidence.
+    /// </summary>
+    public static RereadPlan PlanReread(IReadOnlyList<Evidence> evidence, int padSectors = 2)
+    {
+        ArgumentNullException.ThrowIfNull(evidence);
+        var ranges = new List<RereadRange>();
+        int n = evidence.Count;
+        int i = 0;
+        while (i < n)
+        {
+            if (!NeedsReread(evidence[i])) { i++; continue; }
+            int start = i;
+            var worst = Evidence.Untested;
+            while (i < n && NeedsReread(evidence[i]))
+            {
+                if (evidence[i] > worst) worst = evidence[i];
+                i++;
+            }
+            int from = Math.Max(0, start - padSectors);
+            int to = Math.Min(n, i + padSectors);
+            ranges.Add(new RereadRange(from, to - from, worst));
+        }
+
+        // Merge ranges the padding made adjacent/overlapping.
+        var merged = new List<RereadRange>();
+        foreach (var r in ranges)
+        {
+            if (merged.Count > 0 && r.StartSector <= merged[^1].StartSector + merged[^1].Count)
+            {
+                var prev = merged[^1];
+                long end = Math.Max(prev.StartSector + prev.Count, r.StartSector + r.Count);
+                merged[^1] = new RereadRange(prev.StartSector, end - prev.StartSector,
+                                             (Evidence)Math.Max((byte)prev.Worst, (byte)r.Worst));
+            }
+            else merged.Add(r);
+        }
+
+        var overallWorst = merged.Count == 0 ? Evidence.Untested : merged.Max(r => r.Worst);
+        (int passes, string strategy) = overallWorst switch
+        {
+            Evidence.EdcFailed => (3,
+                "EDC-failed: re-read each range 3× with cache-defeating seeks between passes; accept when EDC validates and all passes agree."),
+            Evidence.SynclessVoid => (5,
+                "Sync-less void: best-of-5 per-byte vote across cache-defeating re-reads — could be a muted-drive artifact " +
+                "or genuine damage, so treat it with the same suspicion as an audio pass-mismatch."),
+            Evidence.Unreadable => (7,
+                "Unreadable: 7 attempts per range at reduced speed; sectors that still fail stay recorded as holes in the " +
+                "bad-sector map, never silently zero-filled."),
+            _ => (0, "Nothing to re-read."),
+        };
+        return new RereadPlan { Ranges = merged, SuggestedPasses = passes, Strategy = strategy };
+    }
+
     // ---- rendering ---------------------------------------------------------
 
     /// <summary>Render the polar map as a PNG (RGBA). Worst evidence wins per pixel.</summary>

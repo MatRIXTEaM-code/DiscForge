@@ -1,0 +1,31 @@
+{
+  "devicePath": "\\\\.\\D:",
+  "vendor": "TSSTcorp",
+  "model": "CDDVDW SH-224DB",
+  "firmware": "SB01",
+  "mediaProfile": "DvdRom",
+  "read": {
+    "cd": true,
+    "dvd": true,
+    "bd": false
+  },
+  "write": {
+    "cd": true,
+    "dvd": true,
+    "bd": false
+  },
+  "writeModes": {
+    "trackAtOnce": false,
+    "discAtOnce": false,
+    "rawDao96": false
+  },
+  "readFidelity": {
+    "rawReadSubchannel": true,
+    "bufferUnderrunProtection": false,
+    "c2ErrorPointers": "Advertised",
+    "c2Accuracy": "NotDetermined",
+    "overread": "NotProbed",
+    "cacheDefeat": "NotProbed",
+    "readOffsetSamples": null
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "devicePath": "\\\\.\\D:",
+  "vendor": "PLEXTOR",
+  "model": "CD-R   PX-W5224A",
+  "firmware": "1.03",
+  "mediaProfile": "None",
+  "read": {
+    "cd": true,
+    "dvd": false,
+    "bd": false
+  },
+  "write": {
+    "cd": true,
+    "dvd": false,
+    "bd": false
+  },
+  "writeModes": {
+    "trackAtOnce": false,
+    "discAtOnce": false,
+    "rawDao96": false
+  },
+  "readFidelity": {
+    "rawReadSubchannel": true,
+    "bufferUnderrunProtection": false,
+    "c2ErrorPointers": "Advertised",
+    "c2Accuracy": "NotDetermined",
+    "overread": "NotProbed",
+    "cacheDefeat": "NotProbed",
+    "readOffsetSamples": null
+  }
+}

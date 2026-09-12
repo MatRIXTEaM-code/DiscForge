@@ -153,4 +153,118 @@ public class OffsetDetectionTests
         Assert.Equal(0x0077b665u, id2);
         Assert.Equal(0x8b0c1b09u, cddb);
     }
+
+    // ---- offset-shift analysis (a mastering anomaly, not a single global offset) ------------
+
+    private static OffsetDetection.TrackOffsetResult Hit(int track, int offset, int confidence = 10)
+        => new() { TrackNumber = track, OffsetSamples = offset, Confidence = confidence };
+
+    private static OffsetDetection.TrackOffsetResult Miss(int track)
+        => new() { TrackNumber = track, OffsetSamples = null };
+
+    [Fact]
+    public void AnalyzeRuns_OneConsistentOffset_IsNotAShift()
+    {
+        var tracks = new[] { Hit(1, 30), Hit(2, 30), Hit(3, 30), Hit(4, 30) };
+        var report = OffsetDetection.AnalyzeRuns(tracks);
+
+        Assert.False(report.ShiftDetected);
+        var run = Assert.Single(report.Runs);
+        Assert.Equal(30, run.OffsetSamples);
+        Assert.Equal(1, run.FirstTrack);
+        Assert.Equal(4, run.LastTrack);
+        Assert.Contains("Consistent offset", report.Summary());
+    }
+
+    [Fact]
+    public void AnalyzeRuns_AMidDiscChange_IsDetectedAndLocatedExactly()
+    {
+        // Tracks 1-4 master at +30, tracks 5-8 master at +36 — a real mastering anomaly.
+        var tracks = new[]
+        {
+            Hit(1, 30), Hit(2, 30), Hit(3, 30), Hit(4, 30),
+            Hit(5, 36), Hit(6, 36), Hit(7, 36), Hit(8, 36),
+        };
+        var report = OffsetDetection.AnalyzeRuns(tracks);
+
+        Assert.True(report.ShiftDetected);
+        Assert.Equal(2, report.Runs.Count);
+        Assert.Equal((30, 1, 4), (report.Runs[0].OffsetSamples, report.Runs[0].FirstTrack, report.Runs[0].LastTrack));
+        Assert.Equal((36, 5, 8), (report.Runs[1].OffsetSamples, report.Runs[1].FirstTrack, report.Runs[1].LastTrack));
+        Assert.Contains("OFFSET SHIFT DETECTED", report.Summary());
+        Assert.Contains("tracks 1-4 @ +30", report.Summary());
+        Assert.Contains("tracks 5-8 @ +36", report.Summary());
+    }
+
+    [Fact]
+    public void AnalyzeRuns_UnmatchedTracksAreExcluded_NotTreatedAsAThirdOffset()
+    {
+        var tracks = new[] { Hit(1, 30), Miss(2), Hit(3, 30), Hit(4, 30) };
+        var report = OffsetDetection.AnalyzeRuns(tracks);
+
+        Assert.False(report.ShiftDetected);
+        Assert.Equal(1, report.UnmatchedCount);
+        var run = Assert.Single(report.Runs);
+        Assert.Equal(30, run.OffsetSamples);
+    }
+
+    [Fact]
+    public void AnalyzeRuns_ReturningToAnEarlierOffset_IsTwoRunsNotOne()
+    {
+        // +30, +36, then back to +30 — runs must see three separate stretches, not collapse
+        // the two +30 tracks back together across the +36 track in between.
+        var tracks = new[] { Hit(1, 30), Hit(2, 36), Hit(3, 30) };
+        var report = OffsetDetection.AnalyzeRuns(tracks);
+
+        Assert.True(report.ShiftDetected);
+        Assert.Equal(3, report.Runs.Count);
+        Assert.Equal(30, report.Runs[0].OffsetSamples);
+        Assert.Equal(36, report.Runs[1].OffsetSamples);
+        Assert.Equal(30, report.Runs[2].OffsetSamples);
+    }
+
+    [Fact]
+    public void AnalyzeRuns_NoMatchesAtAll_ReportsItCannotAssess()
+    {
+        var report = OffsetDetection.AnalyzeRuns(new[] { Miss(1), Miss(2) });
+        Assert.False(report.ShiftDetected);
+        Assert.Empty(report.Runs);
+        Assert.Contains("can't assess", report.Summary());
+    }
+
+    /// <summary>
+    /// End-to-end against the real primitives (no hand-built TrackOffsetResult): two synthetic
+    /// tracks, sweep + Match each independently against a shared database, and AnalyzeRuns must
+    /// surface the planted shift — this is the scenario `offset-shift-scan` actually runs.
+    /// </summary>
+    [Fact]
+    public void EndToEnd_TwoTracksAtDifferentPlantedOffsets_ScanDetectsTheShift()
+    {
+        const int frames = 20000, max = 100;
+        var t1 = Pcm(frames + 2 * max, seed: 11);
+        var t2 = Pcm(frames + 2 * max, seed: 12);
+        const int off1 = +30, off2 = +36;
+
+        uint crc1 = AccurateRip.Compute(t1.AsSpan((max + off1) * 4, frames * 4), false, false).V1;
+        uint crc2 = AccurateRip.Compute(t2.AsSpan((max + off2) * 4, frames * 4), false, false).V1;
+        var db = new[] { new AccurateRip.DbEntry { Confidence = 20, TrackChecksums = new[] { crc1, crc2 } } };
+
+        var hits1 = OffsetDetection.Match(OffsetDetection.SweepV1(t1, frames, max), max, db, trackIndex: 0);
+        var hits2 = OffsetDetection.Match(OffsetDetection.SweepV1(t2, frames, max), max, db, trackIndex: 1);
+
+        var perTrack = new[]
+        {
+            hits1.Count > 0
+                ? new OffsetDetection.TrackOffsetResult { TrackNumber = 1, OffsetSamples = hits1[0].OffsetSamples, Confidence = hits1[0].Confidence }
+                : new OffsetDetection.TrackOffsetResult { TrackNumber = 1, OffsetSamples = null },
+            hits2.Count > 0
+                ? new OffsetDetection.TrackOffsetResult { TrackNumber = 2, OffsetSamples = hits2[0].OffsetSamples, Confidence = hits2[0].Confidence }
+                : new OffsetDetection.TrackOffsetResult { TrackNumber = 2, OffsetSamples = null },
+        };
+
+        var report = OffsetDetection.AnalyzeRuns(perTrack);
+        Assert.True(report.ShiftDetected);
+        Assert.Equal(off1, report.Runs[0].OffsetSamples);
+        Assert.Equal(off2, report.Runs[1].OffsetSamples);
+    }
 }

@@ -157,4 +157,82 @@ public class CopyProtectionCatalogTests
         var r = CopyProtectionCatalog.Identify(new[] { "/00000001.TMP;1", "/GAME.ICD;1" });
         Assert.All(r.Detections, d => Assert.Contains("does not bypass", d.Note));
     }
+
+    // ---- honesty field: physical-media-only protection signals -------------
+
+    [Fact]
+    public void StarForce_is_flagged_as_physically_uncapturable()
+    {
+        var r = CopyProtectionCatalog.Identify(new[] { "/sfdrv01.sys;1", "/sfsync02.sys;1", "/sfsync04.sys;1" });
+        var d = Assert.Single(r.Detections);
+        Assert.Equal("StarForce", d.Scheme);
+        Assert.True(d.PhysicallyUncapturable);
+        Assert.Contains("DPM", d.UncapturableNote);
+        Assert.True(r.AnyPhysicallyUncapturable);
+        Assert.Contains("StarForce", r.PhysicalCaptureCaveat());
+        Assert.Contains("DPM", r.PhysicalCaptureCaveat());
+    }
+
+    [Fact]
+    public void SecuROM_is_flagged_as_physically_uncapturable()
+    {
+        var r = CopyProtectionCatalog.Identify(new[] { "/CMS16.DLL;1", "/CMS_95.DLL;1", "/CMS_NT.DLL;1" });
+        var d = Assert.Single(r.Detections);
+        Assert.True(d.PhysicallyUncapturable);
+        Assert.NotNull(d.UncapturableNote);
+        Assert.NotNull(r.PhysicalCaptureCaveat());
+    }
+
+    [Fact]
+    public void SafeDisc_and_LaserLock_are_not_flagged_as_physically_uncapturable()
+    {
+        var safeDisc = CopyProtectionCatalog.Identify(new[] { "/00000001.TMP;1", "/GAME.ICD;1" });
+        var d1 = Assert.Single(safeDisc.Detections);
+        Assert.False(d1.PhysicallyUncapturable);
+        Assert.Null(d1.UncapturableNote);
+        Assert.False(safeDisc.AnyPhysicallyUncapturable);
+        Assert.Null(safeDisc.PhysicalCaptureCaveat());
+
+        var laserLock = CopyProtectionCatalog.Identify(new[] { "/LASERLOK/NOMOUSE.SP;1" });
+        Assert.All(laserLock.Detections, d => Assert.False(d.PhysicallyUncapturable));
+    }
+
+    [Fact]
+    public void A_clean_disc_has_no_physical_capture_caveat()
+    {
+        var r = CopyProtectionCatalog.Identify(new[] { "/GAME.EXE;1", "/README.TXT;1" });
+        Assert.False(r.AnyPhysicallyUncapturable);
+        Assert.Null(r.PhysicalCaptureCaveat());
+    }
+
+    [Fact]
+    public void Render_surfaces_the_physical_capture_caveat()
+    {
+        var r = CopyProtectionCatalog.Identify(new[] { "/sfdrv01.sys;1" });
+        string rendered = CopyProtectionCatalog.Render(r);
+        Assert.Contains("physical signal not capturable in an image", rendered);
+        Assert.Contains("Physical-capture caveat:", rendered);
+    }
+
+    [Fact]
+    public void LibCrypt_is_not_flagged_as_physically_uncapturable()
+    {
+        byte[] ValidQ(byte seed)
+        {
+            var q = new byte[12];
+            for (int i = 0; i < 10; i++) q[i] = (byte)(seed + i);
+            ushort crc = Crc16.ComputeInverted(q.AsSpan(0, 10));
+            q[10] = (byte)(crc >> 8);
+            q[11] = (byte)crc;
+            return q;
+        }
+        var frames = new List<byte[]>();
+        for (int i = 0; i < 20; i++) frames.Add(ValidQ((byte)i));
+        var bad1 = ValidQ(100); bad1[3] ^= 0xFF; frames.Add(bad1);
+        var bad2 = ValidQ(101); bad2[4] ^= 0xFF; frames.Add(bad2);
+
+        var d = CopyProtectionCatalog.DetectLibCrypt(frames);
+        Assert.NotNull(d);
+        Assert.False(d!.PhysicallyUncapturable);
+    }
 }

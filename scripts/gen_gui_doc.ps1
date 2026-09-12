@@ -20,10 +20,11 @@ $groups = @(
     @{ Name = "Audio"; Keys = @("accuraterip","ripaudio") },
     @{ Name = "Protection & interop"; Keys = @("protect","subcode","interop") },
     @{ Name = "DVD & video"; Keys = @("dvdshrink","dvdinfo","transcode","pack") },
-    @{ Name = "Identify, verify & catalogue"; Keys = @("identify","examine","library","submit","tools") },
-    @{ Name = "Console & cartridge preservation"; Keys = @("patch","dreamcast","milcd","dcid","xbox","memcard","psxasset","psxbuild","compimg","scummvm") },
+    @{ Name = "Identify, verify & catalogue"; Keys = @("identify","examine","library","submit","tools","verify") },
+    @{ Name = "Console & cartridge preservation"; Keys = @("patch","dreamcast","milcd","dcid","xbox","memcard","psxasset","psxbuild","compimg","scummvm","textures") },
     @{ Name = "Extract, cheats & game media"; Keys = @("extract","cheat","media") },
-    @{ Name = "Collection & front-end"; Keys = @("playlists","sets") },
+    @{ Name = "Collection & front-end"; Keys = @("playlists","sets","datbuild") },
+    @{ Name = "Preservation certificates & forensics"; Keys = @("merge","mergecert","dumpcert","prove","pressingdna","drivedossier","discactuary","discmri","secureripplan") },
     @{ Name = "Utility"; Keys = @("help","settings","about","exit") }
 )
 

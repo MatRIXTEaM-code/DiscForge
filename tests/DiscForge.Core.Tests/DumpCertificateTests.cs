@@ -177,4 +177,48 @@ public class DumpCertificateTests
         }
         finally { Directory.Delete(dir, true); }
     }
+
+    // ---- PhysicalCaptureCaveat (honesty field) ------------------------------
+
+    /// <summary>
+    /// The caveat is informational only and must stay OUT of the signature. A certificate signed
+    /// before this field existed must still verify unchanged, and setting the caveat after signing
+    /// must not itself invalidate the signature (unlike every other field — see
+    /// Certificate_SignVerify_RoundTrips_AndBreaksOnEdit above, which the "with" here would defeat
+    /// the point of if this field were wired into SigningContent like the others).
+    /// </summary>
+    [Fact]
+    public void PhysicalCaptureCaveat_IsInformational_AndDoesNotAffectTheSignature()
+    {
+        using var img = Image(5);
+        var cert = DumpCertificate.Create(img, "t.bin", "2026-08-22T20:00:00Z");
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var signed = cert.Sign(key);
+        Assert.True(signed.VerifySignature());
+        Assert.Null(signed.PhysicalCaptureCaveat);
+
+        var withCaveat = signed with { PhysicalCaptureCaveat = "StarForce detected: DPM not captured." };
+        Assert.True(withCaveat.VerifySignature());
+        Assert.Equal(signed.Signature, withCaveat.Signature);
+    }
+
+    [Fact]
+    public void PhysicalCaptureCaveat_SurvivesJsonRoundTrip()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "dforge_cert_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            using var img = Image(4);
+            var cert = DumpCertificate.Create(img, "t.bin", "2026-08-22T20:00:00Z") with
+            {
+                PhysicalCaptureCaveat = "Physical-capture caveat: StarForce may rely on DPM.",
+            };
+            string cp = Path.Combine(dir, "t.bin.dcert.json");
+            cert.Save(cp);
+            var loaded = DumpCertificate.Load(cp);
+            Assert.Equal(cert.PhysicalCaptureCaveat, loaded.PhysicalCaptureCaveat);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
 }

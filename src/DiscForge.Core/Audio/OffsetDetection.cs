@@ -127,4 +127,82 @@ public static class OffsetDetection
         }
         return hits.OrderByDescending(h => h.Confidence).ThenBy(h => Math.Abs(h.OffsetSamples)).ToList();
     }
+
+    /// <summary>One track's independent offset result, for scanning a whole disc rather than
+    /// assuming a single global offset. <see cref="Match"/> already tells you every offset that
+    /// hits the database for ONE track; this record is that track's best hit (or none).</summary>
+    public sealed record TrackOffsetResult
+    {
+        public required int TrackNumber { get; init; }
+        public bool Matched => OffsetSamples.HasValue;
+        public int? OffsetSamples { get; init; }
+        public int Confidence { get; init; }
+    }
+
+    /// <summary>A contiguous run of tracks that all matched the same offset.</summary>
+    public sealed record OffsetRun
+    {
+        public required int OffsetSamples { get; init; }
+        public required int FirstTrack { get; init; }
+        public required int LastTrack { get; init; }
+    }
+
+    /// <summary>
+    /// Whole-disc offset-shift analysis: <c>detect-offset</c> sweeps ONE track and assumes that
+    /// offset holds for the whole disc — correct for the overwhelming majority of pressings, but
+    /// a real mastering anomaly (a disc burned/mastered in more than one pass) can shift the true
+    /// offset partway through, and a single-track sweep can't see that; it just reports "only
+    /// N/M tracks verify" with no way to tell an offset shift apart from a damaged rip. This scans
+    /// every audio track independently and groups the results into runs of a consistent offset —
+    /// more than one run means the offset genuinely changed partway through the disc, not that
+    /// some tracks are merely damaged.
+    /// </summary>
+    public sealed record OffsetShiftReport
+    {
+        public required IReadOnlyList<TrackOffsetResult> Tracks { get; init; }
+        /// <summary>Runs of matched tracks with a consistent offset, in track order. Tracks with
+        /// no database match are excluded from every run (they neither confirm nor contradict).</summary>
+        public required IReadOnlyList<OffsetRun> Runs { get; init; }
+        /// <summary>True when two or more distinct offsets were seen across the disc — the
+        /// mastering-anomaly signal this analysis exists to catch.</summary>
+        public bool ShiftDetected => Runs.Select(r => r.OffsetSamples).Distinct().Count() > 1;
+        public int UnmatchedCount => Tracks.Count(t => !t.Matched);
+
+        public string Summary()
+        {
+            if (Runs.Count == 0)
+                return "No track matched the database at any offset in range — can't assess.";
+            if (!ShiftDetected)
+            {
+                var r = Runs[0];
+                return $"Consistent offset {r.OffsetSamples:+#;-#;0} samples across all {Tracks.Count(t => t.Matched)} matched track(s)" +
+                       (UnmatchedCount > 0 ? $" ({UnmatchedCount} track(s) unmatched)." : ".");
+            }
+            var parts = Runs.Select(r => r.FirstTrack == r.LastTrack
+                ? $"track {r.FirstTrack} @ {r.OffsetSamples:+#;-#;0}"
+                : $"tracks {r.FirstTrack}-{r.LastTrack} @ {r.OffsetSamples:+#;-#;0}");
+            return "OFFSET SHIFT DETECTED: " + string.Join(", then ", parts) +
+                   " — this looks like a mastering anomaly, not rip damage; re-read/verify each" +
+                   " run at its own offset rather than one offset for the whole disc.";
+        }
+    }
+
+    /// <summary>Group per-track results (in track order) into runs of a consistent offset.
+    /// Unmatched tracks are dropped; a matched track starts a new run whenever the offset differs
+    /// from the run it would otherwise extend.</summary>
+    public static OffsetShiftReport AnalyzeRuns(IReadOnlyList<TrackOffsetResult> tracks)
+    {
+        ArgumentNullException.ThrowIfNull(tracks);
+        var runs = new List<OffsetRun>();
+        foreach (var t in tracks)
+        {
+            if (!t.Matched) continue;
+            int off = t.OffsetSamples!.Value;
+            if (runs.Count > 0 && runs[^1].OffsetSamples == off)
+                runs[^1] = runs[^1] with { LastTrack = t.TrackNumber };
+            else
+                runs.Add(new OffsetRun { OffsetSamples = off, FirstTrack = t.TrackNumber, LastTrack = t.TrackNumber });
+        }
+        return new OffsetShiftReport { Tracks = tracks, Runs = runs };
+    }
 }
