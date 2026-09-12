@@ -7,6 +7,10 @@
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+# See hw-test-resume.ps1 for why this line exists: Set-Location alone doesn't reliably sync .NET's
+# process-wide CurrentDirectory in every host/elevation context, and this script's own relative
+# paths (bigtest.cdi*, the log files) are opened via .NET underneath dforge.exe and Get/Remove-Item.
+[Environment]::CurrentDirectory = $PSScriptRoot
 
 # Resolve the freshest build first. A bare "dforge" on PATH (eg. C:\tools\dforge\dforge.exe)
 # can silently be a stale copy from before a command was added - that's exactly what happened

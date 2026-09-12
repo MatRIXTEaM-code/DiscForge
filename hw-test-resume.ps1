@@ -24,6 +24,15 @@ function Section($title) {
 # a standard 700 MB / 80-minute CD-R.
 
 Set-Location $PSScriptRoot
+# Set-Location only moves PowerShell's OWN location provider ($PWD) - it does not reliably sync
+# .NET's process-wide CurrentDirectory in every host/elevation context (a real repro: an elevated
+# PowerShell shortcut that starts in C:\Windows\system32 left [IO.File]::WriteAllBytes("data.bin", ...)
+# resolving against system32 and failing with UnauthorizedAccessException, even though `Write-Host
+# "Working directory: $PSScriptRoot"` printed the CORRECT path immediately above it - Set-Location
+# had visibly worked for PowerShell's own view, just not for plain .NET file APIs). Every .NET call
+# below (WriteAllBytes, File.Create) uses a relative path and resolves it against
+# [Environment]::CurrentDirectory, so that has to be set explicitly too.
+[Environment]::CurrentDirectory = $PSScriptRoot
 Write-Host "Working directory: $PSScriptRoot"
 
 Section "Drive check"

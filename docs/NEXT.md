@@ -1,5 +1,40 @@
 # DiscForge — what's left (session handoff)
 
+## Hardware confirmation, 2026-09-12: interrupt→resume PASSED on real hardware
+
+The long-open "hardware interrupt→resume test" is done and passed, against a real Plextor
+PX-891SA (USB, CD-R media) — not a synthetic/unit-test stand-in. `hw-test-resume.ps1` burned the
+oversized fixture (450-sector data track + ~250,000-sector silent audio track) via `burn-raw
+--engine spti` RAW DAO — notable because this drive's own capability report says
+`TAO n, DAO n, RAW-DAO n` (advertises none of them), yet the burn succeeded; the advertised
+capability bits are apparently unreliable on this drive and the real write mode still worked.
+`hw-test-resume-auto.ps1` then ran the actual test: started `read-cdi --resume`, waited for
+track 1 to finish, killed the process ~20s into track 2 (a hard kill, standing in for Ctrl+C —
+see that script's own header for why that's equivalent here), confirmed the checkpoint sidecar
+and a completed track-1 temp file were left behind, then re-ran `--resume` and confirmed it
+reused track 1's already-captured data rather than re-reading it, finishing track 2 cleanly.
+Verdict: **PASS** — `track 1 reused (not re-read): True`, `pass 2 finished cleanly: True`,
+`bigtest.cdi exists: True`, exit code 0.
+
+Along the way, both `hw-test-resume.ps1` and `hw-test-resume-auto.ps1` needed a real fix: each
+called `Set-Location $PSScriptRoot` and assumed that was enough, but `Set-Location` only moves
+PowerShell's own location provider — it does not reliably sync .NET's process-wide
+`CurrentDirectory` in every host/elevation context. On this machine (PowerShell apparently
+started elevated with a `C:\Windows\system32` startup directory), `[IO.File]::WriteAllBytes`
+resolved its relative path against `system32` and failed with `UnauthorizedAccessException`,
+even though `Write-Host "Working directory: $PSScriptRoot"` printed the *correct* path
+immediately above the failure — proof `Set-Location` had visibly worked for PowerShell's own
+view, just not for plain .NET file APIs underneath it. Fixed by adding an explicit
+`[Environment]::CurrentDirectory = $PSScriptRoot` right after `Set-Location` in both scripts.
+Worth remembering for any other `hw-test-*.ps1` script that mixes `Set-Location` with direct
+.NET file I/O on relative paths.
+
+Remaining hardware-gated item: actually exercising `disc-mri-reread` against a real drive with
+genuine bad/weak sectors (built and type-checked, including the Windows/SPTI path compiling for
+real, but never run against physical media with real read errors to recover from — a blank or
+clean disc doesn't exercise it, since the whole point is adaptive re-read escalation against
+sectors that actually fail on a first pass).
+
 ## State as of 2026-09-12: v1.111.0 — read this section first, the rest of this file is historical
 
 v1.111.0 followed up "is there anything to add to the to-do list?" — the answer was a lesson, not a
