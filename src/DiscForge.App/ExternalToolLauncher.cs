@@ -29,6 +29,16 @@ namespace DiscForge.App;
 /// DiscForge never bundles, inspects, or knows anything else about what these tools do — this
 /// starts the process the user points it at and nothing more.
 ///
+/// Hold Shift while clicking to force the picker to reappear even when a path is already
+/// remembered. Added after a real report: a user picked a Windows-Installer icon-cache stub
+/// (a file named like <c>NewShortcutNN_&lt;guid&gt;.exe</c> under <c>C:\Windows\Installer\...</c>
+/// — MSI's temporary copy of an app's icon resource, not the app itself) instead of the real
+/// tool. <see cref="System.Diagnostics.Process.Start"/> launches that stub without error — it's a
+/// real, runnable exe — so nothing in this method's own error handling ever fires, and the
+/// remembered (wrong) path then silently "succeeds" on every click forever with no window ever
+/// appearing. There is no way to tell a merely-quiet tool from a launched-nothing stub from here,
+/// so the fix is letting the user force a fresh prompt rather than trying to detect the bad file.
+///
 /// Reporting is a plain <c>(message, isError)</c> delegate rather than a concrete
 /// <see cref="EventLogView"/> — Read and Burn both have a numbered event log to report into, but
 /// the Xbox and memory-card screens don't carry one and report through a single status label
@@ -42,11 +52,12 @@ internal static class ExternalToolLauncher
         string followUpMessage, Action<string, bool> report)
     {
         string? path = getPath();
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+        bool forceRePrompt = Control.ModifierKeys.HasFlag(Keys.Shift);
+        if (forceRePrompt || string.IsNullOrEmpty(path) || !File.Exists(path))
         {
             using var pick = new OpenFileDialog
             {
-                Title = pickerTitle,
+                Title = forceRePrompt ? $"{pickerTitle} (Shift+Click: pick a different file)" : pickerTitle,
                 Filter = "Programs (*.exe)|*.exe|All files (*.*)|*.*",
             };
             if (pick.ShowDialog() != DialogResult.OK) return;

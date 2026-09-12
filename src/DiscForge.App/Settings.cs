@@ -158,6 +158,23 @@ internal sealed class SettingsModel
     /// established homebrew tool for dumping and restoring Saturn backup memory on real hardware.
     /// Own remembered path, same reason as every other field here.</summary>
     public string? ExternalDumperPathPseudoSaturnKai { get; set; }
+
+    /// <summary>Last-used path to a card formatter (e.g. the SD Association's official SD Card
+    /// Formatter, Tuxera-developed) — used from FormatMediaView. DiscForge has no code that talks
+    /// to a card reader/writer at all, and formatting removable media (partition table + filesystem
+    /// at the physical/logical level a card's own controller expects) is out of scope for an
+    /// optical-disc/cartridge preservation tool to reimplement — this is prep work for a flashcart's
+    /// SD card, not disc or cartridge dumping itself. Own remembered path, same reason as every
+    /// other field here.</summary>
+    public string? ExternalDumperPathCardFormatter { get; set; }
+
+    /// <summary>Last-used path to a sector-level drive/image cloning tool (e.g. HDD Raw Copy Tool)
+    /// — used from RawCopyView. A different domain from every other external-tool field here: those
+    /// are all optical-disc/cartridge/floppy specific, while this clones a whole physical drive (or
+    /// an existing raw image) byte-for-byte — a generic block-device operation DiscForge's own
+    /// sector-level code (built around ECMA-130 CD/DVD/BD structure) has no reason to duplicate.
+    /// Own remembered path, same reason as every other field here.</summary>
+    public string? ExternalDumperPathHddRawCopy { get; set; }
 }
 
 /// <summary>
@@ -340,6 +357,18 @@ internal static class Settings
     {
         get => _model.ExternalDumperPathPseudoSaturnKai;
         set { _model.ExternalDumperPathPseudoSaturnKai = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathCardFormatter
+    {
+        get => _model.ExternalDumperPathCardFormatter;
+        set { _model.ExternalDumperPathCardFormatter = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathHddRawCopy
+    {
+        get => _model.ExternalDumperPathHddRawCopy;
+        set { _model.ExternalDumperPathHddRawCopy = value; Save(); }
     }
 
     public static IReadOnlyList<string> Recent => _model.Recent;

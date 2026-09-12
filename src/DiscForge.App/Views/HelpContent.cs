@@ -366,6 +366,23 @@ internal static class HelpContent
             "dominant tool the way there is for optical discs, so this tile offers both major community " +
             "options: GBxCart RW/FlashGBX for the Game Boy family, Cart Reader for N64/SNES/Genesis/NES."),
 
+        new("formatmedia", "💳", "Format Media", "Launch a card formatter to prep an SD/SDHC/SDXC card",
+            "DiscForge has no code that talks to a card reader/writer, and formatting removable media " +
+            "correctly (the partition table and filesystem a card's own controller expects) is its own " +
+            "established problem, not something to reimplement here. Launches a dedicated formatter — " +
+            "e.g. the SD Association's official SD Card Formatter — for prepping a card before using " +
+            "it with a flashcart-based dumper (see Cartridges) or a floppy-imaging rig. DiscForge " +
+            "doesn't bundle or inspect the formatter; double-check the drive letter it shows before " +
+            "formatting, since this erases the whole card."),
+
+        new("rawcopy", "🗄", "Raw Copy", "Launch a sector-level drive/image cloning tool",
+            "DiscForge's own sector-level code is built around CD/DVD/BD structure, not generic " +
+            "block-device I/O — whole-drive or whole-image byte-for-byte cloning (HDD/SSD/USB, or an " +
+            "existing raw image, in either direction) is a different, already-solved problem. Launches " +
+            "a dedicated tool — e.g. HDD Raw Copy Tool — for that. DiscForge doesn't bundle or inspect " +
+            "it; triple-check source and target there before starting, since a raw copy overwrites the " +
+            "target completely and cannot be undone."),
+
         new("verify", "✓", "Verify & Lint", "Structural and filesystem conformance checks",
             "Runs the right structural check for whatever image you give it: ISO 9660/UDF/FAT/HFS " +
             "conformance, a filesystem cross-check against the raw sectors, CHD internal integrity, " +

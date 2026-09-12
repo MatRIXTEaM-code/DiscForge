@@ -11,6 +11,82 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
+### Fixed — v1.110.0: external-tool buttons could get permanently stuck on a bad picked file
+
+Real report from the field: SD Card Formatter "would not launch" after being configured once. Root
+cause was in `ExternalToolLauncher` (the shared logic behind every external-tool button in the app —
+Format Media, Raw Copy, Read's rippers, Burn's burners, Xbox/memory-card/cartridge/floppy tools),
+not in the new Format Media tile itself. The user had picked a Windows-Installer icon-cache stub
+(a file literally named like `NewShortcut11_9F21041712364E7FBB19D6D84D3AFF1D.exe`, sitting under
+`C:\Windows\Installer\...` — MSI's own temporary copy of an app's icon resource used to paint Start
+Menu shortcuts, not the app itself) instead of browsing to the real installed `SDFormatterApp.exe`.
+`Process.Start` launches that stub without error — it genuinely is a runnable exe — so the launcher's
+existing `catch` block (which clears a bad remembered path so the next click re-prompts) never fires:
+the wrong path gets remembered as "working" forever, and every click after that reports "Launched
+NewShortcut11_...exe" with no window ever appearing. There is no reliable way to detect a stub exe
+vs. a genuinely-quiet-on-launch tool from the outside, so instead of trying to sniff out MSI icon
+caches specifically, `ExternalToolLauncher.Launch` now checks `Control.ModifierKeys` for Shift and
+forces the file picker to reappear even when a path is already remembered — **Shift+Click any
+external-tool button to pick a different file.** This one change lives in the single shared method,
+so it applies to every external-tool button in the app, not just Format Media/Raw Copy. Also added a
+one-line "(Picked the wrong file? Shift+Click the button to choose again.)" hint to the two newest
+views' status text (`FormatMediaView`, `RawCopyView`) since those are the ones a user just hit this
+on; the older views (Read/Burn/Xbox/memory-card/cartridge/floppy) still get the fix functionally but
+weren't re-worded this round, to keep the change scoped to what was actually reported.
+
+**Verification tier.** Touches only App-internal code (`ExternalToolLauncher`, `Control.ModifierKeys`,
+plain WinForms controls) — Roslyn-syntax-clean on all three touched files
+(`ExternalToolLauncher.cs`, `FormatMediaView.cs`, `RawCopyView.cs`). No Core/Devices/Cli files
+touched, so nothing else needed rebuilding this round. `DiscForge.App` itself still can't build for
+real in this sandbox — **run `.\build-app.ps1 -Run`, configure a tile with the wrong file on purpose,
+then Shift+Click it to confirm the picker reappears** before trusting this as fully fixed. The actual
+SD Card Formatter launch (once pointed at the real `SDFormatterApp.exe` rather than the Installer
+cache) was never independently confirmed working end-to-end from this sandbox — that still depends
+on the user re-picking the correct file on their machine.
+
+### Added — v1.109.0: Raw Copy tile — the escape hatch for sector-level drive/image cloning
+
+A new "Raw Copy" tile launches an external sector-level cloning tool (e.g. HDD Raw Copy Tool) for
+whole-drive or whole-image byte-for-byte cloning — physical drive to/from image, or drive to drive.
+Same shape as v1.108.0's Format Media tile and every other external-tool button in the app: its own
+remembered path (new `Settings.ExternalDumperPathHddRawCopy`), launched via the existing shared
+`ExternalToolLauncher`. A genuinely different domain from everything else in DiscForge — every other
+tile is optical-disc/cartridge/floppy specific, built around DiscForge's own ECMA-130 sector-level
+code, while this clones a generic block device — so it gets its own tile rather than folding into an
+existing one (asked and confirmed, same as the Format Media placement decision).
+
+**Verification tier.** Same as v1.108.0: `RawCopyView.cs` touches only App-internal types (`Settings`,
+`ExternalToolLauncher`, plain WinForms controls), so there's nothing Core/Devices-side to semantically
+cross-check. Roslyn-syntax-clean on the new file plus every edited file (`Settings.cs`,
+`CdrwinLauncher.cs`, `HelpContent.cs`). `dforge` CLI rebuilt clean after the version bump; no Core/
+Cli/Devices files touched this round, so the full test suite carries over unchanged (2730/2730 from
+the last round that touched Core). `DiscForge.App` itself still can't build for real in this sandbox
+— **run `.\build-app.ps1 -Run` and click Raw Copy** before trusting it as shipped, same as every
+other GUI-only round.
+
+### Added — v1.108.0: Format Media tile — the escape hatch for prepping a flashcart's SD card
+
+A new "Format Media" tile launches an external card formatter (e.g. the SD Association's official
+SD Card Formatter, developed by Tuxera) for prepping SD/SDHC/SDXC (and similar) removable media —
+the same launch-what-you-point-it-at contract as every other external-tool button in the app
+(`PspView`'s UMDGen, `CartridgeView`'s GBxCart RW/FlashGBX/Cart Reader, `FloppyView`'s KryoFlux/
+Greaseweazle, and so on), via the existing shared `ExternalToolLauncher`. New `Settings
+.ExternalDumperPathCardFormatter` gives it its own remembered path, same as every other external
+tool. DiscForge has no code that talks to a card reader/writer at all, and correctly formatting one
+(the partition table and filesystem layout a card's own controller and wear-leveling expect) is a
+different, already-solved problem — this tile exists so prepping a card for a flashcart-based dumper
+(the Cartridges tile) doesn't require leaving the app to remember which external tool handles that.
+
+**Verification tier.** `FormatMediaView.cs` touches only existing App-internal types (`Settings`,
+`ExternalToolLauncher`, plain WinForms controls) — no `DiscForge.Core`/`DiscForge.Devices` API surface
+at all, so there was nothing to semantically cross-check against a built Core DLL this round (unlike
+the dump-ledger/media-mortality views in v1.107.0). Roslyn-syntax-clean on the new file plus every
+edited file (`Settings.cs`, `CdrwinLauncher.cs`, `HelpContent.cs`). `DiscForge.App` itself still can't
+build for real in this sandbox (no WindowsDesktop SDK) — **run `.\build-app.ps1 -Run` and click
+Format Media before trusting this as shipped**, same as every other GUI-only round this project has
+needed. `dforge` CLI rebuilt clean after the version bump (this round touched no Core/Cli/Devices
+files, so the full test suite is unaffected — still 2730/2730 from the last run that touched Core).
+
 ### Added — v1.107.0: GUI parity for dump-ledger/media-mortality/plan-reread, and a real live re-read command
 
 Closes the last two open items from `docs/DIFFERENTIATORS.md`'s running summary: GUI views for the

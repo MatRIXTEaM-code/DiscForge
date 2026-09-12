@@ -1,6 +1,56 @@
 # DiscForge — what's left (session handoff)
 
-## State as of 2026-09-11: v1.107.0 — read this section first, the rest of this file is historical
+## State as of 2026-09-12: v1.110.0 — read this section first, the rest of this file is historical
+
+v1.110.0 fixes a real report from the field: the user's Format Media tile "would not launch" SD Card
+Formatter. The status label showed `Launched NewShortcut11_9F21041712364E7FBB19D6D84D3AFF1D.exe` —
+that filename pattern is a Windows-Installer icon-cache stub under `C:\Windows\Installer\...` (MSI's
+temporary copy of an app's icon resource, used for Start Menu shortcuts), not the real app. The user
+had picked that instead of the actual installed `SDFormatterApp.exe`. `Process.Start` launches the
+stub without error (it's a real, runnable exe), so `ExternalToolLauncher`'s existing failure-recovery
+(clear the remembered path on exception) never triggers — the wrong path gets "successfully" relaunched
+forever with no window ever appearing, and there's no way to distinguish that from a genuinely-quiet
+tool from the outside. Fix: `ExternalToolLauncher.Launch` now checks `Control.ModifierKeys` for Shift
+and forces the picker to reappear even when a path is remembered — **Shift+Click any external-tool
+button in the app to pick a different file**, not just Format Media/Raw Copy, since the fix lives in
+the one shared method every such button calls. Added a status-text hint to `FormatMediaView`/
+`RawCopyView` specifically since those are the views this was actually hit on. App-internal only, no
+Core/Devices/Cli changes, Roslyn-syntax-clean on all three touched files. **Still needs, on the user's
+machine: Shift+Click the Format Media tile, browse to the real `SDFormatterApp.exe` (Start Menu →
+right-click SD Card Formatter → Open file location, to find the true target rather than an Installer
+cache path), and confirm it actually opens this time** — that end-to-end confirmation has not happened
+yet from this sandbox.
+
+
+## State as of 2026-09-12: v1.109.0 (historical)
+
+v1.109.0 adds a "Raw Copy" tile: launches an external sector-level drive/image cloning tool (e.g.
+HDD Raw Copy Tool), same shape as v1.108.0's Format Media tile — its own remembered path
+(`Settings.ExternalDumperPathHddRawCopy`), via the existing `ExternalToolLauncher`. Requested after
+the user showed a screenshot of HDD Raw Copy Tool; placement (standalone tile vs. folding into Copy
+Disc or Format Media) was asked and answered: standalone, since whole-drive/image cloning is a
+genuinely different domain from every other tile (all optical/cartridge/floppy specific). Touches
+only App-internal types — no Core/Devices/Cli changes, so the full test suite is carried over
+unchanged (2730/2730). Roslyn-syntax-clean; `DiscForge.App` itself still can't build for real in
+this sandbox — **run `.\build-app.ps1 -Run` and click Raw Copy** before trusting it as shipped.
+
+
+## State as of 2026-09-12: v1.108.0 (historical)
+
+v1.108.0 adds a "Format Media" tile: launches an external card formatter (e.g. the SD Association's
+SD Card Formatter, developed by Tuxera) for prepping SD/SDHC/SDXC media, via the same shared
+`ExternalToolLauncher` every other external-tool button already uses (own remembered path,
+`Settings.ExternalDumperPathCardFormatter`). Requested after the user showed a screenshot of SD Card
+Formatter and asked whether DiscForge had a formatting tile to link it to — it didn't, so this adds
+one. Placement (a standalone tile vs. folding into Cartridges/Tools/Floppy) was asked and answered:
+standalone. Touches only App-internal types (`Settings`, `ExternalToolLauncher`, WinForms controls) —
+no Core/Devices/Cli changes this round, so the version bump alone confirms the CLI still builds; the
+full Core test suite (2730/2730) is carried over unchanged from the last round that touched Core.
+Roslyn-syntax-clean; `DiscForge.App` itself still can't build for real in this sandbox — **run
+`.\build-app.ps1 -Run` and click the new Format Media tile** before trusting it as shipped.
+
+
+## State as of 2026-09-11: v1.107.0 (historical)
 
 v1.107.0 closes the last two open items this file's "what's still open" line had tracked since
 v1.105.0: GUI views for the CLI-only features, and live adaptive-reread wiring for DiscMri's plan
