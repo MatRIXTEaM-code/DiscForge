@@ -33,10 +33,13 @@ public class DumpCompletenessTests : IDisposable
     private string WriteCue()
     {
         string cue = Path.Combine(_dir, "game.cue");
+        // Index times are deliberately small (and inside every test's file size below) so the
+        // per-sector coverage proof — which now checks each INDEX 01 against the file's actual
+        // sector count — passes on a fixture that was never meant to exercise that check.
         File.WriteAllText(cue,
             "FILE \"game.bin\" BINARY\n" +
             "  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n" +
-            "  TRACK 02 AUDIO\n    INDEX 00 00:30:00\n    INDEX 01 00:32:00\n");
+            "  TRACK 02 AUDIO\n    INDEX 00 00:00:10\n    INDEX 01 00:00:12\n");
         return cue;
     }
 
@@ -55,7 +58,42 @@ public class DumpCompletenessTests : IDisposable
         Assert.True(r.SubchannelPresent);
         Assert.True(r.SubchannelMatches);
         Assert.True(r.Complete);
+        Assert.True(r.CoverageProven);
         Assert.Contains(r.NotRepresentable, n => n.Contains("lead-in"));
+    }
+
+    [Fact]
+    public void A_track_index_pointing_past_the_end_of_its_file_breaks_the_coverage_proof()
+    {
+        string cue = Path.Combine(_dir, "game.cue");
+        File.WriteAllText(cue,
+            "FILE \"game.bin\" BINARY\n" +
+            "  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n" +
+            "  TRACK 02 AUDIO\n    INDEX 00 00:30:00\n    INDEX 01 00:32:00\n");   // 2400 sectors — file below has 1000
+        File.WriteAllBytes(Path.Combine(_dir, "game.bin"), new byte[1000 * 2352]);
+
+        var r = DumpCompleteness.Check(cue);
+        Assert.False(r.CoverageProven);
+        Assert.False(r.Complete);
+        Assert.Contains(r.Gaps, g => g.Contains("track 2") && g.Contains("outside"));
+    }
+
+    [Fact]
+    public void Two_tracks_claiming_the_same_or_reversed_start_sector_breaks_the_coverage_proof()
+    {
+        string cue = Path.Combine(_dir, "game.cue");
+        // Track 2 starts no later than track 1 — an out-of-order/duplicated INDEX 01 that a
+        // total-sector-count check alone would never catch (the file is still the right size).
+        File.WriteAllText(cue,
+            "FILE \"game.bin\" BINARY\n" +
+            "  TRACK 01 MODE1/2352\n    INDEX 01 00:00:20\n" +
+            "  TRACK 02 AUDIO\n    INDEX 01 00:00:10\n");
+        File.WriteAllBytes(Path.Combine(_dir, "game.bin"), new byte[1000 * 2352]);
+
+        var r = DumpCompleteness.Check(cue);
+        Assert.False(r.CoverageProven);
+        Assert.False(r.Complete);
+        Assert.Contains(r.Gaps, g => g.Contains("out of order or duplicated"));
     }
 
     [Fact]

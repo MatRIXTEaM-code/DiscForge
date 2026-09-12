@@ -1,6 +1,29 @@
 # DiscForge — what's left (session handoff)
 
-## State as of 2026-09-12: v1.110.0 — read this section first, the rest of this file is historical
+## State as of 2026-09-12: v1.111.0 — read this section first, the rest of this file is historical
+
+v1.111.0 followed up "is there anything to add to the to-do list?" — the answer was a lesson, not a
+feature list. `docs/ROADMAP.md` named 8+ items as open backlog; checking each against actual code
+(rather than trusting the doc, which is the mistake made the first pass through this) found every
+single one already shipped: `offset-shift-scan`, `prototype-scan`, `DriveKnowledgeBase` (Plextor
+PX-W5224A/TA profile included), `extract-sectors`, the PS1/GameCube save/audio/apploader parsers,
+UDF 2.60 write, and `fs-recover`. **`docs/ROADMAP.md` should be treated as unreliable for "what's
+still open" going forward — cross-check the code directly, the same way `docs/NEXT.md`'s own top
+section is supposed to be the one place that's kept honest.** The one claim that held up:
+`DumpCompleteness` only compared totals (track count, byte-length sectors, subchannel sectors), never
+each track's own declared position — so two mis-ordered or duplicated INDEX 01s could sum to the
+right total while a real sector range was silently skipped or claimed twice. Fixed: new
+`DumpCompletenessResult.CoverageProven`, checking every track's INDEX 01 against its file's actual
+sector count and requiring strictly increasing starts across tracks in a file (INDEX 00 pregap timing
+deliberately left unchecked — that's an authoring-tool choice, not a defect). Pure Core logic,
+provable with synthetic cue sheets, no hardware or fixture needed. Full suite 2732/2732 (2 new tests;
+one existing shared test fixture's cue sheet was itself inconsistent with its test file sizes — an
+inconsistency nothing previously checked for — and had to be corrected to stay green). `dforge`
+CLI/`cli-win` both rebuild clean; `DiscForge.App` untouched this round (no App-side changes), so no
+build-app verification step is owed for this one.
+
+
+## State as of 2026-09-12: v1.110.0 (historical)
 
 v1.110.0 fixes a real report from the field: the user's Format Media tile "would not launch" SD Card
 Formatter. The status label showed `Launched NewShortcut11_9F21041712364E7FBB19D6D84D3AFF1D.exe` —

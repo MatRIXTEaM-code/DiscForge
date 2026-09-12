@@ -39,6 +39,7 @@ public class EmulationReadinessTests
         BinFiles = bins,
         AllBinsPresent = allPresent,
         WholeSector = wholeSector,
+        CoverageProven = true,
         SubchannelPresent = sub,
         SubchannelMatches = subMatches,
         Gaps = Array.Empty<string>(),

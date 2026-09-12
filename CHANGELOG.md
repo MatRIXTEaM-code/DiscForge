@@ -11,6 +11,40 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
+### Added — v1.111.0: real per-sector coverage proof for `completeness-check`
+
+Follows up a "what's left on the backlog" pass: `docs/ROADMAP.md` and `docs/COMPLETION_PLAN.md`
+(the latter explicitly marked superseded, the former not) named several items as still open — offset
+-shift detection, a prototype/debug-residue scanner, a drive-capabilities database, `extract-sectors`,
+PS1 save-container conversion, GameCube DTK/ADPCM decode, GameCube `.gci` parsing, apploader/bi2.bin
+parsing, UDF 2.60 write, and filesystem-constrained erasure recovery. Checking each against the actual
+code before building anything (the lesson from proposing this list once already off a stale doc)
+found **every one of them already shipped**: `offset-shift-scan`, `prototype-scan`,
+`DriveKnowledgeBase` (with a sourced Plextor PX-W5224A/TA entry), `extract-sectors`,
+`Ps1CardConvert`/`DspAdpcm`/`GameCubeSaves`/`GcBi2`, `UdfBuilder`'s `UdfRevision.Udf260`, and
+`fs-recover` (`FilesystemConstrainedRecovery` — classifies every sector by ISO 9660 role and
+reconstructs only the provably-safe free-space case under a self-validated fill convention). Both
+roadmap docs are stale beyond what their own "superseded" notices already admit.
+
+The one claim that actually checked out: `DumpCompleteness` (`completeness-check`) only ever compared
+*totals* — track count, byte-length-derived sector count, subchannel sector count — never each track's
+own declared position. Two tracks' INDEX 01 values can sum to the right total sector count while one
+silently skips a range (a gap) or duplicates one (an overlap), and the old check had no way to see
+either. `DumpCompletenessResult` gains `CoverageProven`: per file, every track's INDEX 01 is checked
+against the file's actual sector count (catches a track pointing past EOF) and consecutive tracks
+(track-number order) must claim strictly increasing start sectors (catches out-of-order/duplicated
+indices). INDEX 00 pregap timing is deliberately NOT checked — whether a pregap's samples are
+physically stored in the file or generated on playback is a legitimate authoring-tool choice, not a
+defect, and asserting exact adjacency there would flag entirely valid dumps as broken.
+
+**Verification tier.** Pure Core logic, no hardware, no fixture needed — provable with synthetic cue
+sheets. Two new tests (`A_track_index_pointing_past_the_end_of_its_file_breaks_the_coverage_proof`,
+`Two_tracks_claiming_the_same_or_reversed_start_sector_breaks_the_coverage_proof`) plus one existing
+test extended to assert `CoverageProven` on a clean dump; the shared test fixture's cue also had
+INDEX values that only "worked" because nothing checked them against the file's real size (2400
+sectors declared, 1000-sector file) — fixed to be internally consistent now that something does.
+Full suite: 2732/2732 (was 2730 before the two new tests). `dforge cli`/`cli-win` both rebuild clean.
+
 ### Fixed — v1.110.0: external-tool buttons could get permanently stuck on a bad picked file
 
 Real report from the field: SD Card Formatter "would not launch" after being configured once. Root

@@ -35,6 +35,20 @@ public sealed record DumpCompletenessResult
     /// about what a file-image does and does not preserve.</summary>
     public required IReadOnlyList<string> NotRepresentable { get; init; }
 
+    /// <summary>True when every track's own declared position was checked, sector-range by sector-range —
+    /// not merely that totals add up. Per file: every track's INDEX 01 falls within the file's actual sector
+    /// count, and consecutive tracks' INDEX 01 values strictly increase (each track claims a later starting
+    /// sector than the one before it, so no two tracks claim the same sector and no track is silently skipped
+    /// between two others). This is a genuinely stronger claim than <see cref="TotalSectors"/> agreeing with
+    /// the file's byte length: two mis-ordered or duplicated INDEX 01s can sum to the right total sector count
+    /// while actually leaving a real gap (an unclaimed sector range) or a real overlap (two tracks claiming the
+    /// same range) — the sum alone can't see either. What this still can't see: it does not evaluate INDEX 00
+    /// pregap timing (whether a pregap is physically stored in the file or generated on playback varies by
+    /// authoring tool and both are legitimate, so asserting exact adjacency there would produce false
+    /// positives on entirely valid dumps) — see <see cref="Gaps"/> for the specific violation(s) found when
+    /// this is false.</summary>
+    public required bool CoverageProven { get; init; }
+
     public bool Complete => Gaps.Count == 0;
 
     public string Summary()
@@ -43,6 +57,9 @@ public sealed record DumpCompletenessResult
             $"{TrackCount} track(s) in {SessionCount} session(s), {TotalSectors:N0} sectors; " +
             $"{BinFiles.Count} data file(s) {(AllBinsPresent ? "present" : "MISSING")}, " +
             $"{(WholeSector ? "whole-sector" : "NOT whole-sector")}. ");
+        sb.Append(CoverageProven
+            ? "Every track's own position checked sector-by-sector — no gap or overlap between tracks. "
+            : "Per-sector track coverage NOT proven (see gaps). ");
         sb.Append(SubchannelPresent
             ? $"Subchannel {(SubchannelMatches ? "covers all sectors ✓" : $"MISMATCH ({SubchannelSectors:N0} vs {TotalSectors:N0})")}. "
             : "No subchannel sidecar. ");
@@ -76,18 +93,19 @@ public static class DumpCompleteness
         // Per data file: the sector size its tracks use, and the sectors its byte length implies.
         var files = cue.Tracks.Select(t => t.File).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         long totalSectors = 0;
-        bool allPresent = true, wholeSector = true;
+        bool allPresent = true, wholeSector = true, coverageProven = true;
 
         foreach (var f in files)
         {
-            var tracksInFile = cue.Tracks.Where(t => string.Equals(t.File, f, StringComparison.OrdinalIgnoreCase)).ToList();
+            var tracksInFile = cue.Tracks.Where(t => string.Equals(t.File, f, StringComparison.OrdinalIgnoreCase))
+                                          .OrderBy(t => t.Number).ToList();
             var sizes = tracksInFile.Select(t => CueSheet.TypeToToken(t.Type).sectorSize).Distinct().ToList();
             if (sizes.Count > 1)
                 gaps.Add($"'{f}' mixes sector sizes {string.Join("/", sizes)} in one file");
             int sectorSize = sizes.Max();
 
             string path = Path.IsPathRooted(f) ? f : Path.Combine(dir, f);
-            if (!File.Exists(path)) { allPresent = false; gaps.Add($"data file '{f}' is missing"); continue; }
+            if (!File.Exists(path)) { allPresent = false; coverageProven = false; gaps.Add($"data file '{f}' is missing"); continue; }
 
             long bytes = new FileInfo(path).Length;
             if (bytes % sectorSize != 0)
@@ -98,12 +116,39 @@ public static class DumpCompleteness
             long fileSectors = bytes / sectorSize;
             totalSectors += fileSectors;
 
-            // Every track's INDEX 01 must fall inside the file it belongs to (single-file images use absolute
-            // disc time, so compare against the running total up to this file's end).
+            // Per-sector coverage proof: every track's INDEX 01 must fall inside this file's actual sector
+            // count, and consecutive tracks (in track-number order) must claim STRICTLY increasing start
+            // sectors — two tracks can sum to the right total while one silently skips or duplicates a range,
+            // and only checking each track's start position against its neighbours catches that. INDEX 00
+            // pregap timing is deliberately NOT checked here (see the CoverageProven doc comment): whether a
+            // pregap's samples are physically stored in the file is an authoring-tool choice, not a defect.
+            long? prevStart = null;
+            int? prevTrackNum = null;
             foreach (var t in tracksInFile)
             {
                 var i1 = t.Indices.FirstOrDefault(i => i.Number == 1) ?? t.Indices.FirstOrDefault();
-                if (i1 is null) { gaps.Add($"track {t.Number} has no INDEX 01"); continue; }
+                if (i1 is null)
+                {
+                    gaps.Add($"track {t.Number} has no INDEX 01");
+                    coverageProven = false;
+                    continue;
+                }
+                long start = i1.Time.ToSectors();
+                if (start < 0 || start >= fileSectors)
+                {
+                    gaps.Add($"track {t.Number} INDEX 01 ({i1.Time}) is outside '{f}' ({fileSectors:N0} sectors) " +
+                             "— references a sector the file doesn't have");
+                    coverageProven = false;
+                }
+                if (prevStart is long ps && start <= ps)
+                {
+                    gaps.Add($"track {t.Number} INDEX 01 ({i1.Time}) does not come after track {prevTrackNum}'s " +
+                             $"({Msf.FromSectors(ps)}) in '{f}' — indices out of order or duplicated, so a real " +
+                             "sector range is either skipped or claimed twice");
+                    coverageProven = false;
+                }
+                prevStart = start;
+                prevTrackNum = t.Number;
             }
         }
 
@@ -143,6 +188,7 @@ public static class DumpCompleteness
             BinFiles = files,
             AllBinsPresent = allPresent,
             WholeSector = wholeSector,
+            CoverageProven = coverageProven,
             SubchannelPresent = subPresent,
             SubchannelSectors = subSectors,
             SubchannelMatches = subMatches,
