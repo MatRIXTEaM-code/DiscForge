@@ -52,10 +52,16 @@ Where the suites still win:
 - **MP3 → audio CD in one step** — `AudioCdCreator` deliberately takes
   44.1/16 WAV only; MP3 must pass through `transcode` first. A convenience
   join, not a capability gap.
-- **DiscJuggler's multi-drive duplication** — the burn planner models the
-  every-drive-simultaneously case; the orchestration around real hardware is
-  still ahead. This is the founding parity target, so it stays ◐ until it
-  burns.
+- **DiscJuggler's multi-drive duplication** — implemented, not just modeled:
+  `BurnJobPlanner.PlanAll` plans every checked destination independently (one
+  incapable drive is skipped with a reason rather than sinking the job), and
+  `BurnView`'s execution path (now shared via `BurnExecutor.RunAllAsync`)
+  burns every runnable drive concurrently with `Task.WhenAll`, prompting
+  "Insert blank media in all N drives. They will be burned simultaneously."
+  before it starts. What's still outstanding is confirming that orchestration
+  against real multi-drive hardware (several physical recorders burning at
+  once) — the founding parity target stays ◐ for that hardware confirmation
+  alone, not for missing code.
 
 CDRWIN gets a footnote no other row gets: DiscForge ships a loving CDRWIN-era
 retro skin (`RetroTheme`, `CdrwinLauncher` — see docs/RETRO_SKIN.md), so it is
@@ -71,7 +77,9 @@ conversion to BIN/CUE and ISO — validated byte-for-byte against a real cdi4dc
 image and a synthetic matrix. CDIrip's job (pull tracks out of a CDI) is fully
 covered. Remaining honesty: richer DiscJuggler-authored descriptor variants
 still await a real DJ image to validate against (the "wild descriptor" TODO).
-**✔** for CDIrip, **◐-high** for DiscJuggler itself (multi-drive burning, above).
+**✔** for CDIrip, **◐-high** for DiscJuggler itself (multi-drive burning is
+implemented and code-complete — see above — pending real multi-drive hardware
+confirmation).
 
 ## 3. Protected imaging and raw readers
 
@@ -291,7 +299,7 @@ as the one ✗ here that is even plausible.
 | CloneDVD | DVD copy | ◐ (unencrypted only) |
 | CopyToDVD | Burner | ✔ |
 | DeepBurner | Burner | ✔ |
-| DiscJuggler | CDI suite | ◐-high (multi-drive burn pending) |
+| DiscJuggler | CDI suite | ◐-high (multi-drive burn implemented, hardware confirmation pending) |
 | DropToCD | Burner | ✔ |
 | DVD2one | DVD shrink | ◐ |
 | Dual-/Data-/MP3-Burner | Burner | ◐ (MP3 via transcode) |

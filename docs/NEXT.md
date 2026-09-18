@@ -1,5 +1,56 @@
 # DiscForge — what's left (session handoff)
 
+## v1.113.0, 2026-09-12: Quick Burn added — hardware-confirmed 2026-09-18
+
+Version cut for testing so there's a concrete build to run the checklist below against.
+
+Added `QuickBurnView` — a minimal, beginner-friendly burn dialog closing the "DiscForge's power is
+also its friction for a one-off burn" gap noted against AnyBurn/Nero/ImgBurn. One screen: choose an
+image (.iso/.cdi/.cue — the same filter BurnView uses; .ccd is declined with a pointer to Record Disc,
+since quick-burn doesn't carry BurnView's CCD→CUE staging step), pick a drive from an auto-populated,
+auto-selected dropdown (a plain warning when none is detected, not a silently empty list), press
+"Burn". No queue, no multi-destination checkboxes, no method radios, no test/copies controls — every
+setting is hardcoded: Write=true, Verify=true (verify-after-burn is the one safety default a beginner
+flow must not skip), Method=Auto, Copies=1, Test=false. Same "Insert media. Begin the job?"
+confirmation as BurnView before anything is touched. Wired into `CdrwinLauncher` as the "Quick Burn"
+tile, placed right after "Record Disc".
+
+QuickBurnView is a thin front end over the exact same planner/engine BurnView already used, not a
+second burn implementation: pulled `BurnView`'s planning (`PlanImage`, `LogPlanAndConfirm`) and its
+whole execution path (`RunAllAsync` and everything under it — drive/file step execution, verify,
+test, byte-compare) out into a new shared `BurnExecutor` class
+(`src/DiscForge.App/Views/BurnExecutor.cs`), and refactored `BurnView` to call into it instead of
+carrying its own copy. Both views now run one execution engine.
+
+Files touched: `src/DiscForge.App/Views/BurnExecutor.cs` (new), `src/DiscForge.App/Views/QuickBurnView.cs`
+(new), `src/DiscForge.App/Views/BurnView.cs` (refactored to delegate), `src/DiscForge.App/CdrwinLauncher.cs`
+(new tile). Also corrected `docs/COMPARISON.md`'s multi-drive-duplication section, which still
+described `BurnView`'s simultaneous multi-drive burn (`RunAllAsync`/`Task.WhenAll`, already fully
+implemented in code) as an open/unbuilt gap — it isn't unbuilt, only unconfirmed on real multi-drive
+hardware.
+
+**This sandbox is Linux and cannot build or run `DiscForge.App` (net8.0-windows).** Verification here
+was Roslyn `CSharpSyntaxTree.ParseText` over every touched file (zero parse errors) — that proves the
+C# parses, nothing more. It does NOT prove the refactor compiles (member names/signatures on
+`MultiBurnJob`, `BurnJobPlanner`, `EventLogView`, `DriveDetector`, etc. were read from source rather
+than guessed, but never checked by a real compiler), nor that the moved execution code still behaves
+correctly once it does compile, nor — obviously — that a burn through the new tile actually writes and
+verifies a disc. **Needs, before this can be considered done: a real Windows build of
+`DiscForge.App`, then a hardware pass** — burn an ISO and a CUE through Quick Burn to a real recorder,
+confirm Verify runs and passes, confirm the "no drive detected" message shows correctly with nothing
+plugged in, and confirm `BurnView`'s own existing flows (single burn, queue) still work unchanged
+after the refactor.
+
+**Update, 2026-09-18:** hardware-confirmed on a real Windows build against a real drive with a
+DVD+R. Full run via `full-hw-test-v1.113.0.ps1` — CLI `dforge burn --verify` smoke test passed, then
+the GUI checklist: Quick Burn burned and verified an ISO with the drive dropdown auto-selecting the
+recorder; the write-speed step defaulted to **Max** with no error (outcome (b) from the checklist —
+no DVD+R media ID could be read via ADIP, which `MediaIdentity.ParsePhysicalFormat` doesn't parse yet,
+so it fell back correctly rather than erroring; the auto-speed-by-media-ID gap is still open for
+DVD+R specifically, and stays open pending ADIP support); the "no recorder detected" state showed
+correctly with the drive unplugged; and `BurnView`'s own single-burn/queue flows still behaved
+identically after the `BurnExecutor` refactor. Reported back: **all done, passed.**
+
 ## v1.112.0, 2026-09-12: the three ImgBurn gaps from `docs/imgburn-comparison.md`, closed
 
 Read `docs/imgburn-comparison.md`'s "Concrete gaps worth closing" section first for the reasoning;

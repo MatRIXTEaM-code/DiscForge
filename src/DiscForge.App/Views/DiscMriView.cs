@@ -92,9 +92,10 @@ internal sealed class DiscMriView : UserControl
         Controls.Add(new Label { Text = "Map pixels:", AutoSize = true, Location = new Point(12, 76), Font = Theme.Ui });
         Controls.Add(new Label
         {
-            Text = "A .cue supplies per-track audio/data knowledge (needs a single-file cue).\n" +
+            Text = "A .cue supplies per-track audio/data knowledge (needs a single-file cue). " +
                    "Sidecar map is optional — auto-detected next to the image if present.",
-            AutoSize = true, Location = new Point(444, 76), Font = Theme.Ui, ForeColor = Color.Gray,
+            AutoSize = false, Location = new Point(444, 76), Size = new Size(280, 58),
+            Font = Theme.Ui, ForeColor = Color.Gray,
         });
 
         _inputPick.Click += (_, _) => PickInput();

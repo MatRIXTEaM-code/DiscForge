@@ -763,6 +763,173 @@ Still open — buildable-now fresh veins: mostly exhausted; new esoteric ideas l
 
 ---
 
+## New ideas, 2026-09-17 — synthesizing existing subsystems rather than new low-level tech
+
+Surfaced from a "what would genuinely stand out" pass against the field (ImgBurn, AnyBurn, BurnAware,
+Nero, Aaru, Redumper — see `docs/COMPARISON_2026-09.md`). Checked against the "five mind-blowing ideas"
+brainstorm (EFM/flux, dump-ledger, DiscMri re-read planning, media-mortality, DiscForge.Wasm — all
+shipped, see `docs/DIFFERENTIATORS.md`) so none of these repeat it. All four below are buildable by
+*combining* subsystems that already exist and are validated, not by inventing new low-level capability —
+which is exactly why they're worth doing before reaching for anything more exotic.
+
+- **Rot-timeline animation.** Disc Actuary already tracks a physical disc's degradation across repeated
+  scans over months/years; Disc MRI already renders one scan as a polar damage map (real spiral
+  geometry — a radial streak is a scratch, a ring is a pressing defect, a bloom from the hub is rot).
+  Nobody's connected the two: stitch a disc's successive MRI renders into an animated GIF/video so the
+  rot visibly spreads frame by frame. No new capture or analysis code — a new renderer over
+  `DiscActuary`'s history plus `DiscMri.RenderPng`, both already shipped and tested. Good outreach
+  material too (see `docs/COMMUNITY_OUTREACH_DRAFT.md`) — the kind of thing that gets shared.
+
+- **Re-dump priority advisor.** Three subsystems already exist in isolation: media-mortality's
+  federated degradation-risk model, the public `dump-ledger`'s record of who's already dumped what, and
+  a user's own local library (`LibraryView`/`MultiDiscSet`). Nobody's combined them into one answer to
+  "which of my physical discs should I dump *next*." A disc that's both rare (no independent ledger
+  submissions yet) and actively decaying (a bad media-mortality trajectory) is a very different
+  priority than one that's stable and already well-attested elsewhere. Pure synthesis of existing data,
+  no new low-level capability.
+
+- **Physical-to-digital verification label.** A short printable code or QR tied to a disc's
+  `dump-ledger` certificate, meant for the disc sleeve itself. Someone finds the disc in a box decades
+  from now, enters the code into the WASM verifier page (see the "deployed 2026-09-17" note below —
+  this idea depends on that being live), and sees exactly when it was dumped, by whom, and that the
+  cryptographic chain still checks out. New surface needed: a `dforge dump-ledger label` command
+  generating a printable sticker (short code or QR + a short human-readable summary), built on
+  infrastructure (`dump-ledger`, the WASM verifier) that already exists.
+
+- **Speculative, unproven — flagged as an experiment, not a commitment**: using a computer's
+  microphone to listen to a drive's spin-up as a cheap pre-screening signal for a warped or unbalanced
+  disc before attempting a read. No idea if the signal-to-noise is actually useful for this; nobody
+  seems to have tried it for optical media specifically. Worth a quick spike, not a roadmap line item,
+  until there's evidence either way.
+
+### Deployed, 2026-09-17: `DiscForge.Wasm` published to GitHub Pages
+
+The browser-based verification engine (`dforge dump-ledger verify` / `dforge merge-cert verify`,
+compiled to WebAssembly, runs entirely client-side, nothing uploaded) was built and live-tested locally
+back in v1.105.0/v1.106.0 but never actually deployed anywhere public until now — a real capability was
+sitting unused. Added `.github/workflows/deploy-wasm-pages.yml`: installs the `wasm-tools` workload on
+a clean Ubuntu runner (kept off `DiscForge.sln` deliberately, per that project's own comment, so
+`build-app.ps1` never needs the workload), publishes `DiscForge.Wasm` in Release, and deploys the
+resulting static site via `actions/upload-pages-artifact` + `actions/deploy-pages`. **Set to
+`workflow_dispatch` (manual trigger) only for now** — needs, before flipping on the commented-out
+automatic `push` trigger: (1) GitHub Pages enabled for this repo under Settings → Pages → Source →
+"GitHub Actions" (a one-time repo setting only a repo admin can do — not something this workflow file
+alone can turn on), (2) a manual run confirmed green, and (3) the published page manually re-checked
+against a real signed `dump-ledger.json` and a tampered copy (the same "chain: INTACT" / "chain:
+BROKEN" check `docs/NEXT.md`'s v1.105.0 entry describes) — the site content itself hasn't changed, but
+a first deploy is exactly when a path or base-href assumption bites, so it's worth the two-minute
+re-check rather than assuming yesterday's local test still holds. Once confirmed, this is the link the
+Redump outreach post should point to instead of just describing the verifier in prose.
+
+## New ideas, 2026-09-17 (second pass) — adoption levers, not new low-level tech either
+
+Same spirit as the batch above: each one leans on a subsystem that already exists and is validated,
+rather than inventing new capability. This batch leans further toward *adoption* — lowering the cost
+of someone outside DiscForge actually trying it — since that's the harder problem once the technical
+differentiation is already real.
+
+- **DiscImageCreator (DIC) log importer.** A large share of the people already dumping discs for
+  Redump use DIC directly, not DiscForge — its `.log` / `_c2Error.txt` / `.scm` output is a de facto
+  standard in that community. An importer that takes an *existing* DIC dump and translates it straight
+  into a DiscForge preservation master plus a signed `dump-ledger` certificate means nobody has to
+  re-dump anything they already own to start getting DiscForge's provenance layer. This is less a
+  technical feat than an adoption lever — it removes the single biggest friction point for exactly the
+  audience `docs/COMMUNITY_OUTREACH_DRAFT.md`'s Redump post is aimed at. DIC's log format is
+  well-documented and stable, so this is realistically a parser plus a mapping into the existing
+  `DumpCertificate`/`DumpLineage` shapes, not new low-level work.
+
+- **Drive-health early warning, mirrored off media-mortality.** `DriveDossierView` already logs
+  per-drive observations over time — mute sectors, C2 rates, offset, lead-out reach. Nobody's applied
+  media-mortality's federated-longitudinal-trend model to the *drive* side instead of the disc side. A
+  drive whose C2 error rate is quietly climbing across sessions is a laser or spindle wearing out, and
+  today nothing surfaces that until it's already producing bad rips. Same modeling approach already
+  proven for discs (`docs/NEXT.md`'s v1.104.0 entry), pointed at the other half of the read pipeline —
+  reuse, not reinvention.
+
+- **Same-pressing finder.** `PressingDnaView` can already fingerprint a pressing offline and compare
+  two cue sheets for same/different stamper, but today that's a manual, one-at-a-time comparison. Wired
+  up against the public `dump-ledger`, it becomes an automatic search: "this disc's pressing fingerprint
+  matches three other ledger entries" surfaces bundle reprints, regional variants sharing a mold, or a
+  stamper reused across releases — collectors and Redump both care about this and have no automated way
+  to find it today. Just wiring an existing offline comparator up to an existing public dataset.
+
+## New ideas, 2026-09-17 (third pass)
+
+- **Community "wanted list" cross-reference.** Everything proposed about `dump-ledger` so far has been
+  personal-library-scoped — "which of *my* discs should I dump next" (the re-dump priority advisor,
+  above). Redump itself publishes public need-lists: titles nobody's submitted a good dump of yet.
+  Cross-referencing a user's local library against that list and flagging "you own something the
+  community actually needs" turns DiscForge into a tool that actively serves preservation at the
+  ecosystem level, not just personal archiving. Good hook for `docs/COMMUNITY_OUTREACH_DRAFT.md`'s
+  Redump post specifically — it's DiscForge helping their stated goals, not just asking to be judged
+  by them.
+
+- **A paper backup of the root hash.** Print a dump certificate's Merkle root / SHA-256 as
+  human-typeable text plus a QR, on actual paper — the same instinct as a cryptocurrency paper wallet.
+  Survives a dead drive, a corrupted filesystem, total loss of every digital copy of the certificate.
+  Complements the physical-disc-label idea from the first batch but solves a different failure mode:
+  that one is about identifying a disc found later; this one is about recovering the *proof* even when
+  every digital copy of it is gone.
+
+- **Scope question, not just a feature: companion preservation of box art and manuals.** Everything
+  DiscForge does is about the disc itself. A lot of what preservationists actually lose over time is
+  the printed material — inserts, manuals, liner notes — which nothing here protects. A scan-and-OCR
+  sidecar (searchable text, restored/upscaled cover art) bundled into the same preservation master
+  would complete the picture for a physical release, but it's a different domain (image work, not disc
+  reading) and arguably a different identity question for the project. Raised honestly as a question —
+  "should DiscForge preserve paper too" is a bigger decision than one more CLI command — not just
+  added to the backlog as if it were a small feature.
+
+## New ideas, 2026-09-17 (fourth pass)
+
+- **Duplicate/redundant-copy detector across formats.** Anyone maintaining an archive for years
+  accumulates the same disc content stored twice in different containers — an old ISO next to a newer
+  CHD of the same title. The byte-level verify/hash machinery to prove two files represent identical
+  disc content regardless of container already exists (`verify-convert`). Nobody's pointed that at a
+  whole library to flag "these two files are the same disc, here's which one to keep and which
+  provenance record to consolidate onto it." Saves real disk space; pure reuse of existing
+  byte-comparison logic aimed at a library instead of a one-off pair.
+
+- **Cold-case re-attempt scheduler for incomplete dumps.** When a dump comes back INCOMPLETE (holes
+  recorded via `.badsectors.json`), today that's the end of the story unless someone remembers to try
+  again. A disc's read quality isn't fixed — cleaning it, a different drive, or just a different day can
+  change the outcome. A lightweight scheduler that says "try this one again in a few months, or after a
+  clean" turns a one-shot failure into an ongoing, time-aware retry loop — a genuinely different
+  interaction mode from everything else proposed so far (those are all "analyze what you have," this
+  one is "remind me to try again").
+
+- **A local verification daemon.** The WASM verifier (once deployed) covers a person with no DiscForge
+  install pasting a certificate into a browser. There's no equivalent for other *programs* on the same
+  machine wanting to ask "is this dump verified" without shelling out to the CLI. A small local HTTP
+  server exposing the same verification engine as a queryable API would let a cataloging app, a
+  personal wiki, or a script check provenance programmatically — the machine-facing counterpart to the
+  WASM verifier's human-facing one.
+
+## New ideas, 2026-09-17 (fifth pass — weaker confidence than the earlier batches, flagged honestly)
+
+By this point the higher-confidence ideas have already surfaced; these three lean more on UI
+investment or speculative payoff than the earlier batches, and are recorded as-is rather than talked
+up.
+
+- **Patch/revision diff report.** Comparing two known revisions of the same title (v1.0 vs v1.1, or a
+  US vs EU release) and producing a readable report of exactly what changed physically on disc — useful
+  for historians and collectors studying patches across regions. Mostly assembling
+  `verify-convert`'s existing comparison logic into a different report shape.
+- **Pressing family-tree visualization.** Different from the same-pressing finder (batch two), which
+  just lists flat matches — this would be an actual graph across a title's whole known universe of
+  variants (same stamper, different SKU; same content, different region) rendered as a visual tree.
+  More UI investment than technical novelty.
+- **A single preservation "report card" score.** A capstone metric summarizing a library's posture
+  across everything else proposed in this file — how much is ledger-certified, how much has a paper
+  backup, how much is DAT-verified — collapsed into one number or grade. Genuinely a dashboard over
+  ideas that mostly don't exist yet, which is easy to describe and much harder to justify building
+  before the underlying pieces are real.
+
+**Recommendation recorded here for whoever picks this file up next:** by the fifth pass, prioritizing
+and building two or three of the ~15 ideas above will do more for the project than a sixteenth idea.
+
+---
+
 ## Suggested order for the next session
 
 1. **Unblock the gated items** opportunistically as samples / hardware arrive (a real optical drive and

@@ -11,6 +11,51 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
+*(nothing pending — see v1.113.0 below)*
+
+## [1.113.0] - 2026-09-12
+
+### Added — Quick Burn: a minimal beginner burn screen, plus a shared BurnExecutor
+
+**Hardware-confirmed 2026-09-18.** Written and Roslyn syntax-checked in a Linux sandbox that cannot
+compile or run `DiscForge.App`, then built and tested for real on Windows against a physical drive
+with a DVD+R (see `docs/NEXT.md`'s v1.113.0 entry for the full run notes). Quick Burn's own
+burn+verify passed, the "no drive detected" state showed correctly, and `BurnView`'s existing
+single-burn/queue flows behaved identically after the `BurnExecutor` refactor. One open note: on
+this DVD+R the auto-speed-by-media-ID step fell back to Max (no DVD+R media ID could be read via
+ADIP) — the correct, documented fallback, not a bug, but it means the auto-speed gap is confirmed
+still open specifically for DVD+R.
+
+Closes a real competitive gap surfaced in a comparison against AnyBurn/Nero/ImgBurn: `BurnView`'s
+power (queue management, multi-drive destination checkboxes, RAW/TAO method radios, test/copies
+controls) is also its friction for someone who just wants to burn one ISO. New `QuickBurnView`: pick
+an image, pick a drive from an auto-populated/auto-selected dropdown (a plain "no recorder detected"
+message when none is found, not a silently empty list), press Burn. Every setting is hardcoded to a
+safe default — Write=true, **Verify=true** (the one safety default a beginner flow must not skip),
+Method=Auto, Copies=1, Test=false, single-drive destination — and the same "Insert media. Begin the
+job?" confirmation as `BurnView` still gates the actual burn. Wired into `CdrwinLauncher` as the
+"Quick Burn" tile, placed right after "Record Disc" so it's the second thing a new user sees.
+
+QuickBurnView is a thin front end over the same planner/engine `BurnView` already used, not a second
+burn implementation. Extracted `BurnView`'s planning (`PlanImage`, `LogPlanAndConfirm`) and its whole
+execution path (drive/file step execution, verify, test, byte-compare) into a new shared
+`BurnExecutor` (`src/DiscForge.App/Views/BurnExecutor.cs`), and refactored `BurnView` to call into it
+instead of carrying its own copy — both views now run one execution engine, so a fix or a future
+feature only has to happen once. Behavior-preserving by intent (same log lines, same prompts), but
+it's the highest-risk part of this change to regress silently, since it rewired `BurnView`'s entire
+execution path — re-confirming `BurnView`'s existing single-burn and queue flows is part of the
+outstanding hardware pass, not just Quick Burn itself.
+
+### Corrected — `docs/COMPARISON.md`: multi-drive simultaneous burning was already implemented
+
+The "DiscJuggler's multi-drive duplication" gap this doc listed as unbuilt ("the orchestration around
+real hardware is still ahead") turned out to already be code-complete: `BurnJobPlanner.PlanAll` plans
+every checked destination independently, and `BurnView`'s execution path (now shared via
+`BurnExecutor.RunAllAsync`) already burns every runnable drive concurrently with `Task.WhenAll`,
+prompting "Insert blank media in all N drives. They will be burned simultaneously." first. Corrected
+the doc to say so — what's actually still outstanding is confirming that orchestration against real
+multi-drive hardware, not writing the code.
+
 ### Added — v1.112.0: closing three ImgBurn gaps identified in `docs/imgburn-comparison.md`
 
 Follows up the ImgBurn deep-dive comparison with the three "concrete gaps worth closing" it ranked.

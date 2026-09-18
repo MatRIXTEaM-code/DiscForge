@@ -35,7 +35,7 @@ internal sealed class DriveDossierView : UserControl
     private readonly Button _detect = new() { Text = "Detect drives", Location = new Point(498, 12), Width = 110, FlatStyle = FlatStyle.System };
 
     private readonly TextBox _vendor = new() { Location = new Point(90, 44), Width = 190, Font = Theme.Ui };
-    private readonly TextBox _model = new() { Location = new Point(292, 44), Width = 356, Font = Theme.Ui };
+    private readonly TextBox _model = new() { Location = new Point(350, 44), Width = 298, Font = Theme.Ui };
 
     private readonly TextBox _dir = new() { Location = new Point(90, 74), Width = 522, Font = Theme.Ui };
     private readonly Button _dirPick = new() { Text = "…", Location = new Point(618, 72), Width = 30, FlatStyle = FlatStyle.System };
@@ -74,7 +74,8 @@ internal sealed class DriveDossierView : UserControl
         Padding = new Padding(12);
 
         Controls.Add(new Label { Text = "Drive:", AutoSize = true, Location = new Point(12, 18), Font = Theme.Ui });
-        Controls.Add(new Label { Text = "Vendor / model:", AutoSize = true, Location = new Point(12, 48), Font = Theme.Ui });
+        Controls.Add(new Label { Text = "Vendor:", AutoSize = true, Location = new Point(12, 48), Font = Theme.Ui });
+        Controls.Add(new Label { Text = "Model:", AutoSize = true, Location = new Point(292, 48), Font = Theme.Ui });
         Controls.Add(new Label { Text = "Store folder:", AutoSize = true, Location = new Point(12, 78), Font = Theme.Ui });
         Controls.Add(GroupLabel("Add an observation (optional)", new Point(12, 128)));
         Controls.Add(new Label { Text = "Category:", AutoSize = true, Location = new Point(12, 148), Font = Theme.Ui });

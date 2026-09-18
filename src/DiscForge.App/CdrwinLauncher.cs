@@ -39,6 +39,8 @@ internal sealed class CdrwinLauncher : Form
         {
             new("record",  "Record Disc",   C(0xC0,0x51,0xE8), C(0x6E,0x1F,0xA1), "🔥",
                 () => new Views.BurnView(), "Write an image to a recorder"),
+            new("quickburn","Quick Burn",   C(0xF0,0xC8,0x3C), C(0x9C,0x78,0x0F), "⚡",
+                () => new Views.QuickBurnView(), "Burn one image, minimal setup"),
             new("copy",    "Copy Disc",     C(0xE8,0xA5,0x3C), C(0xA1,0x66,0x0F), "⇄",
                 () => new Views.CopyView(), "Duplicate a disc"),
             new("read",    "Read Disc",     C(0x53,0xC0,0x6A), C(0x1E,0x7A,0x39), "📀",
