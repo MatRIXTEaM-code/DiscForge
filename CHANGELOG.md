@@ -9,10 +9,13 @@ identifies, converts, patches and verifies discs and cartridge dumps, and reads
 and manages console saves. It **detects** copy protection but never circumvents
 it, and never defeats console security or decrypts protected content.
 
-## [Unreleased]
+## [1.114.0] - 2026-09-18
 
 ### Added
 
+- **GitHub Pages deploy workflow** — `.github/workflows/deploy-wasm-pages.yml` publishes the
+  browser-based verification engine (`DiscForge.Wasm`) to GitHub Pages. Manual-dispatch only for
+  now; flip on the commented-out `push` trigger once a first manual run is confirmed good.
 - **DiscImageCreator (DIC) log importer** — `dforge dic-log <dump.log>` reads a DIC `.log`'s
   version, drive identity, media type, per-track CRC32/MD5/SHA1, and C2 error LBAs, closing the
   gap flagged in `docs/COMPARISON_2026-09.md` (DIC's log format is close to a de facto submission
