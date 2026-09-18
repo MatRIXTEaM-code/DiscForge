@@ -255,6 +255,10 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  bad-sectors <map.badsectors.json> [--json]  Show a dump's unreadable-sector map: counts, coalesced runs, and per-track positions");
     Console.WriteLine("  redump-diff <cue> <dat> [--game \"name\"] [--json]  Explain WHY a dump doesn't match Redump: per-file verdict + the cause (split, padding, offset, bad sector)");
     Console.WriteLine("  dic-log <dump.log> [--json] [--to-bad-sectors out.badsectors.json --total-sectors N]  Import a DiscImageCreator (DIC) .log: version, drive, media, per-track hashes, C2/error info — and optionally convert its C2 error LBAs into a DiscForge bad-sector-map sidecar for redump-diff/dump-audit");
+    Console.WriteLine("  cold-case <registry.json> add <image> --reason \"text\" [--not-before yyyy-mm-dd] [--note \"text\"]   Track an incomplete dump for a future re-attempt (cleaning, a different drive, a different day)");
+    Console.WriteLine("  cold-case <registry.json> due [--json]                                                            List every tracked dump due for a re-attempt now");
+    Console.WriteLine("  cold-case <registry.json> attempt <image> --resolved|--retry-in-days N [--note \"text\"]           Record a retry attempt: close the case out, or push the next retry further out");
+    Console.WriteLine("  cold-case <registry.json> list [--json]                                                           Show every tracked case, resolved or not");
     Console.WriteLine("  dump-audit <cue|image> [--dat f] [--json]  \"Is my dump good?\" — one plain verdict (GOOD/SUSPECT/BAD) fusing structure, holes, EDC/ECC, end-sectors, pregaps, DAT match");
     Console.WriteLine("  read-stability <pass1> <pass2> [pass3 ...] [--sector-size N] [--json]  Disc-rot early warning: flag sectors that read inconsistently across passes (stable/marginal/degrading)");
     Console.WriteLine("  verify-convert <a> <b> [--json]  Prove a format conversion was lossless: decode both images (bin/cue, .chd, .bin) to raw sectors and compare byte-for-byte");
@@ -649,6 +653,7 @@ return args[0].ToLowerInvariant() switch
     "bad-sectors" => BadSectorsCmd(args),
     "redump-diff" => RedumpDiffCmd(args),
     "dic-log" => DicLogCmd(args),
+    "cold-case" => ColdCaseCmd(args),
     "dump-audit" => DumpAuditCmd(args),
     "dump-cert" => DumpCertCmd(args),
     "read-stability" => ReadStabilityCmd(args),
@@ -8141,6 +8146,85 @@ static int DicLogCmd(string[] args)
         if (info.C2ErrorLbas.Count > 0)
             Console.WriteLine($"  {info.C2ErrorLbas.Count} C2 error LBA(s) recorded — pass --to-bad-sectors to convert into a DiscForge sidecar.");
         return info.LooksClean ? 0 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int ColdCaseCmd(string[] args)
+{
+    if (args.Length < 3)
+        return Fail("usage: dforge cold-case <registry.json> add <image> --reason \"text\" [--not-before yyyy-mm-dd] [--note \"text\"]\n" +
+                    "       dforge cold-case <registry.json> due [--json]\n" +
+                    "       dforge cold-case <registry.json> attempt <image> --resolved|--retry-in-days N [--note \"text\"]\n" +
+                    "       dforge cold-case <registry.json> list [--json]\n" +
+                    "  Tracks an incomplete dump (holes recorded via a .badsectors.json) for a future re-attempt.\n" +
+                    "  A disc's read quality isn't fixed — cleaning it, a different drive, or just a different day can\n" +
+                    "  change the outcome — so this turns a one-shot INCOMPLETE result into an ongoing, time-aware\n" +
+                    "  retry loop instead of something that just gets forgotten. Tracks WHETHER and WHEN to try again,\n" +
+                    "  nothing about HOW — that's every reading command's own job.");
+    var registryPath = args[1];
+    var sub = args[2];
+
+    try
+    {
+        switch (sub)
+        {
+            case "add":
+            {
+                if (args.Length < 4) return Fail("usage: dforge cold-case <registry.json> add <image> --reason \"text\" [--not-before yyyy-mm-dd] [--note \"text\"]");
+                string image = args[3];
+                string? reason = OptVal(args, "--reason");
+                if (reason is null) return Fail("--reason \"text\" is required.");
+                DateTime? notBefore = null;
+                if (OptVal(args, "--not-before") is { } nbStr)
+                {
+                    if (!DateTime.TryParse(nbStr, System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out var nb))
+                        return Fail($"'{nbStr}' isn't a date --not-before understands (try yyyy-mm-dd).");
+                    notBefore = nb;
+                }
+                string? note = OptVal(args, "--note");
+                var entries = DiscForge.Core.Preservation.ColdCaseTracker.Add(registryPath, image, reason, DateTime.UtcNow, notBefore, note);
+                Console.WriteLine($"tracked: {entries.Last(e => e.Image == image && !e.Resolved).Summary()}");
+                return 0;
+            }
+            case "due":
+            {
+                var due = DiscForge.Core.Preservation.ColdCaseTracker.Due(registryPath, DateTime.UtcNow);
+                if (args.Contains("--json")) { EmitJson(new { due }); return 0; }
+                if (due.Count == 0) { Console.WriteLine("nothing due for a re-attempt right now."); return 0; }
+                foreach (var e in due) Console.WriteLine($"  {e.Summary()}");
+                return 0;
+            }
+            case "attempt":
+            {
+                if (args.Length < 4) return Fail("usage: dforge cold-case <registry.json> attempt <image> --resolved|--retry-in-days N [--note \"text\"]");
+                string image = args[3];
+                bool resolved = args.Contains("--resolved");
+                DateTime? nextNotBefore = null;
+                if (OptVal(args, "--retry-in-days") is { } daysStr)
+                {
+                    if (!int.TryParse(daysStr, out var days)) return Fail($"'{daysStr}' isn't a whole number of days.");
+                    nextNotBefore = DateTime.UtcNow.AddDays(days);
+                }
+                if (!resolved && nextNotBefore is null)
+                    return Fail("pass --resolved (the re-read succeeded) or --retry-in-days N (it didn't — try again later).");
+                string? note = OptVal(args, "--note");
+                var entries = DiscForge.Core.Preservation.ColdCaseTracker.RecordAttempt(registryPath, image, resolved, DateTime.UtcNow, nextNotBefore, note);
+                Console.WriteLine(entries.Last(e => e.Image == image).Summary());
+                return 0;
+            }
+            case "list":
+            {
+                var all = DiscForge.Core.Preservation.ColdCaseTracker.All(registryPath);
+                if (args.Contains("--json")) { EmitJson(new { entries = all }); return 0; }
+                if (all.Count == 0) { Console.WriteLine("no cold cases tracked in this registry yet."); return 0; }
+                foreach (var e in all) Console.WriteLine($"  {e.Summary()}");
+                return 0;
+            }
+            default:
+                return Fail($"unknown cold-case subcommand '{sub}' — expected add, due, attempt, or list.");
+        }
     }
     catch (Exception ex) { return Fail(ex.Message); }
 }

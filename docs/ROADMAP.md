@@ -828,15 +828,14 @@ rather than inventing new capability. This batch leans further toward *adoption*
 of someone outside DiscForge actually trying it — since that's the harder problem once the technical
 differentiation is already real.
 
-- **DiscImageCreator (DIC) log importer.** A large share of the people already dumping discs for
-  Redump use DIC directly, not DiscForge — its `.log` / `_c2Error.txt` / `.scm` output is a de facto
-  standard in that community. An importer that takes an *existing* DIC dump and translates it straight
-  into a DiscForge preservation master plus a signed `dump-ledger` certificate means nobody has to
-  re-dump anything they already own to start getting DiscForge's provenance layer. This is less a
-  technical feat than an adoption lever — it removes the single biggest friction point for exactly the
-  audience `docs/COMMUNITY_OUTREACH_DRAFT.md`'s Redump post is aimed at. DIC's log format is
-  well-documented and stable, so this is realistically a parser plus a mapping into the existing
-  `DumpCertificate`/`DumpLineage` shapes, not new low-level work.
+- **DiscImageCreator (DIC) log importer.** ✅ **Shipped 2026-09-18** as `DicLogParser`
+  (`src/DiscForge.Core/Dumping/DicLog.cs`) + `dforge dic-log`. Reads a DIC `.log`'s version, drive
+  identity, media type, per-track CRC32/MD5/SHA1, and C2 error LBAs, with a `--to-bad-sectors`
+  option feeding straight into `redump-diff`/`dump-audit`. Narrower than originally scoped here —
+  it doesn't yet produce a full `DumpCertificate`/`dump-ledger` entry from a DIC dump, only reads
+  the log itself — so the ledger-provenance half of this idea is still open. Verified against
+  representative log excerpts (a real compile-and-run, not just Roslyn syntax-check) covering the
+  clean and C2-error cases; not yet run against a real-world DIC log from an actual dump.
 
 - **Drive-health early warning, mirrored off media-mortality.** `DriveDossierView` already logs
   per-drive observations over time — mute sectors, C2 rates, offset, lead-out reach. Nobody's applied
@@ -890,13 +889,14 @@ differentiation is already real.
   provenance record to consolidate onto it." Saves real disk space; pure reuse of existing
   byte-comparison logic aimed at a library instead of a one-off pair.
 
-- **Cold-case re-attempt scheduler for incomplete dumps.** When a dump comes back INCOMPLETE (holes
-  recorded via `.badsectors.json`), today that's the end of the story unless someone remembers to try
-  again. A disc's read quality isn't fixed — cleaning it, a different drive, or just a different day can
-  change the outcome. A lightweight scheduler that says "try this one again in a few months, or after a
-  clean" turns a one-shot failure into an ongoing, time-aware retry loop — a genuinely different
-  interaction mode from everything else proposed so far (those are all "analyze what you have," this
-  one is "remind me to try again").
+- **Cold-case re-attempt scheduler for incomplete dumps.** ✅ **Shipped 2026-09-18** as
+  `ColdCaseTracker` (`src/DiscForge.Core/Preservation/ColdCaseTracker.cs`) + `dforge cold-case`
+  (add/due/attempt/list). A JSON-backed registry of incomplete dumps worth revisiting, queryable
+  for what's due for a re-attempt right now — cleaning, a different drive, or just a different day
+  can change a disc's read quality, and this turns a one-shot INCOMPLETE result into an ongoing,
+  time-aware retry loop instead of something that just gets forgotten. Verified with a real xUnit
+  run (9/9 passing, not just Roslyn syntax-check) covering due-date logic, resolving a case,
+  pushing a retry date out, and rejecting an attempt against an untracked or already-resolved case.
 
 - **A local verification daemon.** The WASM verifier (once deployed) covers a person with no DiscForge
   install pasting a certificate into a browser. There's no equivalent for other *programs* on the same
