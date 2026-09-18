@@ -1,5 +1,27 @@
 # DiscForge — what's left (session handoff)
 
+## Unreleased, 2026-09-18: DIC log importer + cold-case scheduler — build-confirmed on real Windows
+
+Two additions on top of v1.113.0, not yet version-bumped: the DiscImageCreator (DIC) `.log`
+importer (`dforge dic-log`) and the cold-case re-attempt scheduler (`dforge cold-case`) — see
+CHANGELOG.md's `[Unreleased]` section for what each does. Also included: the `BurnView` ADIP
+logging fix from earlier today.
+
+**Confirmed for real, not just this sandbox's checks.** `build-and-package.ps1` (which runs the
+full test suite via `-Test` before publishing) completed cleanly and produced
+`installer\Output\DiscForge-Setup-1.113.0.0.exe` with no reported failures — meaning all three
+changes above compiled and passed the real .NET test suite (2,700+ tests, including the 9 new
+`ColdCaseTrackerTests` and the `DicLogTests`), not just Roslyn syntax-checking or the standalone
+console apps used to verify them from the sandbox. Pushed to GitHub (`d39e130..9f6e99c`).
+
+**Still open:** the installer above is versioned 1.113.0.0 even though it now contains
+post-v1.113.0 additions, since the `.csproj` files weren't bumped for this round — worth a
+1.114.0 version cut before these are considered a finished release rather than an in-progress one.
+The DIC importer has only been run against representative log excerpts, never a real-world DIC
+log from an actual dump. The Quick Burn GUI checklist (Quick Burn burn+verify, no-drive-detected
+state, BurnView regression check, multi-drive) has not been re-run against this specific build —
+only the CLI/test-suite side is confirmed by this build-and-package.ps1 run.
+
 ## v1.113.0, 2026-09-12: Quick Burn added — hardware-confirmed 2026-09-18
 
 Version cut for testing so there's a concrete build to run the checklist below against.

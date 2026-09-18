@@ -11,7 +11,23 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
-*(nothing pending — see v1.113.0 below)*
+### Added
+
+- **DiscImageCreator (DIC) log importer** — `dforge dic-log <dump.log>` reads a DIC `.log`'s
+  version, drive identity, media type, per-track CRC32/MD5/SHA1, and C2 error LBAs, closing the
+  gap flagged in `docs/COMPARISON_2026-09.md` (DIC's log format is close to a de facto submission
+  standard in the Redump community). `--to-bad-sectors` converts the C2 error LBAs into a
+  DiscForge bad-sector-map sidecar consumable directly by `redump-diff`/`dump-audit`. Read-only —
+  it doesn't yet produce a `DumpCertificate`/`dump-ledger` entry from a DIC dump.
+- **Cold-case re-attempt scheduler** — `dforge cold-case <registry.json> add/due/attempt/list`
+  tracks an INCOMPLETE dump for a future re-attempt (cleaning, a different drive, a different day),
+  queryable for what's due right now, instead of a one-shot failure nobody remembers to revisit.
+
+### Fixed
+
+- Confirmed 2026-09-18 on real Windows: both additions above, plus the `BurnView` ADIP-fallback
+  logging fix (see v1.113.0 below), compiled and passed the full test suite for real via
+  `build-and-package.ps1` — not just this sandbox's Roslyn syntax-check or standalone verification.
 
 ## [1.113.0] - 2026-09-12
 
