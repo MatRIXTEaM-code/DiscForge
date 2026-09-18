@@ -19,12 +19,20 @@ it, and never defeats console security or decrypts protected content.
 
 **Hardware-confirmed 2026-09-18.** Written and Roslyn syntax-checked in a Linux sandbox that cannot
 compile or run `DiscForge.App`, then built and tested for real on Windows against a physical drive
-with a DVD+R (see `docs/NEXT.md`'s v1.113.0 entry for the full run notes). Quick Burn's own
-burn+verify passed, the "no drive detected" state showed correctly, and `BurnView`'s existing
-single-burn/queue flows behaved identically after the `BurnExecutor` refactor. One open note: on
-this DVD+R the auto-speed-by-media-ID step fell back to Max (no DVD+R media ID could be read via
-ADIP) — the correct, documented fallback, not a bug, but it means the auto-speed gap is confirmed
-still open specifically for DVD+R.
+with a DVD+R (see `docs/NEXT.md`'s v1.113.0 entry for the full run notes, including a same-day
+correction below). Quick Burn's own burn+verify passed, the "no drive detected" state showed
+correctly, and `BurnView`'s existing single-burn/queue flows behaved identically after the
+`BurnExecutor` refactor. On this DVD+R the auto-speed-by-media-ID step fell back to Max — initially
+misattributed to "ADIP isn't read yet", which was wrong (it already is, see the fix below); the
+real, still-open gap is `DvdMediaIds`' small hand-curated table, not the ADIP read itself.
+
+### Fixed — silent Max fallback didn't say WHY (ADIP refused vs. unknown media ID)
+
+`BurnView.PopulateSpeedsAsync` was dropping any drive/media identity whose `Manufacturer` came back
+null, so "this drive refuses ADIP entirely" and "ADIP worked but the media ID isn't in
+`DvdMediaIds` yet" both looked identical — silent Max, no explanation. It now logs which one
+actually happened, including the raw media-ID string when one was read but unrecognised, so a user
+can report it to grow the table.
 
 Closes a real competitive gap surfaced in a comparison against AnyBurn/Nero/ImgBurn: `BurnView`'s
 power (queue management, multi-drive destination checkboxes, RAW/TAO method radios, test/copies

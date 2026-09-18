@@ -638,11 +638,27 @@ internal sealed class BurnView : UserControl
             .Select(BurnExecutor.DriveLetterOf)
             .Where(l => l is not null)
             .Select(l => MediaInfoReader.Read(l!.Value).Identity)
-            .Where(id => id?.Manufacturer is not null)
+            .Where(id => id is not null)
             .ToList());
         foreach (var id in identities)
         {
-            if (MediaIdentityParser.RecommendedMaxSpeedX(id!.Manufacturer) is not int cap) continue;
+            // Log the diagnosis even when it doesn't lead to a speed cap — a silent "Max, no reason
+            // given" leaves no way to tell "this drive won't report ADIP" apart from "ADIP came back
+            // but the media ID isn't in DvdMediaIds yet". Both are real outcomes (most +R/+RW drives
+            // refuse ADIP outright — see MediaInfoReader.ReadDiscStructure), and the second one is
+            // exactly the kind of gap a user can help close by reporting the code they saw.
+            if (id!.Manufacturer is null)
+            {
+                if (id.MediaId is { Length: > 0 } rawId)
+                    _log.Add($"media ID read: \"{rawId}\" — not in the speed-rating table yet " +
+                             "(no rated speed known for it; defaulting to Max is correct, not a bug). " +
+                             "If you know this disc's real rated speed, this code is worth reporting.");
+                else if (id.AtipCode is null)
+                    _log.Add("no media ID could be read for this disc (the drive doesn't report ADIP, " +
+                             "or this is -R/-RW without one) — defaulting to Max.");
+                continue;
+            }
+            if (MediaIdentityParser.RecommendedMaxSpeedX(id.Manufacturer) is not int cap) continue;
             if (recommended is null || cap < recommended.Value.Cap)
                 recommended = (cap, $"{id.Manufacturer} ({id.MediaId ?? id.AtipCode})");
         }

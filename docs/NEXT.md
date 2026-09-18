@@ -44,12 +44,23 @@ after the refactor.
 **Update, 2026-09-18:** hardware-confirmed on a real Windows build against a real drive with a
 DVD+R. Full run via `full-hw-test-v1.113.0.ps1` — CLI `dforge burn --verify` smoke test passed, then
 the GUI checklist: Quick Burn burned and verified an ISO with the drive dropdown auto-selecting the
-recorder; the write-speed step defaulted to **Max** with no error (outcome (b) from the checklist —
-no DVD+R media ID could be read via ADIP, which `MediaIdentity.ParsePhysicalFormat` doesn't parse yet,
-so it fell back correctly rather than erroring; the auto-speed-by-media-ID gap is still open for
-DVD+R specifically, and stays open pending ADIP support); the "no recorder detected" state showed
-correctly with the drive unplugged; and `BurnView`'s own single-burn/queue flows still behaved
-identically after the `BurnExecutor` refactor. Reported back: **all done, passed.**
+recorder; the write-speed step defaulted to **Max** with no error; the "no recorder detected" state
+showed correctly with the drive unplugged; and `BurnView`'s own single-burn/queue flows still
+behaved identically after the `BurnExecutor` refactor. Reported back: **all done, passed.**
+
+**Correction, 2026-09-18, same day:** the Max fallback above was initially attributed to "DiscForge
+doesn't read DVD+R's ADIP yet" — that was wrong. `MediaInfoReader.ReadDiscStructure`
+(`src/DiscForge.Devices/Media/MediaInfoReader.cs`) already attempts an ADIP read whenever
+`ParsePhysicalFormat` comes back with no media ID (exactly the +R/+RW case), via
+`MediaIdentityParser.ParseAdipMediaId`. `BurnView.PopulateSpeedsAsync` was silently dropping any
+identity whose `Manufacturer` came back null, though — meaning "the drive flatly refused ADIP" and
+"ADIP worked but the media ID isn't in `DvdMediaIds` yet" were indistinguishable from the log, both
+just showing Max with no explanation. Fixed: it now logs which of the two actually happened. The one
+real, still-open gap is `DvdMediaIds`' coverage — it's a small hand-curated table, nothing close to
+Aaru/Redumper/DIC's crowd-sourced breadth — so an unlisted brand's blank will still default to Max
+even when the drive DID report a media ID. Re-running the hardware test will now show, for that same
+DVD+R, either the exact media-ID string DiscForge read (worth reporting to grow the table) or an
+honest "this drive won't report ADIP" — whichever it actually is.
 
 ## v1.112.0, 2026-09-12: the three ImgBurn gaps from `docs/imgburn-comparison.md`, closed
 
