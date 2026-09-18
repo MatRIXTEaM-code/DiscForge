@@ -254,6 +254,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  redump-cue <in.cue> <disc.sub> <out.cue> [--snap-pregap]  Re-cut a split bin/cue at the subchannel's INDEX 00 boundaries (Redump-conformant, byte-preserving)");
     Console.WriteLine("  bad-sectors <map.badsectors.json> [--json]  Show a dump's unreadable-sector map: counts, coalesced runs, and per-track positions");
     Console.WriteLine("  redump-diff <cue> <dat> [--game \"name\"] [--json]  Explain WHY a dump doesn't match Redump: per-file verdict + the cause (split, padding, offset, bad sector)");
+    Console.WriteLine("  dic-log <dump.log> [--json] [--to-bad-sectors out.badsectors.json --total-sectors N]  Import a DiscImageCreator (DIC) .log: version, drive, media, per-track hashes, C2/error info — and optionally convert its C2 error LBAs into a DiscForge bad-sector-map sidecar for redump-diff/dump-audit");
     Console.WriteLine("  dump-audit <cue|image> [--dat f] [--json]  \"Is my dump good?\" — one plain verdict (GOOD/SUSPECT/BAD) fusing structure, holes, EDC/ECC, end-sectors, pregaps, DAT match");
     Console.WriteLine("  read-stability <pass1> <pass2> [pass3 ...] [--sector-size N] [--json]  Disc-rot early warning: flag sectors that read inconsistently across passes (stable/marginal/degrading)");
     Console.WriteLine("  verify-convert <a> <b> [--json]  Prove a format conversion was lossless: decode both images (bin/cue, .chd, .bin) to raw sectors and compare byte-for-byte");
@@ -647,6 +648,7 @@ return args[0].ToLowerInvariant() switch
     "redump-cue" => RedumpCueCmd(args),
     "bad-sectors" => BadSectorsCmd(args),
     "redump-diff" => RedumpDiffCmd(args),
+    "dic-log" => DicLogCmd(args),
     "dump-audit" => DumpAuditCmd(args),
     "dump-cert" => DumpCertCmd(args),
     "read-stability" => ReadStabilityCmd(args),
@@ -8075,6 +8077,70 @@ static int RedumpDiffCmd(string[] args)
             foreach (var rec in r.Recommendations) Console.WriteLine($"  • {rec}");
         }
         return r.Match ? 0 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int DicLogCmd(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("usage: dforge dic-log <dump.log> [--json] [--to-bad-sectors out.badsectors.json --total-sectors N]\n" +
+                    "  Imports a DiscImageCreator (DIC) .log file — DIC's log format is close to a de facto\n" +
+                    "  submission standard in the Redump community, and this reads it without needing to re-dump\n" +
+                    "  the disc through DiscForge. Best-effort: DIC's log format has drifted across versions and\n" +
+                    "  was never formally specified, so unrecognised lines are skipped rather than rejected, and\n" +
+                    "  every field is optional. Pass --to-bad-sectors to convert the log's C2 error LBAs into a\n" +
+                    "  DiscForge bad-sector-map sidecar (needs --total-sectors, since a DIC log doesn't always\n" +
+                    "  state the disc's total sector count) usable directly by redump-diff and dump-audit.");
+    var logPath = args[1];
+    if (!File.Exists(logPath)) return Fail($"'{logPath}' not found.");
+
+    try
+    {
+        var info = DiscForge.Core.Dumping.DicLogParser.Parse(logPath);
+
+        string? bsOut = OptVal(args, "--to-bad-sectors");
+        if (bsOut is not null)
+        {
+            string? totalStr = OptVal(args, "--total-sectors");
+            if (totalStr is null || !int.TryParse(totalStr, out var total))
+                return Fail("--to-bad-sectors requires --total-sectors <N> (the disc's total sector count).");
+            var map = new DiscForge.Core.Preservation.BadSectorMap
+            {
+                Image = Path.GetFileNameWithoutExtension(logPath),
+                TotalSectors = total,
+                UnreadableLba = info.C2ErrorLbas,
+                Note = $"Imported from DiscImageCreator log '{Path.GetFileName(logPath)}' — C2 error LBAs only; " +
+                       "DIC's other error classes (if any) are not distinguished by this importer.",
+            };
+            map.Save(bsOut);
+            Console.WriteLine($"wrote {bsOut}: {map.Summary()}");
+        }
+
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                info.SourcePath, info.DicVersion, info.CommandLine,
+                info.DriveVendor, info.DriveProduct, info.DriveRevision, info.MediaType,
+                info.WriteOffset, info.TotalErrors, info.C2ErrorCount, info.C2ErrorLbas, info.LooksClean,
+                tracks = info.Tracks.Select(t => new { t.Track, t.Type, t.Crc32, t.Md5, t.Sha1 }),
+            });
+            return 0;
+        }
+
+        Console.WriteLine(info.Summary());
+        if (info.CommandLine is { Length: > 0 }) Console.WriteLine($"  command line : {info.CommandLine}");
+        if (info.DriveRevision is { Length: > 0 }) Console.WriteLine($"  drive rev    : {info.DriveRevision}");
+        if (info.WriteOffset is { } wo) Console.WriteLine($"  write offset : {wo}");
+        foreach (var t in info.Tracks)
+        {
+            string type = t.Type ?? "?";
+            Console.WriteLine($"  Track {t.Track,2} [{type,-5}] CRC32={t.Crc32 ?? "-"} MD5={t.Md5 ?? "-"} SHA1={t.Sha1 ?? "-"}");
+        }
+        if (info.C2ErrorLbas.Count > 0)
+            Console.WriteLine($"  {info.C2ErrorLbas.Count} C2 error LBA(s) recorded — pass --to-bad-sectors to convert into a DiscForge sidecar.");
+        return info.LooksClean ? 0 : 2;
     }
     catch (Exception ex) { return Fail(ex.Message); }
 }
