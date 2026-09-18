@@ -1,10 +1,11 @@
-# DiscForge vs. everyone — a consolidated comparison (2026-09-12)
+# DiscForge vs. everyone — a consolidated comparison (updated 2026-09-18)
 
 *This pulls together and refreshes four earlier documents — `imgburn-comparison.md`,
 `COMPARISON_FREE_BURNERS.md`, `COMPARISON.md`, and `comparison_all_products.html` — into one
 current answer to "how does DiscForge stack up against the field." Facts below were re-verified
-by web search on 2026-09-12; where something changed since the last pass (2026-08-10), it's
-flagged. DiscForge's own feature set reflects v1.112.0, the latest release.*
+by web search on 2026-09-12, with DiscImageCreator and MPF added 2026-09-18 after a follow-up
+search turned up both as omissions. DiscForge's own feature set reflects v1.113.0 (Quick Burn,
+hardware-confirmed), the latest release.*
 
 ## The one-paragraph answer
 
@@ -37,6 +38,8 @@ comparison has at all.
 | Aaru | active, v6.0.0-alpha.19 | Unchanged (nothing newer found) | No |
 | Redumper | active, build b726 | Unchanged (nothing newer found) | No |
 | Exact Audio Copy | 1.8, Jul 2024 | Unchanged | No |
+| DiscImageCreator (DIC) | *(not previously covered)* | Active, open source (GPL), Windows CLI | New to this doc |
+| MPF (SabreTools) | *(not previously covered)* | Active, open source, C# GUI wrapper over DIC/Redumper/Aaru | New to this doc |
 
 Nothing in the field materially moved in the last month. This is a mature, mostly-stagnant
 competitive landscape — which is itself a data point: DiscForge is one of a small handful of
@@ -102,7 +105,7 @@ protection — a line DiscForge's clean-room policy deliberately does not cross.
 should be recommended to anyone today; DiscForge, AnyBurn, BurnAware, K3b, or Nero all cover their
 use cases with an actively maintained tool.
 
-## The preservation-tool competitors: Aaru, Redumper, DiscImageChef, Exact Audio Copy
+## The preservation-tool competitors: Aaru, Redumper, DiscImageCreator, MPF, Exact Audio Copy
 
 This is the field DiscForge's read/verify/provenance work actually competes in, and it's the
 comparison ImgBurn-focused writeups tend to skip.
@@ -120,25 +123,37 @@ comparison ImgBurn-focused writeups tend to skip.
   burning, no format conversion beyond its own pipeline, no CHD/GDI/WBFS/console-cartridge work),
   but its CD subchannel/protection handling is mature and community-vetted in a way DiscForge's
   is not yet, since Redumper has years of Redump-community disc coverage behind it.
+- **DiscImageCreator (DIC)** (Windows, open source, GPL, CLI-only) — a widely-used dumping tool
+  specifically within the Redump community; its log format is close to a de facto submission
+  standard there. Dump-only: no burning, no format conversion, no CHD/GDI/WBFS work, no
+  cryptographic provenance. DiscForge doesn't yet read or produce DIC-compatible logs — a real
+  gap worth closing given how entrenched DIC's log format is in exactly the community DiscForge
+  most needs to win over.
+- **MPF (SabreTools/MPF)** (Windows, open source, C#) — not a dumping engine of its own; it's a
+  GUI that drives DiscImageCreator, Redumper, and Aaru under one interface, closer to a
+  competitor to DiscForge's *GUI layer* than to its dumping engine. Someone who wants a GUI
+  instead of raw CLI tools in that community likely reaches for MPF today rather than DiscForge.
 - **Exact Audio Copy** (Windows, freeware) — the reference for audio CD ripping specifically:
   AccurateRip, drive offset correction, C2 error reporting, secure-mode re-reads. DiscForge's
   audio-CD read path covers similar ground but EAC's audio-specific tuning (per-drive offset
   databases contributed by a huge user base) is deeper than DiscForge's for that one job.
 
 Verdict: DiscForge's preservation work is competitive with, not clearly ahead of, this tier on
-CD-specific dumping maturity — Aaru and Redumper both have a longer track record and larger
-contributed drive/disc databases. DiscForge's differentiators here are breadth (one tool doing
-dumping, RAW burning, conversion, and cataloguing instead of three or four), CHD creation (none
-of Aaru/Redumper/EAC can create CHD, only DiscForge can), and the cryptographic provenance layer,
-which is unique to DiscForge across this entire comparison.
+CD-specific dumping maturity — Aaru, Redumper, and DIC all have a longer track record and larger
+contributed drive/disc databases, and DIC's log format specifically is embedded in Redump's own
+workflow in a way DiscForge doesn't interoperate with yet. DiscForge's differentiators here are
+breadth (one tool doing dumping, RAW burning, conversion, and cataloguing instead of three or
+four separate tools plus MPF to unify them), CHD creation (none of Aaru/Redumper/DIC/EAC can
+create CHD, only DiscForge can), and the cryptographic provenance layer, which is unique to
+DiscForge across this entire comparison.
 
 ## The broader imaging-suite landscape (Alcohol 120%, CDRWIN, DiscJuggler, BlindWrite, etc.)
 
 `COMPARISON.md` covers this ground in detail; the short version holds unchanged since July: this
 is DiscForge's home turf for general imaging/burning (read-to-image, build-from-files, format
 conversion, checksums, verify-after-burn), all of it now hardware-confirmed rather than
-code-only as it was in July. The one item that document still marks open is DiscJuggler-style
-simultaneous multi-drive duplication, which remains unbuilt.
+code-only as it was in July. DiscJuggler-style simultaneous multi-drive duplication, the one item
+this document used to mark open, is now built and hardware-confirmed too (2026-09-18).
 
 ## Bottom line
 
@@ -147,6 +162,8 @@ simultaneous multi-drive duplication, which remains unbuilt.
 | Casual "burn this ISO" convenience | AnyBurn / Nero | Capable but not the friction-optimized choice |
 | RAW DAO-96 / subchannel writing | DiscForge (native, cross-platform) | Leads — K3b needs external Linux-only tools, CloneCD/Alcohol are dead |
 | Preservation-grade CD dumping | Aaru / Redumper (tied with DiscForge) | Competitive, not clearly ahead |
+| Redump-log compatibility / community log standard | DiscImageCreator (DIC) | Behind — DiscForge doesn't read/write DIC-format logs yet |
+| GUI wrapper for CLI dumping tools | MPF (SabreTools) | Not directly comparable — MPF wraps other engines, DiscForge is its own engine |
 | Audio CD ripping (AccurateRip, offset DB) | Exact Audio Copy | Behind on drive-offset database depth |
 | Format conversion breadth (CHD, GDI, CSO, WBFS) | DiscForge | Leads — no other tool here creates CHD |
 | Cryptographic dump provenance | DiscForge | Unique — no other tool in this comparison has it |
