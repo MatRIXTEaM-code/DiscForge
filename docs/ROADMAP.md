@@ -928,6 +928,40 @@ up.
 **Recommendation recorded here for whoever picks this file up next:** by the fifth pass, prioritizing
 and building two or three of the ~15 ideas above will do more for the project than a sixteenth idea.
 
+## New ideas, 2026-09-18 (sixth and final pass, requested as the last one)
+
+Checked against every batch above before writing these down — the closest existing thing is
+`consensus` (game-changers list, above): it already signs attestations and verifies a single
+ledger. What it does not do, and what nothing else in this file covers either, is let two ledgers
+that grew independently be combined.
+
+- **Cross-instance consensus ledger merge** (`consensus merge`) — **the strongest idea in this
+  batch.** `ConsensusLedger` (`Preservation/ConsensusLedger.cs`) is a single append-only,
+  hash-chained ledger: `Append`, `VerifyLedger`, `Tally`, `ToJson`/`FromJson`. It calls itself
+  "federated" in its own doc comment, but there is no way to take two people's independently-grown
+  ledgers and combine them — which is the one thing an actually decentralised system needs. A merge
+  finds the longest common hash-chain prefix (the shared history both ledgers agree on), then
+  replays each side's remaining entries: attestations for different genomes append cleanly,
+  attestations for the *same* genome from different keys become corroborating evidence (exactly
+  what `Tally` already treats as consensus), and attestations that flatly disagree (two different
+  claimed hashes for one genome, or a signature that doesn't verify against its claimed key) are
+  reported as disputes rather than silently dropped or silently overwritten either way. No
+  hardware, no external dependency, no UI — pure `Core` logic extending a class that already
+  exists and already has tests. This is the one that turns "federated" from a docstring into
+  something that's actually true.
+- **Reputation-weighted tally** (extends `consensus tally`) — once merge exists, a natural
+  follow-on: instead of every attestation counting equally, weight a key's vote by how often that
+  key's past attestations ended up on the winning side of a resolved dispute (computable entirely
+  from ledger history that already exists once merges are happening — no new inputs). Flagged at
+  lower confidence than the merge itself: it's a smaller, second-order improvement, and it only
+  matters once there are enough merged ledgers with enough disputed history for a reputation score
+  to mean anything.
+
+Honestly, closing this out rather than padding it: after six passes the well of genuinely new,
+independently-buildable ideas is close to dry. The merge capability above is the one worth building
+next if this file gets picked up again; everything else at this point is either already listed
+above unbuilt, or a refinement of something already shipped.
+
 ---
 
 ## Suggested order for the next session
