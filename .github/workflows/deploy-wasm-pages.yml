@@ -1,0 +1,87 @@
+name: Deploy DiscForge.Wasm to GitHub Pages
+
+# Publishes the browser-based verification engine (dforge dump-ledger verify / merge-cert verify,
+# compiled to WebAssembly and run entirely client-side — see src/DiscForge.Wasm/Pages/Home.razor)
+# to GitHub Pages, so anyone can verify a dump-ledger.json or a .dmc.json in-browser with no install
+# and nothing uploaded anywhere. Built and live-tested locally since v1.105.0/v1.106.0 (see
+# docs/NEXT.md) but never actually deployed publicly until this workflow.
+#
+# DiscForge.Wasm.csproj is deliberately NOT part of DiscForge.sln (see that file's own comment) so
+# build-app.ps1 never needs the wasm-tools workload — this workflow installs that workload itself,
+# on a clean Linux runner, and only ever touches the Wasm project.
+#
+# Manual-only for now (workflow_dispatch): flip on the push trigger below once you're happy with a
+# first manual run's result.
+
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [ main ]
+  #   paths:
+  #     - 'src/DiscForge.Wasm/**'
+  #     - 'src/DiscForge.Core/**'
+  #     - '.github/workflows/deploy-wasm-pages.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build DiscForge.Wasm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      - name: Publish (Release)
+        run: dotnet publish src/DiscForge.Wasm -c Release -o publish-wasm
+
+      - name: Locate wwwroot output
+        id: site
+        run: |
+          SITE_DIR="publish-wasm/wwwroot"
+          if [ ! -d "$SITE_DIR" ]; then
+            # dotnet publish for a standalone Blazor WASM app nests the static site under
+            # <framework>/publish/wwwroot when -o is used with certain SDK versions; fall back
+            # to finding it rather than hardcoding one path.
+            SITE_DIR=$(find publish-wasm -type d -name wwwroot | head -n1)
+          fi
+          echo "Publishing from: $SITE_DIR"
+          test -f "$SITE_DIR/index.html" || { echo "::error::no index.html found under $SITE_DIR"; exit 1; }
+          echo "dir=$SITE_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Add .nojekyll
+        # GitHub Pages runs Jekyll by default, which ignores files/folders starting with an
+        # underscore — Blazor's _framework/ directory (the actual wasm runtime + app assemblies)
+        # would silently 404 without this.
+        run: touch "${{ steps.site.outputs.dir }}/.nojekyll"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.site.outputs.dir }}
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
