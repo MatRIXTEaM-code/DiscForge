@@ -75,6 +75,15 @@ internal sealed class SettingsModel
     /// configuring it doesn't disturb Rawdump2's.</summary>
     public string? ExternalDumperPathWit { get; set; }
 
+    /// <summary>Last-used path to a user's own generic disc-reading tool — used from ReadView's
+    /// "Other tool…" button. Deliberately not named after any specific product, unlike every
+    /// other <c>ExternalDumperPath*</c> field: added as the declined alternative to wiring a
+    /// named copy-protection-removal tool (AnyDVD) into the Read Disc tile, which this project's
+    /// clean-room, detect-but-never-circumvent design doesn't do. This field is for whatever
+    /// disc-reading/imaging tool isn't already covered by a named button. Own remembered path,
+    /// same reason as every other field here.</summary>
+    public string? ExternalDumperPathOther { get; set; }
+
     /// <summary>Last-used path to Xbox Backup Creator (XBC) — used from XboxView. DiscForge's own
     /// Xbox support (<c>DiscForge.Core.Xbox</c>) only understands the XDVDFS filesystem inside an
     /// already-extracted image; it never reads an Xbox or Xbox 360 disc's security sectors, which
@@ -291,6 +300,12 @@ internal static class Settings
     {
         get => _model.ExternalDumperPathWit;
         set { _model.ExternalDumperPathWit = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathOther
+    {
+        get => _model.ExternalDumperPathOther;
+        set { _model.ExternalDumperPathOther = value; Save(); }
     }
 
     public static string? ExternalDumperPathXbc

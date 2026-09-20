@@ -9,6 +9,19 @@ identifies, converts, patches and verifies discs and cartridge dumps, and reads
 and manages console saves. It **detects** copy protection but never circumvents
 it, and never defeats console security or decrypts protected content.
 
+## [Unreleased]
+
+### Added
+
+- **"Other tool…" button on Read Disc** — a generic, unnamed external-tool launcher alongside the
+  existing Rawdump2/CloneCD/Xreveal/CloneBD/IsoBuster/DVDFab buttons, for whatever disc-reading
+  tool a user already has that isn't covered by a named button. Added in place of a request to
+  wire up AnyDVD by name, which was declined: AnyDVD's sole purpose is stripping copy protection
+  (CSS/AACS/region) system-wide, which doesn't fit this project's detect-but-never-circumvent
+  design the way the existing named tools do (they read/image a disc; protection handling is
+  incidental for the ones that need it). Same launch-and-forget posture as every other button on
+  this row — DiscForge starts the process the user points it at and knows nothing else about it.
+
 ## [1.114.0] - 2026-09-18
 
 ### Added

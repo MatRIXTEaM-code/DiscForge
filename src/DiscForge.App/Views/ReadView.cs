@@ -137,28 +137,41 @@ private readonly CheckBox _captureSub = new()
     // ImgBurn, Alcohol 120%, and DAEMON Tools used to live here too, but they're burn/mount
     // tools rather than rippers — burning is Burn's job, not Read's — so as of the version that
     // added this comment they moved to BurnView's own external-tool row instead. See BurnView.cs.
+    //
+    // Deliberately generic rather than named after one product (unlike every button above it):
+    // added after a request to wire up AnyDVD specifically, which this project declined — AnyDVD's
+    // entire purpose is stripping copy protection (CSS/AACS/region) system-wide, which is a
+    // different thing from the rippers above (they read/image a disc; protection handling is
+    // incidental to that job for the ones that need it). This button carries no assumption about
+    // what the user points it at, same launch-and-forget posture as every other button here, for
+    // whatever disc-reading tool isn't already covered by a named button above.
+    private readonly Button _externalDumpOther = new()
+    {
+        Text = "Other tool…", Location = new Point(12, 200), Width = 200, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
     private readonly ListView _tracks = new()
     {
-        // Sits below the four option checkboxes and the two external-tool rows (which end near
-        // Y=196); a grid any higher overlaps them.
-        Location = new Point(12, 206), Size = new Size(712, 100),
+        // Sits below the four option checkboxes and the three external-tool rows (which end near
+        // Y=226); a grid any higher overlaps them.
+        Location = new Point(12, 236), Size = new Size(712, 100),
         View = View.Details, FullRowSelect = true, HeaderStyle = ColumnHeaderStyle.Nonclickable,
         Font = Theme.Ui, BackColor = Color.White,
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
     };
     private readonly Button _rip = new()
     {
-        Text = "Read to CDI…", Location = new Point(12, 316), Width = 110, Height = 28,
+        Text = "Read to CDI…", Location = new Point(12, 346), Width = 110, Height = 28,
         FlatStyle = FlatStyle.System, Enabled = false,
     };
     private readonly ProgressBar _progress = new()
     {
-        Location = new Point(132, 319), Size = new Size(592, 22), Minimum = 0, Maximum = 100,
+        Location = new Point(132, 349), Size = new Size(592, 22), Minimum = 0, Maximum = 100,
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
     };
     private readonly EventLogView _log = new()
     {
-        Location = new Point(12, 352), Size = new Size(712, 170),
+        Location = new Point(12, 382), Size = new Size(712, 170),
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
     };
 
@@ -175,7 +188,7 @@ private readonly CheckBox _captureSub = new()
     public ReadView()
     {
         // Establish a realistic size before adding anchored children (see InspectView).
-        Size = new Size(736, 536);
+        Size = new Size(736, 566);
         BackColor = Color.White;
         Padding = new Padding(12);
 
@@ -203,6 +216,7 @@ private readonly CheckBox _captureSub = new()
         _externalDumpIsoBuster.Click += (_, _) => LaunchExternalDumperIsoBuster();
         _externalDumpDvdFab.Click += (_, _) => LaunchExternalDumperDvdFab();
         _externalDumpWit.Click += (_, _) => LaunchExternalDumperWit();
+        _externalDumpOther.Click += (_, _) => LaunchExternalDumperOther();
         _importExternal.Click += async (_, _) => await ImportExternalDumpAsync();
 
         Controls.Add(_drives); Controls.Add(detect); Controls.Add(readToc);
@@ -214,6 +228,7 @@ private readonly CheckBox _captureSub = new()
         Controls.Add(_externalDumpDvd); Controls.Add(_externalDumpIsoBuster);
         Controls.Add(_externalDumpBluray); Controls.Add(_importExternal); Controls.Add(_externalDumpDvdFab);
         Controls.Add(_externalDumpWit);
+        Controls.Add(_externalDumpOther);
         Controls.Add(_tracks);
         Controls.Add(_rip); Controls.Add(_progress);
         Controls.Add(_log);
@@ -717,6 +732,20 @@ private readonly CheckBox _captureSub = new()
         () => Settings.ExternalDumperPathWit,
         p => Settings.ExternalDumperPathWit = p,
         "Locate Wiimms ISO Tools (wit.exe)");
+
+    /// <summary>
+    /// Same idea again, but deliberately not named after one product — a general "point this at
+    /// whatever disc-reading tool you use" escape hatch for anything not already covered by a
+    /// named button on this row. Own remembered path
+    /// (<see cref="Settings.ExternalDumperPathOther"/>) so configuring it doesn't disturb any of
+    /// the named tools' paths. Not a place for a tool whose sole purpose is stripping copy
+    /// protection system-wide (see the comment on <see cref="_externalDumpOther"/>) — this is for
+    /// disc-reading/imaging tools, same posture as every other button here.
+    /// </summary>
+    private void LaunchExternalDumperOther() => LaunchExternalTool(
+        () => Settings.ExternalDumperPathOther,
+        p => Settings.ExternalDumperPathOther = p,
+        "Locate your disc-reading tool");
 
     /// <summary>
     /// Launch a user-supplied external dumping tool (asked for once via <paramref name="getPath"/>/

@@ -11,7 +11,8 @@ namespace DiscForge.App;
 
 /// <summary>
 /// Shared logic behind every "launch an external tool" button across DiscForge — Read's rippers
-/// (RawDump2, CloneCD, Xreveal, CloneBD, IsoBuster, DVDFab), Burn's burners (ImgBurn,
+/// (RawDump2, CloneCD, Xreveal, CloneBD, IsoBuster, DVDFab, and a generic "Other tool…" slot for
+/// whatever isn't already covered by a named button), Burn's burners (ImgBurn,
 /// Alcohol 120%, DAEMON Tools), and the format-specific screens (Xbox's Xbox Backup Creator/
 /// abgx360, the memory card screen's MemcardRex). Originally lived only in ReadView as a private
 /// method; pulled out here once BurnView needed the identical behaviour, rather than
