@@ -93,6 +93,16 @@ internal sealed class DreamcastView : UserControl
         _toCdi.Click += (_, _) => ConvertToCdi();
 
         Controls.Add(_path); Controls.Add(open);
+        // Universal Dreamcast Patcher applies .DCP translation/fan patches to a GDI — the Dreamcast
+        // counterpart of the Patch screen. Launched the usual way (see ExternalToolLauncher).
+        var dcPatcher = new Button { Text = "Dreamcast Patcher…", Location = new Point(566, 12), Width = 158, FlatStyle = FlatStyle.System };
+        dcPatcher.Click += (_, _) => ExternalToolLauncher.Launch(
+            () => Settings.ExternalDumperPathDreamcastPatcher,
+            p => Settings.ExternalDumperPathDreamcastPatcher = p,
+            "Locate Universal Dreamcast Patcher",
+            "Pick the GDI and the .DCP patch there; open the patched GDI here afterwards to check it.",
+            (msg, _) => _status.Text = msg);
+        Controls.Add(dcPatcher);
         Controls.Add(_summary);
         Controls.Add(_extractSelected); Controls.Add(_extractAll); Controls.Add(_toCdi);
         Controls.Add(_files); Controls.Add(_progress); Controls.Add(_status);

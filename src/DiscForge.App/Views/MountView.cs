@@ -32,6 +32,11 @@ internal sealed class MountView : UserControl
 
     private string? _nativeIsoToMount;
 
+    // For what Windows' own mount can't take (BIN/CUE, audio, mixed-mode, CCD/MDS/NRG): WinCDEmu, the
+    // open-source virtual drive. Its batchmnt.exe mounts the image passed to it; any other mount tool
+    // that takes an image path works the same way. Never bundled — see ExternalToolLauncher.
+    private readonly Button _winCdEmu = new() { Text = "Mount with WinCDEmu…", Width = 170, FlatStyle = FlatStyle.System };
+
     public MountView()
     {
         Size = new Size(720, 440);
@@ -49,6 +54,7 @@ internal sealed class MountView : UserControl
         _browse.Location = new Point(464, 70);
         _describe.Location = new Point(552, 70);
         _mount.Location = new Point(16, 104);
+        _winCdEmu.Location = new Point(152, 104);
         _out.Location = new Point(16, 140);
 
         _browse.Click += (_, _) =>
@@ -61,8 +67,16 @@ internal sealed class MountView : UserControl
         };
         _describe.Click += (_, _) => Describe();
         _mount.Click += (_, _) => MountNative();
+        _winCdEmu.Click += (_, _) => ExternalToolLauncher.Launch(
+            () => Settings.ExternalDumperPathWinCdEmu,
+            p => Settings.ExternalDumperPathWinCdEmu = p,
+            "Locate WinCDEmu's batchmnt.exe (or your virtual-drive tool)",
+            string.IsNullOrEmpty(_path.Text) ? "Pick an image first to have it mounted directly."
+                                             : $"Asked it to mount {Path.GetFileName(_path.Text)}.",
+            (msg, _) => _out.Text = msg,
+            ExternalToolLauncher.OpeningFile(_path.Text));
 
-        Controls.AddRange(new Control[] { title, hint, _path, _browse, _describe, _mount, _out });
+        Controls.AddRange(new Control[] { title, hint, _path, _browse, _describe, _mount, _winCdEmu, _out });
     }
 
     private void Describe()

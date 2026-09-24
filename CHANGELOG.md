@@ -13,6 +13,33 @@ it, and never defeats console security or decrypts protected content.
 
 ### Added
 
+- **xdelta / VCDIFF patches** — the Patch screen and two new commands (`xdelta-apply`,
+  `xdelta-info`) apply xdelta3 patches, the usual format for PS1/PS2/GameCube translations and fan
+  patches. It's a clean-room RFC 3284 VCDIFF decoder with the two xdelta3 extensions real patches
+  use: per-window Adler-32 checks, and LZMA secondary compression. With LZMA, xdelta3 runs one
+  `.xz` stream per section type for the whole patch, flushed at the end of each window, and
+  DiscForge decodes it the same way. The output is streamed window by window, so DVD-size images
+  never need to fit in memory. A wrong source image is caught at the first window whose checksum
+  doesn't match ("Skip validation" / `--no-verify` override that). Tested against patches made by
+  xdelta3 3.0.11 with `-S none`, `-S lzma`, `-1`, `-9`, small windows and no source file, and a
+  300 MB image with 38 windows (byte-identical output). Patches that use xdelta3's DJW or FGK
+  secondary compression are refused with a clear message, and the new **"xdelta tool…"** button
+  hands them to Delta Patcher, xdelta UI or xdelta3. xdelta patches are recognised by extension
+  (`.xdelta`/`.vcdiff`/`.delta`/`.xd`) or by their magic bytes.
+- **LZMA2 and .xz decoding in Core** (`Lzma2Decoder`, `XzStreamDecoder`) — streaming,
+  circular-dictionary LZMA2 on top of the existing clean-room LZMA model, plus the `.xz`
+  container restricted to LZMA2-only blocks. Written for the xdelta work; reusable for RVZ/other
+  LZMA2 payloads later.
+- **More external-tool buttons**:
+  - Mount: "Mount with WinCDEmu…", which passes the image to WinCDEmu's `batchmnt.exe` for
+    BIN/CUE, audio and mixed-mode images Windows can't mount.
+  - AccurateRip: "CUETools…", which opens the chosen CUE for AccurateRip + CTDB verify/repair.
+  - VOB Demux: "MKVToolNix…".
+  - Sector view: "Hex editor…", which opens the current image in HxD, ImHex, etc.
+  - Dreamcast: "Dreamcast Patcher…" (Universal Dreamcast Patcher, for `.DCP` patches).
+  - Sets: "ROM manager…" (RomVault, clrmamepro, igir).
+  - `ExternalToolLauncher.OpeningFile(path)` hands a file to a tool on its command line.
+
 - **redumper and MPF on Read Disc** — two new buttons on the third external-tool row for the
   dumpers Redump asks submissions to come from: redumper (opened in a console that stays open in
   its own folder, showing its usage, since it is command-line only and a bare launch would close

@@ -25,6 +25,9 @@ internal sealed class AccurateRipView : UserControl
     private readonly TextBox _db = new() { ReadOnly = true, Width = 380, Font = Theme.Ui };
     private readonly Button _browseDb = new() { Text = "Record…", Width = 70, FlatStyle = FlatStyle.System };
     private readonly Button _run = new() { Text = "Compute / Verify", Width = 130, FlatStyle = FlatStyle.System, Enabled = false };
+    // CUETools: verifies an existing rip against AccurateRip AND the CUETools database, and can repair
+    // it from CTDB parity — the one thing this screen doesn't do. Opened on the chosen CUE.
+    private readonly Button _cueTools = new() { Text = "CUETools…", Width = 130, FlatStyle = FlatStyle.System };
     private readonly TextBox _out = new()
     {
         Multiline = true, ReadOnly = true, Font = Theme.Mono, ScrollBars = ScrollBars.Vertical,
@@ -49,6 +52,14 @@ internal sealed class AccurateRipView : UserControl
         var dbLabel = new Label { Text = "Record:", AutoSize = true, Font = Theme.Ui, Location = new Point(16, 104) };
         _db.Location = new Point(90, 101); _browseDb.Location = new Point(474, 99);
         _run.Location = new Point(552, 84);
+        _cueTools.Location = new Point(552, 112);
+        _cueTools.Click += (_, _) => ExternalToolLauncher.Launch(
+            () => Settings.ExternalDumperPathCueTools,
+            p => Settings.ExternalDumperPathCueTools = p,
+            "Locate CUETools (CUETools.exe)",
+            "Use its Verify (or Repair) action there — it checks AccurateRip and the CUETools database.",
+            (msg, _) => _out.Text = msg,
+            ExternalToolLauncher.OpeningFile(_cue.Text));
         _out.Location = new Point(16, 140);
 
         _browseCue.Click += (_, _) =>
@@ -63,7 +74,7 @@ internal sealed class AccurateRipView : UserControl
         };
         _run.Click += async (_, _) => await RunAsync();
 
-        Controls.AddRange(new Control[] { title, hint, cueLabel, _cue, _browseCue, dbLabel, _db, _browseDb, _run, _out });
+        Controls.AddRange(new Control[] { title, hint, cueLabel, _cue, _browseCue, dbLabel, _db, _browseDb, _run, _cueTools, _out });
     }
 
     private async Task RunAsync()

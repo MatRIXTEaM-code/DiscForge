@@ -23,6 +23,8 @@ internal sealed class VobDemuxView : UserControl
     private readonly TextBox _outDir = new() { ReadOnly = true, Location = new Point(70, 43), Width = 470, Font = Theme.Ui };
     private readonly Button _inPick = new() { Text = "…", Location = new Point(546, 11), Width = 30, FlatStyle = FlatStyle.System };
     private readonly Button _outPick = new() { Text = "…", Location = new Point(546, 41), Width = 30, FlatStyle = FlatStyle.System };
+    // MKVToolNix: mux what Demux writes back into one Matroska file. Launched the usual way.
+    private readonly Button _mkvToolNix = new() { Text = "MKVToolNix…", Location = new Point(600, 10), Width = 124, FlatStyle = FlatStyle.System };
     private readonly Button _go = new() { Text = "Demux", Location = new Point(600, 40), Width = 124, FlatStyle = FlatStyle.System, Enabled = false };
     private readonly TextBox _log = new()
     {
@@ -46,8 +48,14 @@ internal sealed class VobDemuxView : UserControl
         _inPick.Click += (_, _) => ChooseIn();
         _outPick.Click += (_, _) => ChooseOut();
         _go.Click += (_, _) => Demux();
+        _mkvToolNix.Click += (_, _) => ExternalToolLauncher.Launch(
+            () => Settings.ExternalDumperPathMkvToolNix,
+            p => Settings.ExternalDumperPathMkvToolNix = p,
+            "Locate MKVToolNix GUI (mkvtoolnix-gui.exe)",
+            "Add the demuxed streams from the output folder there to mux them into an .mkv.",
+            (msg, _) => _log.AppendText("\r\n" + msg));
 
-        Controls.AddRange(new Control[] { _in, _outDir, _inPick, _outPick, _go, _log });
+        Controls.AddRange(new Control[] { _in, _outDir, _inPick, _outPick, _go, _mkvToolNix, _log });
 
         _log.Text =
             "Choose an unencrypted VOB or MPG and an output folder, then Demux." + "\r\n\r\n" +

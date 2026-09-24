@@ -32,7 +32,7 @@ internal sealed class PatchView : UserControl
     private readonly TextBox _log = new()
     {
         Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Font = Theme.Mono,
-        Location = new Point(12, 172), Size = new Size(712, 268),
+        Location = new Point(12, 206), Size = new Size(712, 234),
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
     };
 
@@ -40,10 +40,20 @@ internal sealed class PatchView : UserControl
     private string? _imagePath;
     private PpfPatchFile? _parsed;
 
-    private enum PatchKind { None, Ppf, Ips, Bps }
+    private enum PatchKind { None, Ppf, Ips, Bps, Xdelta }
     private PatchKind _kind = PatchKind.None;
     private IpsPatchFile? _ips;
     private BpsPatchFile? _bps;
+    private byte[]? _xdelta;
+    private VcdiffPatchInfo? _xdeltaInfo;
+
+    // For the xdelta patches DiscForge can't apply itself (xdelta3's DJW/FGK secondary compression):
+    // a front-end the user already has — Delta Patcher, xdelta UI, or xdelta3.exe itself. Same
+    // launch-and-forget posture as every other external-tool button (see ExternalToolLauncher).
+    private readonly Button _externalXdelta = new()
+    {
+        Text = "xdelta tool…", Location = new Point(600, 172), Width = 124, FlatStyle = FlatStyle.System,
+    };
 
     public PatchView()
     {
@@ -54,7 +64,7 @@ internal sealed class PatchView : UserControl
         DragEnter += (_, e) => e.Effect = HasFiles(e) ? DragDropEffects.Copy : DragDropEffects.None;
         DragDrop += (_, e) => AcceptDrop(e);
 
-        var openPatch = new Button { Text = "Patch (.ppf)…", Location = new Point(12, 12), Width = 100, FlatStyle = FlatStyle.System };
+        var openPatch = new Button { Text = "Patch…", Location = new Point(12, 12), Width = 100, FlatStyle = FlatStyle.System };
         openPatch.Click += (_, _) => ChoosePatch();
         var openImage = new Button { Text = "Image (.bin)…", Location = new Point(12, 44), Width = 100, FlatStyle = FlatStyle.System };
         openImage.Click += (_, _) => ChooseImage();
@@ -69,10 +79,16 @@ internal sealed class PatchView : UserControl
         edit.Click += (_, _) => DoEdit();
         var create = new Button { Text = "Create patch…", Location = new Point(600, 140), Width = 124, FlatStyle = FlatStyle.System };
         create.Click += (_, _) => DoCreate();
+        _externalXdelta.Click += (_, _) => ExternalToolLauncher.Launch(
+            () => Settings.ExternalDumperPathXdeltaGui,
+            p => Settings.ExternalDumperPathXdeltaGui = p,
+            "Locate your xdelta tool (Delta Patcher, xdelta UI, or xdelta3.exe)",
+            "Apply the patch there; DiscForge's Verify can check the result afterwards.",
+            (msg, _) => Log(msg));
 
         Controls.AddRange(new Control[]
         {
-            openPatch, openImage, apply, undo, convert, edit, create,
+            openPatch, openImage, apply, undo, convert, edit, create, _externalXdelta,
             _patch, _image, _summary, _force, _log,
         });
     }
@@ -90,7 +106,8 @@ internal sealed class PatchView : UserControl
             var ext = Path.GetExtension(f);
             if (ext.Equals(".ppf", StringComparison.OrdinalIgnoreCase)
                 || ext.Equals(".ips", StringComparison.OrdinalIgnoreCase)
-                || ext.Equals(".bps", StringComparison.OrdinalIgnoreCase)) SetPatch(f);
+                || ext.Equals(".bps", StringComparison.OrdinalIgnoreCase)
+                || IsXdeltaExtension(ext)) SetPatch(f);
             else SetImage(f);
         }
     }
@@ -99,7 +116,9 @@ internal sealed class PatchView : UserControl
     {
         using var dlg = new OpenFileDialog
         {
-            Filter = "Patches (*.ppf;*.ips;*.bps)|*.ppf;*.ips;*.bps|PPF (*.ppf)|*.ppf|IPS (*.ips)|*.ips|BPS (*.bps)|*.bps|All files (*.*)|*.*",
+            Filter = "Patches (*.ppf;*.ips;*.bps;*.xdelta;*.vcdiff;*.delta)|*.ppf;*.ips;*.bps;*.xdelta;*.vcdiff;*.delta;*.xd|" +
+                     "PPF (*.ppf)|*.ppf|IPS (*.ips)|*.ips|BPS (*.bps)|*.bps|xdelta (*.xdelta;*.vcdiff;*.delta)|*.xdelta;*.vcdiff;*.delta;*.xd|" +
+                     "All files (*.*)|*.*",
         };
         if (dlg.ShowDialog() == DialogResult.OK) SetPatch(dlg.FileName);
     }
@@ -114,11 +133,21 @@ internal sealed class PatchView : UserControl
     {
         _patchPath = path;
         _patch.Text = path;
-        _parsed = null; _ips = null; _bps = null; _kind = PatchKind.None;
+        _parsed = null; _ips = null; _bps = null; _xdelta = null; _xdeltaInfo = null; _kind = PatchKind.None;
         var ext = Path.GetExtension(path);
         try
         {
-            if (ext.Equals(".ips", StringComparison.OrdinalIgnoreCase))
+            if (IsXdeltaExtension(ext) || StartsWithVcdiffMagic(path))
+            {
+                _xdelta = File.ReadAllBytes(path);
+                _xdeltaInfo = VcdiffPatch.Inspect(_xdelta);
+                _kind = PatchKind.Xdelta;
+                _summary.Text = _xdeltaInfo.Summary();
+                if (!_xdeltaInfo.Supported)
+                    Log("This patch uses xdelta3's " + _xdeltaInfo.SecondaryName + " secondary compression, which " +
+                        "DiscForge can't decode — use \"xdelta tool…\" to apply it with Delta Patcher / xdelta UI / xdelta3.");
+            }
+            else if (ext.Equals(".ips", StringComparison.OrdinalIgnoreCase))
             {
                 _ips = IpsPatch.ParseFile(path);
                 _kind = PatchKind.Ips;
@@ -149,6 +178,22 @@ internal sealed class PatchView : UserControl
         }
     }
 
+    private static bool IsXdeltaExtension(string ext) =>
+        ext.Equals(".xdelta", StringComparison.OrdinalIgnoreCase) || ext.Equals(".vcdiff", StringComparison.OrdinalIgnoreCase)
+        || ext.Equals(".delta", StringComparison.OrdinalIgnoreCase) || ext.Equals(".xd", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>xdelta patches often travel with odd or no extensions (".pat", ".patch"): sniff the magic.</summary>
+    private static bool StartsWithVcdiffMagic(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            Span<byte> head = stackalloc byte[4];
+            return fs.Read(head) == 4 && VcdiffPatch.HasMagic(head);
+        }
+        catch (IOException) { return false; }
+    }
+
     private void SetImage(string path)
     {
         _imagePath = path;
@@ -166,6 +211,11 @@ internal sealed class PatchView : UserControl
 
     private void DoApply(bool undo)
     {
+        if (_kind == PatchKind.Xdelta)
+        {
+            _ = ApplyXdeltaAsync(undo);
+            return;
+        }
         if (_kind is PatchKind.Ips or PatchKind.Bps)
         {
             ApplyIpsOrBps(undo);
@@ -254,6 +304,63 @@ internal sealed class PatchView : UserControl
             Log($"Apply failed: {ex.Message}");
             RetroMessageBox.Show(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// xdelta/VCDIFF: streamed straight from the source image to a new file, window by window, each
+    /// window's Adler-32 checked as it's written ("Skip validation" turns that off). Runs off the UI
+    /// thread — a DVD-size image takes a little while.
+    /// </summary>
+    private async Task ApplyXdeltaAsync(bool undo)
+    {
+        if (undo) { RetroMessageBox.Show("xdelta patches carry no undo data. Keep a backup of the original image."); return; }
+        if (_xdelta is null || _xdeltaInfo is null) { RetroMessageBox.Show("Open a patch first."); return; }
+        if (_imagePath is null) { RetroMessageBox.Show("Choose the image to patch."); return; }
+        if (!_xdeltaInfo.Supported)
+        {
+            RetroMessageBox.Show($"This patch uses xdelta3's {_xdeltaInfo.SecondaryName} secondary compression, which " +
+                                 "DiscForge can't decode. Use \"xdelta tool…\" to apply it with Delta Patcher, xdelta UI or xdelta3.");
+            return;
+        }
+
+        using var save = new SaveFileDialog
+        {
+            Title = "Save patched image (xdelta)",
+            Filter = "Disc images (*.bin;*.img;*.iso)|*.bin;*.img;*.iso|All files (*.*)|*.*",
+            FileName = Path.GetFileNameWithoutExtension(_imagePath) + "_patched" + Path.GetExtension(_imagePath),
+        };
+        if (save.ShowDialog() != DialogResult.OK) return;
+        if (string.Equals(Path.GetFullPath(save.FileName), Path.GetFullPath(_imagePath), StringComparison.OrdinalIgnoreCase))
+        {
+            RetroMessageBox.Show("Save the patched image under a different name — the patch reads the original while writing.");
+            return;
+        }
+
+        string imagePath = _imagePath, outPath = save.FileName;
+        byte[] patch = _xdelta;
+        bool verify = !_force.Checked;
+        Log($"Applying xdelta patch ({_xdeltaInfo.WindowCount:N0} window(s), {_xdeltaInfo.TargetSize:N0} bytes)…");
+        Enabled = false;
+        try
+        {
+            long n = await Task.Run(() =>
+            {
+                using var src = File.OpenRead(imagePath);
+                using var dst = new FileStream(outPath, FileMode.Create, FileAccess.ReadWrite);
+                return VcdiffPatch.Apply(patch, src, dst, verify);
+            });
+            Log($"Applied xdelta patch → {Path.GetFileName(outPath)} ({n:N0} bytes" +
+                (verify && _xdeltaInfo.HasChecksums ? ", every window's Adler-32 matched)." : ", not checksum-verified)."));
+            StatusBus.Report($"Applied xdelta patch — {Path.GetFileName(outPath)}");
+            AppLog.Write($"xdelta apply {Path.GetFileName(_patchPath!)} -> {Path.GetFileName(outPath)}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Apply failed: {ex.Message}");
+            try { File.Delete(outPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            RetroMessageBox.Show(ex.Message);
+        }
+        finally { Enabled = true; }
     }
 
     private void DoCreate()

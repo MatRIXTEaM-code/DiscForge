@@ -54,7 +54,16 @@ internal sealed class SetsView : UserControl
         analyze.Click += (_, _) => Analyze();
         var saveDat = new Button { Text = "Save filtered DAT…", Location = new Point(456, 94), Width = 130, FlatStyle = FlatStyle.System };
         saveDat.Click += (_, _) => SaveFilteredDat();
-        g.Controls.AddRange(new Control[] { _dat, pickDat, analyze, _regions, _keepProto, saveDat, _1g1rStatus });
+        // A full DAT-based ROM manager (RomVault, clrmamepro, igir…) for collection work beyond
+        // 1G1R and rebuild — scanning, fix-DATs, merging. Launched the usual way.
+        var romManager = new Button { Text = "ROM manager…", Location = new Point(592, 38), Width = 110, FlatStyle = FlatStyle.System };
+        romManager.Click += (_, _) => ExternalToolLauncher.Launch(
+            () => Settings.ExternalDumperPathRomManager,
+            p => Settings.ExternalDumperPathRomManager = p,
+            "Locate your ROM manager (RomVault, clrmamepro, igir…)",
+            "DATs saved here (Save filtered DAT…) can be loaded straight into it.",
+            (msg, _) => { _1g1rStatus.Text = msg; _1g1rStatus.ForeColor = Color.Gray; });
+        g.Controls.AddRange(new Control[] { _dat, pickDat, analyze, _regions, _keepProto, saveDat, _1g1rStatus, romManager });
 
         // --- Rebuild box ---
         var rb = new GroupBox { Text = "Rebuild a clean, DAT-named set", Location = new Point(12, 172), Size = new Size(710, 218), Font = Theme.UiBold };

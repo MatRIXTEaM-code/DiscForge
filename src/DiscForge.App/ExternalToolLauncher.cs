@@ -15,7 +15,9 @@ namespace DiscForge.App;
 /// whatever isn't already covered by a named button), Burn's burners (ImgBurn,
 /// Alcohol 120%, DAEMON Tools), and the format-specific screens (Xbox's Xbox Backup Creator/
 /// abgx360, the memory card screen's MemcardRex), plus redumper/MPF on Read, EAC/CUERipper on Rip
-/// Audio, QPxTool/Opti Drive Control on the quality scan, and ScummVM on the ScummVM screen. Originally lived only in ReadView as a private
+/// Audio, QPxTool/Opti Drive Control on the quality scan, ScummVM on the ScummVM screen, and
+/// WinCDEmu, CUETools, MKVToolNix, a hex editor, Universal Dreamcast Patcher, a DAT ROM manager and
+/// an xdelta front-end on their respective screens. Originally lived only in ReadView as a private
 /// method; pulled out here once BurnView needed the identical behaviour, rather than
 /// copy-pasting it a second time. Ask for the tool's path once (via the <paramref
 /// name="getPath"/>/<paramref name="setPath"/> accessors the caller supplies — each button
@@ -111,6 +113,18 @@ internal static class ExternalToolLauncher
         Launch(getPath, setPath, pickerTitle, followUpMessage,
             (msg, isError) => log.Add(msg, isError ? EventLogView.Level.Error : EventLogView.Level.Info),
             startInfo);
+
+    /// <summary>
+    /// Start the tool with the given file handed to it on its command line — for tools that open a
+    /// file passed that way (hex editors, WinCDEmu's batch mounter, CUETools). A null or missing file
+    /// just starts the tool bare.
+    /// </summary>
+    public static Func<string, System.Diagnostics.ProcessStartInfo> OpeningFile(string? file) => exe =>
+        new System.Diagnostics.ProcessStartInfo(exe)
+        {
+            Arguments = string.IsNullOrEmpty(file) || !File.Exists(file) ? "" : $"\"{file}\"",
+            UseShellExecute = true,
+        };
 
     /// <summary>
     /// Start a console tool inside a <c>cmd.exe /k</c> window opened in the tool's own folder, running

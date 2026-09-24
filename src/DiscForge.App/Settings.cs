@@ -208,6 +208,29 @@ internal sealed class SettingsModel
     /// which starts it pointed at the game folder that screen just identified.</summary>
     public string? ExternalDumperPathScummVm { get; set; }
 
+    /// <summary>Last-used path to an xdelta front-end (Delta Patcher, xdelta UI) or xdelta3.exe — used
+    /// from PatchView for the xdelta patches DiscForge's own VCDIFF decoder declines (xdelta3's DJW/FGK
+    /// secondary compression).</summary>
+    public string? ExternalDumperPathXdeltaGui { get; set; }
+
+    /// <summary>Last-used path to WinCDEmu (its batchmnt.exe, or your virtual-drive tool) — used from MountView for images Windows' own mount can't take: BIN/CUE, audio and mixed-mode discs, CCD/MDS/NRG. Own remembered path, same reason as every other field here.</summary>
+    public string? ExternalDumperPathWinCdEmu { get; set; }
+
+    /// <summary>Last-used path to CUETools — used from AccurateRipView: verify an existing rip against AccurateRip and the CUETools database, and repair it from CTDB parity where possible. Own remembered path, same reason as every other field here.</summary>
+    public string? ExternalDumperPathCueTools { get; set; }
+
+    /// <summary>Last-used path to MKVToolNix GUI — used from VobDemuxView, to mux the elementary streams DiscForge demuxes into a Matroska file. Own remembered path, same reason as every other field here.</summary>
+    public string? ExternalDumperPathMkvToolNix { get; set; }
+
+    /// <summary>Last-used path to a hex editor (HxD, ImHex, …) — used from SectorView, opened on the current image file. Own remembered path, same reason as every other field here.</summary>
+    public string? ExternalDumperPathHexEditor { get; set; }
+
+    /// <summary>Last-used path to Universal Dreamcast Patcher — used from DreamcastView, for applying .DCP translation/fan patches to a GDI. Own remembered path, same reason as every other field here.</summary>
+    public string? ExternalDumperPathDreamcastPatcher { get; set; }
+
+    /// <summary>Last-used path to a DAT-based ROM manager (RomVault, clrmamepro, igir…) — used from SetsView, for collection management beyond DiscForge's own 1G1R and rebuild. Own remembered path, same reason as every other field here.</summary>
+    public string? ExternalDumperPathRomManager { get; set; }
+
     /// <summary>Last-used path to a sector-level drive/image cloning tool (e.g. HDD Raw Copy Tool)
     /// — used from RawCopyView. A different domain from every other external-tool field here: those
     /// are all optical-disc/cartridge/floppy specific, while this clones a whole physical drive (or
@@ -451,6 +474,48 @@ internal static class Settings
     {
         get => _model.ExternalDumperPathScummVm;
         set { _model.ExternalDumperPathScummVm = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathXdeltaGui
+    {
+        get => _model.ExternalDumperPathXdeltaGui;
+        set { _model.ExternalDumperPathXdeltaGui = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathWinCdEmu
+    {
+        get => _model.ExternalDumperPathWinCdEmu;
+        set { _model.ExternalDumperPathWinCdEmu = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathCueTools
+    {
+        get => _model.ExternalDumperPathCueTools;
+        set { _model.ExternalDumperPathCueTools = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathMkvToolNix
+    {
+        get => _model.ExternalDumperPathMkvToolNix;
+        set { _model.ExternalDumperPathMkvToolNix = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathHexEditor
+    {
+        get => _model.ExternalDumperPathHexEditor;
+        set { _model.ExternalDumperPathHexEditor = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathDreamcastPatcher
+    {
+        get => _model.ExternalDumperPathDreamcastPatcher;
+        set { _model.ExternalDumperPathDreamcastPatcher = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathRomManager
+    {
+        get => _model.ExternalDumperPathRomManager;
+        set { _model.ExternalDumperPathRomManager = value; Save(); }
     }
 
     public static string? ExternalDumperPathHddRawCopy

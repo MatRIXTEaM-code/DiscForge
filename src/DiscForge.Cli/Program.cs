@@ -302,6 +302,8 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  ips-create <orig> <mod> <out.ips>  Build an IPS patch from a before/after pair");
     Console.WriteLine("  bps-apply <patch.bps> <source> [--out f]  Apply a BPS patch (CRC-verified)");
     Console.WriteLine("  bps-create <source> <target> <out.bps>  Build a BPS patch from a before/after pair");
+    Console.WriteLine("  xdelta-apply <patch.xdelta> <source> [--out f] [--no-verify]  Apply an xdelta3/VCDIFF patch (streams; per-window Adler-32 verified; LZMA-compressed patches supported, DJW/FGK not)");
+    Console.WriteLine("  xdelta-info <patch.xdelta> [--json]  Show an xdelta3/VCDIFF patch's header: windows, output size, secondary compression, file names, and whether DiscForge can apply it");
     Console.WriteLine("  create-udf <folder> <out.udf> [--udf-version 1.02|1.50|2.00|2.01|2.50|2.60]  Build a UDF filesystem image from a folder");
     Console.WriteLine("                          --volume NAME sets the volume label");
     Console.WriteLine("  create-udf-bridge <folder> <out.iso>  Build a UDF-bridge image readable as BOTH");
@@ -703,6 +705,8 @@ return args[0].ToLowerInvariant() switch
     "ips-create" => IpsCreate(args),
     "bps-apply" => BpsApply(args),
     "bps-create" => BpsCreate(args),
+    "xdelta-apply" => XdeltaApply(args),
+    "xdelta-info" => XdeltaInfo(args),
     "create-udf" => CreateUdf(args),
     "create-udf-bridge" => CreateUdfBridge(args),
     "dvd-video-plan" => DvdVideoPlanCmd(args),
@@ -17961,6 +17965,75 @@ static int BpsApply(string[] args)
         File.WriteAllBytes(outPath, target);
         Console.WriteLine($"Applied BPS patch -> {Path.GetFileName(outPath)} ({target.Length:N0} bytes, CRC verified)." +
                           (patch.Metadata.Length > 0 ? $" Metadata: {patch.Metadata}" : ""));
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int XdeltaApply(string[] args)
+{
+    if (args.Length < 3)
+        return Fail("usage: dforge xdelta-apply <patch.xdelta> <source> [--out <file>] [--no-verify]\n" +
+                    "  Applies an xdelta3 / VCDIFF (RFC 3284) patch — the format most PS1/PS2/GameCube translation\n" +
+                    "  and fan patches ship in. The output is written window by window, so DVD-size images never\n" +
+                    "  need to fit in memory. Each window's Adler-32 is checked as it is written, which catches a\n" +
+                    "  wrong source image at the first window that differs; --no-verify skips that check.\n" +
+                    "  Default output: <source>_patched<ext> beside the source (the source is never overwritten).\n" +
+                    "  Patches using xdelta3's DJW or FGK secondary compression are refused with a pointer to xdelta3.");
+    if (!File.Exists(args[1])) return Fail($"Patch not found: {args[1]}");
+    if (!File.Exists(args[2])) return Fail($"Source not found: {args[2]}");
+    string outPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[2]))!,
+        Path.GetFileNameWithoutExtension(args[2]) + "_patched" + Path.GetExtension(args[2]));
+    bool verify = true;
+    for (int i = 3; i < args.Length; i++)
+        switch (args[i])
+        {
+            case "--out" when i + 1 < args.Length: outPath = args[++i]; break;
+            case "--no-verify": verify = false; break;
+            default: return Fail($"Unknown option: {args[i]}");
+        }
+    if (string.Equals(Path.GetFullPath(outPath), Path.GetFullPath(args[2]), StringComparison.OrdinalIgnoreCase))
+        return Fail("--out must differ from the source: an xdelta patch reads the source while writing the output.");
+    try
+    {
+        var patch = File.ReadAllBytes(args[1]);
+        var info = DiscForge.Core.Patch.VcdiffPatch.Inspect(patch);
+        if (!info.Supported) return Fail(info.Summary() + " — DiscForge can't apply this one; use xdelta3.");
+        long n;
+        using (var src = File.OpenRead(args[2]))
+        using (var dst = new FileStream(outPath, FileMode.Create, FileAccess.ReadWrite))
+            n = DiscForge.Core.Patch.VcdiffPatch.Apply(patch, src, dst, verify);
+        Console.WriteLine($"Applied xdelta patch -> {Path.GetFileName(outPath)} ({n:N0} bytes, {info.WindowCount:N0} window(s)" +
+                          (verify && info.HasChecksums ? ", Adler-32 verified)." : ", not checksum-verified)."));
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        try { if (File.Exists(outPath) && new FileInfo(outPath).Length == 0) File.Delete(outPath); } catch { }
+        return Fail(ex.Message);
+    }
+}
+
+static int XdeltaInfo(string[] args)
+{
+    if (args.Length < 2) return Fail("usage: dforge xdelta-info <patch.xdelta> [--json]");
+    if (!File.Exists(args[1])) return Fail($"Patch not found: {args[1]}");
+    try
+    {
+        var info = DiscForge.Core.Patch.VcdiffPatch.InspectFile(args[1]);
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                info.WindowCount, info.TargetSize, info.SecondaryCompressor, info.SecondaryName,
+                info.UsesSecondaryCompression, info.CustomCodeTable, info.HasChecksums,
+                info.ApplicationHeader, info.Supported,
+            });
+            return 0;
+        }
+        Console.WriteLine(info.Summary());
+        if (info.ApplicationHeader is { Length: > 0 }) Console.WriteLine($"  file names   : {info.ApplicationHeader}");
+        Console.WriteLine(info.Supported ? "  DiscForge can apply this patch (xdelta-apply)." : "  DiscForge can't apply this patch — use xdelta3.");
         return 0;
     }
     catch (Exception ex) { return Fail(ex.Message); }

@@ -70,6 +70,17 @@ internal sealed class SectorView : UserControl
         openDrive.Click += async (_, _) => await OpenDriveAsync();
         _path.Location = new Point(226, 14);
         _path.Width = 300;
+        // Hand the open image to a full hex editor (HxD, ImHex…) for searching, editing and
+        // templates — this view is a read-only sector viewer by design.
+        var hexEditor = new Button { Text = "Hex editor…", Location = new Point(534, 12), Width = 100, FlatStyle = FlatStyle.System };
+        hexEditor.Click += (_, _) => ExternalToolLauncher.Launch(
+            () => Settings.ExternalDumperPathHexEditor,
+            p => Settings.ExternalDumperPathHexEditor = p,
+            "Locate your hex editor (HxD, ImHex, …)",
+            File.Exists(_path.Text) ? $"Opened {Path.GetFileName(_path.Text)} in it." : "Open an image file here first to have it opened directly.",
+            (msg, _) => StatusBus.Report(msg),
+            ExternalToolLauncher.OpeningFile(_path.Text));
+        Controls.Add(hexEditor);
 
         int y = 44;
         Controls.Add(new Label { Text = "Address:", AutoSize = true, Location = new Point(12, y + 3), Font = Theme.Ui });
