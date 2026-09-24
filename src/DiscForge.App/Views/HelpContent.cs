@@ -239,9 +239,9 @@ internal static class HelpContent
             "Re-encodes a video to hit a target file or disc size, trading bitrate for size. Pairs with DVD " +
             "Shrink when the structural shrink alone isn't enough."),
 
-        new("patch", "🩹", "PPF Patch", "Apply or build a PPF/IPS/BPS patch, or apply an xdelta",
+        new("patch", "🩹", "PPF Patch", "Apply or build a PPF/IPS/BPS/xdelta patch",
             "Applies a patch to an image or ROM, or builds a patch from an original and a modified copy. " +
-            "Supports PlayStation PPF (v1–v3) plus IPS and BPS, and applies xdelta3/VCDIFF patches (the usual " +
+            "Supports PlayStation PPF (v1–v3) plus IPS and BPS, and applies and builds xdelta3/VCDIFF patches (the usual " +
             "format for PS1/PS2/GameCube translations) — streamed, so DVD-size images are fine, with every " +
             "window's checksum verified. Drop in the file and the patch, or two files to diff."),
 

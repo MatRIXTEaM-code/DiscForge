@@ -49,3 +49,11 @@ from a fixed LCG (see `VcdiffPatchTests`), SHA-1 of the target `1bfdd91a…cef0`
 - `words-lzma.xd` — `xdelta3 -e -S lzma tgt3.bin`, tgt3 = 6,000 random words (Python
   `random.seed(7)`), SHA-1 `11f9de8b…eb6d`; genuinely LZMA-compressed chunks
 - `djw.xd` — same input with `-S djw`: DJW secondary compression, which DiscForge declines
+
+## wia/ — real WIA files for RvzDecoderTests
+
+`small-lzma.wia` / `small-lzma2.wia`: written by Wiimms ISO Tools 3.05a with
+`wit copy small.iso --raw --wia=lzma|lzma2 --chunk-size 256K` (wit rounds the chunk up to 2 MiB).
+`small.iso` is a synthetic 1 MiB GameCube image (disc ID GDFE01, "DISCFORGE TEST", one text file,
+then repeated "LBA nnnnnn: …" lines), SHA-256 `506e2018…72ff3`. Not stored — the test checks the
+decode's hash.

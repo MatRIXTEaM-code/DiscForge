@@ -797,56 +797,113 @@ private readonly CheckBox _captureSub = new()
             _log);
 
     /// <summary>
-    /// Copy an image an external tool produced into wherever the user keeps their library.
-    /// DiscForge did not read or verify this image itself — it's a plain file copy, not a rip —
-    /// so the log says as much rather than implying the same verification a real read gets.
+    /// Copy what an external tool produced into wherever the user keeps their library. Picking a
+    /// <c>.cue</c> or <c>.gdi</c> brings the whole set — the sheet, every track file it names, and the
+    /// dumper's log and subchannel sidecars — into a chosen folder (redumper, for one, writes a
+    /// .bin per track); picking a lone image copies just that (plus its log). DiscForge did not read
+    /// this disc itself — it's a plain file copy, not a rip — so the log says as much, and any
+    /// verification comes from the dumper's own log (see <see cref="ReportDumpLogAsync"/>).
     /// </summary>
     private async Task ImportExternalDumpAsync()
     {
         using var open = new OpenFileDialog
         {
-            Title = "Select the image the external tool produced",
-            Filter = "Disc image (*.iso;*.cdi;*.bin;*.img)|*.iso;*.cdi;*.bin;*.img|All files (*.*)|*.*",
+            Title = "Select the image — or the .cue/.gdi — the external tool produced",
+            Filter = "Disc image or sheet (*.cue;*.gdi;*.iso;*.cdi;*.bin;*.img)|*.cue;*.gdi;*.iso;*.cdi;*.bin;*.img|All files (*.*)|*.*",
         };
         if (open.ShowDialog() != DialogResult.OK) return;
 
-        using var save = new SaveFileDialog
+        DiscForge.Core.Dumping.DumpSet set;
+        try { set = DiscForge.Core.Dumping.DumpSet.Resolve(open.FileName); }
+        catch (Exception ex)
         {
-            Title = "Save into your library as",
-            Filter = "Same as source (*.*)|*.*",
-            FileName = Path.GetFileName(open.FileName),
-        };
-        if (save.ShowDialog() != DialogResult.OK) return;
+            _log.Add($"Could not read {Path.GetFileName(open.FileName)}: {ex.Message}", EventLogView.Level.Error);
+            return;
+        }
+        foreach (var m in set.Missing)
+            _log.Add($"The sheet names {Path.GetFileName(m)}, which isn't there — the set is incomplete.", EventLogView.Level.Warn);
+
+        string destDir;
+        if (set.Files.Count == 1)
+        {
+            using var save = new SaveFileDialog
+            {
+                Title = "Save into your library as",
+                Filter = "Same as source (*.*)|*.*",
+                FileName = Path.GetFileName(open.FileName),
+            };
+            if (save.ShowDialog() != DialogResult.OK) return;
+            try
+            {
+                _log.Add($"Copying {Path.GetFileName(open.FileName)} into your library…");
+                await Task.Run(() => File.Copy(open.FileName, save.FileName, overwrite: true));
+                _log.Add($"Imported {Path.GetFileName(save.FileName)}. This came from an external " +
+                         "tool, not a DiscForge read, so nothing here has verified it yet — run " +
+                         "Inspect ▸ Verify on it before relying on it.", EventLogView.Level.Good);
+            }
+            catch (Exception ex)
+            {
+                _log.Add($"Import failed: {ex.Message}", EventLogView.Level.Error);
+                AppLog.WriteException("import external dump", ex);
+                return;
+            }
+            await ReportDumpLogAsync(set, Path.GetDirectoryName(Path.GetFullPath(save.FileName))!);
+            return;
+        }
+
+        using (var folder = new FolderBrowserDialog
+        {
+            Description = $"Copy the {set.Files.Count}-file dump set into…",
+            UseDescriptionForTitle = true,
+        })
+        {
+            if (folder.ShowDialog() != DialogResult.OK) return;
+            destDir = folder.SelectedPath;
+        }
+        if (string.Equals(Path.GetFullPath(destDir).TrimEnd('\\'),
+                          Path.GetDirectoryName(set.Primary)!.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+        {
+            _log.Add("That's the folder the dump is already in — nothing to copy.", EventLogView.Level.Warn);
+            await ReportDumpLogAsync(set, destDir);
+            return;
+        }
 
         try
         {
-            _log.Add($"Copying {Path.GetFileName(open.FileName)} into your library…");
-            await Task.Run(() => File.Copy(open.FileName, save.FileName, overwrite: true));
-            _log.Add($"Imported {Path.GetFileName(save.FileName)}. This came from an external " +
-                     "tool, not a DiscForge read, so nothing here has verified it yet — run " +
-                     "Inspect ▸ Verify on it before relying on it.", EventLogView.Level.Good);
-            await ReportDumpLogAsync(open.FileName);
+            long total = set.Files.Sum(f => new FileInfo(f).Length);
+            _log.Add($"Copying {set.Files.Count} files ({total / (1024.0 * 1024.0):0.0} MB) into {destDir}…");
+            await Task.Run(() =>
+            {
+                foreach (var f in set.Files)
+                    File.Copy(f, Path.Combine(destDir, Path.GetFileName(f)), overwrite: true);
+            });
+            _log.Add($"Imported {Path.GetFileName(set.Primary)} and its {set.Files.Count - 1} companion file(s). " +
+                     "This came from an external tool, not a DiscForge read — run Inspect ▸ Verify on it " +
+                     "before relying on it.", EventLogView.Level.Good);
         }
         catch (Exception ex)
         {
             _log.Add($"Import failed: {ex.Message}", EventLogView.Level.Error);
-            AppLog.WriteException("import external dump", ex);
+            AppLog.WriteException("import external dump set", ex);
+            return;
         }
+        await ReportDumpLogAsync(set, destDir);
     }
 
     /// <summary>
-    /// If the dumper left a log beside the image (redumper writes <c>&lt;name&gt;.log</c>; so does a
+    /// If the dumper left a log beside the dump (redumper writes <c>&lt;name&gt;.log</c>; so does a
     /// DiscImageCreator run driven by MPF), read it and say what it recorded: tool version, drive,
-    /// error counts. For a redumper log, whose <c>dat:</c> block carries a SHA-1 per file, the
-    /// imported file is hashed and checked against its entry — a real check of the copy against
-    /// what the dumper itself recorded, not a claim the log is right about the disc. Best-effort:
-    /// a missing or unreadable log just means nothing extra is reported.
+    /// error counts. For a redumper log, whose <c>dat:</c> block carries a SHA-1 per file, every
+    /// imported file the dat names is hashed (the copy, in <paramref name="importedDir"/>) and checked
+    /// against its entry — a real check of the copies against what the dumper itself recorded, not a
+    /// claim the log is right about the disc. Best-effort: a missing or unreadable log just means
+    /// nothing extra is reported.
     /// </summary>
-    private async Task ReportDumpLogAsync(string imagePath)
+    private async Task ReportDumpLogAsync(DiscForge.Core.Dumping.DumpSet set, string importedDir)
     {
         try
         {
-            string? logPath = FindDumpLog(imagePath);
+            string? logPath = set.Log;
             if (logPath is null) return;
             string text = await File.ReadAllTextAsync(logPath);
 
@@ -857,27 +914,28 @@ private readonly CheckBox _captureSub = new()
                     r.LooksClean ? EventLogView.Level.Info : EventLogView.Level.Warn);
                 if (r.WriteOffset is { Length: > 0 }) _log.Add($"  Write offset recorded by redumper: {r.WriteOffset}.");
 
-                var entry = r.Roms.FirstOrDefault(x =>
-                    string.Equals(x.Name, Path.GetFileName(imagePath), StringComparison.OrdinalIgnoreCase));
-                if (entry?.Sha1 is { Length: > 0 } expected)
+                int checkedCount = 0, matched = 0;
+                foreach (var entry in r.Roms)
                 {
-                    _log.Add($"Checking {entry.Name} against the SHA-1 redumper recorded…");
+                    if (entry.Sha1 is not { Length: > 0 } expected) continue;
+                    string copy = Path.Combine(importedDir, entry.Name);
+                    if (!File.Exists(copy)) continue;
+                    checkedCount++;
                     string actual = await Task.Run(() =>
                     {
-                        using var fs = File.OpenRead(imagePath);
+                        using var fs = File.OpenRead(copy);
                         return Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(fs));
                     });
-                    if (string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
-                        _log.Add($"  SHA-1 matches the log ({actual.ToLowerInvariant()}).", EventLogView.Level.Good);
+                    if (string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase)) matched++;
                     else
-                        _log.Add($"  SHA-1 does NOT match the log: file {actual.ToLowerInvariant()}, " +
+                        _log.Add($"  {entry.Name}: SHA-1 does NOT match the log — file {actual.ToLowerInvariant()}, " +
                                  $"log {expected.ToLowerInvariant()}.", EventLogView.Level.Error);
                 }
-                else if (r.Roms.Count > 0)
-                {
-                    _log.Add($"  The log's dat lists {r.Roms.Count} file(s); \"{Path.GetFileName(imagePath)}\" " +
-                             "isn't one of them by name, so its hash wasn't checked.");
-                }
+                if (checkedCount > 0 && matched == checkedCount)
+                    _log.Add($"  All {matched} file(s) match the SHA-1s redumper recorded.", EventLogView.Level.Good);
+                else if (checkedCount == 0 && r.Roms.Count > 0)
+                    _log.Add($"  The log's dat lists {r.Roms.Count} file(s), none of them among the imported files by name, " +
+                             "so no hashes were checked.");
             }
             else
             {
@@ -891,19 +949,6 @@ private readonly CheckBox _captureSub = new()
         {
             AppLog.Write($"dump log beside import: {ex.Message}");
         }
-    }
-
-    /// <summary><c>&lt;name&gt;.log</c> beside the image, with redumper's " (Track N)" suffix stripped
-    /// so a picked track file still finds its dump's log; failing that, the folder's only .log.</summary>
-    private static string? FindDumpLog(string imagePath)
-    {
-        string dir = Path.GetDirectoryName(imagePath) ?? ".";
-        string stem = System.Text.RegularExpressions.Regex.Replace(
-            Path.GetFileNameWithoutExtension(imagePath), @"\s*\(Track \d+\)$", "");
-        string direct = Path.Combine(dir, stem + ".log");
-        if (File.Exists(direct)) return direct;
-        var logs = Directory.GetFiles(dir, "*.log");
-        return logs.Length == 1 ? logs[0] : null;
     }
 
     private static string Rate(double bytesDone, double secs)

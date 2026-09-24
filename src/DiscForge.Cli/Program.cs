@@ -303,6 +303,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  bps-apply <patch.bps> <source> [--out f]  Apply a BPS patch (CRC-verified)");
     Console.WriteLine("  bps-create <source> <target> <out.bps>  Build a BPS patch from a before/after pair");
     Console.WriteLine("  xdelta-apply <patch.xdelta> <source> [--out f] [--no-verify]  Apply an xdelta3/VCDIFF patch (streams; per-window Adler-32 verified; LZMA-compressed patches supported, DJW/FGK not)");
+    Console.WriteLine("  xdelta-create <source> <target> <out.xdelta>  Build an xdelta3-compatible VCDIFF patch (streamed, 8 MiB windows, per-window Adler-32; no secondary compression)");
     Console.WriteLine("  xdelta-info <patch.xdelta> [--json]  Show an xdelta3/VCDIFF patch's header: windows, output size, secondary compression, file names, and whether DiscForge can apply it");
     Console.WriteLine("  create-udf <folder> <out.udf> [--udf-version 1.02|1.50|2.00|2.01|2.50|2.60]  Build a UDF filesystem image from a folder");
     Console.WriteLine("                          --volume NAME sets the volume label");
@@ -360,7 +361,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  wbfs-extract <file> <slot> <out.iso>  Rebuild one disc's ISO from a WBFS");
     Console.WriteLine("                          container (contents are copied as-is, not decrypted)");
     Console.WriteLine("  rvz-info <image>        Identify an RVZ/WIA container and show its metadata");
-    Console.WriteLine("  rvz-decode <in.rvz> <out.iso>  Reconstruct a GameCube ISO from an RVZ/WIA (zstd/none groups; data-exact, junk zero-filled)");
+    Console.WriteLine("  rvz-decode <in.rvz> <out.iso>  Reconstruct a GameCube ISO from an RVZ/WIA (zstd/LZMA/LZMA2/none groups; data-exact, junk zero-filled)");
     Console.WriteLine("  nkit-info <image>       Detect an NKit-scrubbed GC/Wii image; show source CRC32 for Redump matching");
     Console.WriteLine("  gc-verify <image> [--json]  Single-image GameCube 'good dump' health check: bounds, full boot-chain confirm, region cross-check, size class, padding");
     Console.WriteLine("  gc-junk-map <image> [--json]  Map a GameCube disc's non-game padding and classify each region (junk present / zeroed / structured)");
@@ -707,6 +708,7 @@ return args[0].ToLowerInvariant() switch
     "bps-create" => BpsCreate(args),
     "xdelta-apply" => XdeltaApply(args),
     "xdelta-info" => XdeltaInfo(args),
+    "xdelta-create" => XdeltaCreate(args),
     "create-udf" => CreateUdf(args),
     "create-udf-bridge" => CreateUdfBridge(args),
     "dvd-video-plan" => DvdVideoPlanCmd(args),
@@ -16309,7 +16311,7 @@ static int RvzDecodeCmd(string[] args)
 {
     if (args.Length < 3)
         return Fail("usage: dforge rvz-decode <image.rvz> <out.iso>\n" +
-                    "  Reconstruct a GameCube ISO from an RVZ/WIA container (zstd or uncompressed groups).\n" +
+                    "  Reconstruct a GameCube ISO from an RVZ/WIA container (zstd, LZMA, LZMA2 or uncompressed groups).\n" +
                     "  The container walk, group decompression and reassembly are validated; two limits apply:\n" +
                     "  RVZ 'junk' (disc padding) is ZERO-FILLED — the output is data-exact (files extract, the\n" +
                     "  disc mounts) but not Redump-bit-exact where the disc was scrubbed; and only GameCube discs\n" +
@@ -18012,6 +18014,31 @@ static int XdeltaApply(string[] args)
         try { if (File.Exists(outPath) && new FileInfo(outPath).Length == 0) File.Delete(outPath); } catch { }
         return Fail(ex.Message);
     }
+}
+
+static int XdeltaCreate(string[] args)
+{
+    if (args.Length < 4)
+        return Fail("usage: dforge xdelta-create <source> <target> <out.xdelta>\n" +
+                    "  Builds a VCDIFF (RFC 3284) patch that xdelta3 — and Delta Patcher, xdelta UI, and\n" +
+                    "  DiscForge's own xdelta-apply — can apply to <source> to get <target>. Streamed in 8 MiB\n" +
+                    "  windows with an Adler-32 per window, so a wrong source is caught when it's applied.\n" +
+                    "  Follows data that has moved (insertions/deletions) within a 64 MiB span. No secondary\n" +
+                    "  compression, so patches are larger than xdelta3's own; zip it for distribution.");
+    if (!File.Exists(args[1])) return Fail($"Source not found: {args[1]}");
+    if (!File.Exists(args[2])) return Fail($"Target not found: {args[2]}");
+    try
+    {
+        DiscForge.Core.Patch.VcdiffEncodeReport r;
+        using (var src = File.OpenRead(args[1]))
+        using (var tgt = File.OpenRead(args[2]))
+        using (var outp = File.Create(args[3]))
+            r = DiscForge.Core.Patch.VcdiffEncoder.Create(src, tgt, outp, Path.GetFileName(args[1]), Path.GetFileName(args[2]));
+        Console.WriteLine($"Wrote {Path.GetFileName(args[3])}: {r.PatchBytes:N0} bytes, {r.Windows:N0} window(s) — " +
+                          $"{r.CopiedBytes:N0} bytes copied, {r.AddedBytes:N0} added, {r.RunBytes:N0} as runs.");
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
 }
 
 static int XdeltaInfo(string[] args)

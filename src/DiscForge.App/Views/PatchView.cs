@@ -363,7 +363,7 @@ internal sealed class PatchView : UserControl
         finally { Enabled = true; }
     }
 
-    private void DoCreate()
+    private async void DoCreate()
     {
         using var origDlg = new OpenFileDialog { Title = "Original (unpatched) image", Filter = "Disc images (*.bin;*.img;*.iso)|*.bin;*.img;*.iso|All files (*.*)|*.*" };
         if (origDlg.ShowDialog() != DialogResult.OK) return;
@@ -372,7 +372,7 @@ internal sealed class PatchView : UserControl
         using var outDlg = new SaveFileDialog
         {
             Title = "Save patch as",
-            Filter = "PPF patch (*.ppf)|*.ppf|IPS patch (*.ips)|*.ips|BPS patch (*.bps)|*.bps",
+            Filter = "PPF patch (*.ppf)|*.ppf|IPS patch (*.ips)|*.ips|BPS patch (*.bps)|*.bps|xdelta patch (*.xdelta)|*.xdelta",
             FileName = "patch.ppf",
         };
         if (outDlg.ShowDialog() != DialogResult.OK) return;
@@ -380,7 +380,27 @@ internal sealed class PatchView : UserControl
         try
         {
             var ext = Path.GetExtension(outDlg.FileName);
-            if (ext.Equals(".ips", StringComparison.OrdinalIgnoreCase))
+            if (IsXdeltaExtension(ext))
+            {
+                // Streamed: DVD-size images never have to fit in memory.
+                string orig = origDlg.FileName, mod = modDlg.FileName, outPath = outDlg.FileName;
+                Log("Building xdelta patch…");
+                Enabled = false;
+                try
+                {
+                    var r = await Task.Run(() =>
+                    {
+                        using var src = File.OpenRead(orig);
+                        using var tgt = File.OpenRead(mod);
+                        using var outp = File.Create(outPath);
+                        return VcdiffEncoder.Create(src, tgt, outp, Path.GetFileName(orig), Path.GetFileName(mod));
+                    });
+                    Log($"Wrote {Path.GetFileName(outPath)}: xdelta/VCDIFF, {r.PatchBytes:N0} bytes, {r.Windows:N0} window(s), " +
+                        "Adler-32 per window — applies with xdelta3, Delta Patcher, xdelta UI, or here.");
+                }
+                finally { Enabled = true; }
+            }
+            else if (ext.Equals(".ips", StringComparison.OrdinalIgnoreCase))
             {
                 var ips = IpsPatch.Create(File.ReadAllBytes(origDlg.FileName), File.ReadAllBytes(modDlg.FileName));
                 File.WriteAllBytes(outDlg.FileName, ips);

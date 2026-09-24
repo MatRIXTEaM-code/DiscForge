@@ -2,7 +2,7 @@
 
 *Auto-generated from the CLI's own help (`dforge` with no args). Regenerate after adding commands.*
 
-DiscForge exposes **345 commands** (341 plus `dic-log` and `cold-case`, added 2026-09-18, and `xdelta-apply`/`xdelta-info`, added 2026-09-24 — this
+DiscForge exposes **346 commands** (341 plus `dic-log` and `cold-case`, added 2026-09-18, and `xdelta-apply`/`xdelta-info`/`xdelta-create`, added 2026-09-24 — this
 count was hand-bumped, not re-derived from a real `dforge` run; run `scripts\check-commands-sync.ps1`
 against a real build to confirm it, and note `docs/CLI.md` separately claims 347 and `README.md`
 claims 380 — a pre-existing drift across the three docs that predates tonight and is flagged here
@@ -280,6 +280,7 @@ All analysis is clean-room: DiscForge identifies, verifies, and preserves — it
 - `bps-create <source> <target> <out.bps>  Build a BPS patch from a before/after pair`
 - `xdelta-apply <patch.xdelta> <source> [--out f] [--no-verify]  Apply an xdelta3 / VCDIFF (RFC 3284) patch, streamed window by window (DVD-size images fine) with each window's Adler-32 verified. Supports uncompressed and LZMA-compressed xdelta3 patches; DJW/FGK secondary compression is refused with a pointer to xdelta3. Default output <source>_patched<ext>; the source is never overwritten.`
 - `xdelta-info <patch.xdelta> [--json]  Show an xdelta3/VCDIFF patch's header: window count, output size, secondary compression, embedded file names, and whether DiscForge can apply it.`
+- `xdelta-create <source> <target> <out.xdelta>  Build an xdelta3-compatible VCDIFF patch: streamed in 8 MiB windows against a sliding 64 MiB source slice (with a whole-source anchor index to re-find moved data), per-window Adler-32, no secondary compression. Applies with xdelta3, Delta Patcher, xdelta UI or xdelta-apply.`
 - `save-convert <in> <out> <op> [--fill FF]  Fix a cartridge save's byte order or size. op: swap16|swap32, pad <size|sram|flash|eeprom4k|eeprom16k|mempak>, trim`
 - `rom-convert <in> <out> <op>  Fix a cartridge dump so it matches a DAT. op: z64|v64|n64 (N64 byte order), snes-strip|snes-add, smd|unsmd (Genesis interleave), nes-strip (iNES header)`
 - `gci-info <file>         List GameCube saves in a .gci or a memory-card image`
@@ -341,7 +342,7 @@ All analysis is clean-room: DiscForge identifies, verifies, and preserves — it
 - `aaru-extract <img.aaruf> <out.img>   Extract user data (uncompressed or LZMA; CRC-64-proven)`
 - `aaru-info <img.aaruf>   Identify an AaruFormat image: header, blocks, sectors, compression`
 - `cicm-export <image> [out.xml]        Write a CICM preservation-metadata sidecar (Aaru interop)`
-- `rvz-decode <in.rvz> <out.iso>  Reconstruct a GameCube ISO from an RVZ/WIA (zstd/none groups; data-exact, junk zero-filled)`
+- `rvz-decode <in.rvz> <out.iso>  Reconstruct a GameCube ISO from an RVZ/WIA (zstd/LZMA/LZMA2/none groups; data-exact, junk zero-filled)`
 
 ## GameCube extras
 

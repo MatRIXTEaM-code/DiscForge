@@ -13,7 +13,8 @@ namespace DiscForge.Core.GameCube;
 /// <summary>
 /// Reconstructs a GameCube ISO from an RVZ/WIA container by walking the raw-data and group tables
 /// and decompressing each group with its codec. The zstd blocker is solved
-/// (<see cref="ZstdDecoder"/>), so Zstandard- and uncompressed-group RVZ files reconstruct here.
+/// (<see cref="ZstdDecoder"/>), so Zstandard-, LZMA-, LZMA2- and uncompressed-group RVZ/WIA files
+/// reconstruct here.
 ///
 /// STATUS — the zstd data path is validated against hand-built RVZ containers (single- and
 /// multi-group, non-packed and RVZ-packed) whose ISO is known: the container walk, table
@@ -27,7 +28,15 @@ namespace DiscForge.Core.GameCube;
 ///      scrubbed — it will not match a Redump hash until the LFG lands (needs a fixture to validate).
 ///   2. Only GameCube discs (disc_type 1) are handled. Wii (disc_type 2) needs the partition
 ///      hash-tree + AES layer and is declined.
-///   3. Only the zstd and "none" group codecs are decoded; bzip2/purge/lzma/lzma2 are declined.
+///   3. The zstd, LZMA, LZMA2 and "none" group codecs are decoded (LZMA/LZMA2 via the clean-room
+///      <see cref="Lzma1"/>/<see cref="Lzma2Decoder"/>, validated against WIA files written by
+///      Wiimms ISO Tools); bzip2 and purge are declined.
+///
+/// Raw-data regions follow the container's alignment rule, confirmed against real WIA files: a
+/// region's groups start at its offset rounded DOWN to a 0x8000 boundary (so the first region, which
+/// begins at 0x80 after the disc header kept in the disc struct, is stored from 0), and the bytes
+/// before the region's true start are skipped. The first 0x80 bytes of the disc come from that
+/// stored header.
 ///
 /// Clean-room from the public WIA/RVZ container description.
 /// </summary>
@@ -69,10 +78,8 @@ public static class RvzDecoder
                       "AES re-encryption over protected content — outside this toolkit's clean-room, " +
                       "no-circumvention boundary. Use `RvzDecoder.ReadWiiStructure` to map its partitions instead."
                     : $"Unsupported RVZ disc type {discType} (expected 1 = GameCube).");
-        if (compression is not (RvzCompression.Zstd or RvzCompression.None))
-            throw new GameCubeFormatException(
-                $"This RVZ uses the '{compression}' group codec, which isn't decoded yet — only zstd and none are. " +
-                "Recompress it as zstd (RVZ's default) with Dolphin/wit, or convert to ISO there.");
+        RequireSupportedCodec(compression);
+        byte[] comprData = CompressorData(rvz);
 
         uint numRawData = BE32(rvz, ds + 0xB4);
         ulong rawDataOffset = BE64(rvz, ds + 0xB8);
@@ -85,9 +92,9 @@ public static class RvzDecoder
         int groupEntrySize = isRvz ? 12 : 8;
 
         // The raw-data and group tables are themselves compressed with the disc codec.
-        byte[] rawTable = DecompressBlob(rvz, (long)rawDataOffset, (int)rawDataSize, compression,
+        byte[] rawTable = DecompressBlob(rvz, (long)rawDataOffset, (int)rawDataSize, compression, comprData,
                                          (int)(numRawData * 24));
-        byte[] groupTable = DecompressBlob(rvz, (long)groupOffset, (int)groupSize, compression,
+        byte[] groupTable = DecompressBlob(rvz, (long)groupOffset, (int)groupSize, compression, comprData,
                                            (int)(numGroup * (uint)groupEntrySize));
 
         long isoSize = (long)info.IsoSize;
@@ -102,26 +109,32 @@ public static class RvzDecoder
             long regionIsoSize = (long)BE64(rawTable, ro + 0x08);
             uint firstGroup = BE32(rawTable, ro + 0x10);
             uint groupCount = BE32(rawTable, ro + 0x14);
+            var (start, end) = AlignRegion(regionIsoOffset, regionIsoSize);
 
             for (uint g = 0; g < groupCount; g++)
             {
                 uint gi = firstGroup + g;
                 if (gi >= numGroup) throw new GameCubeFormatException("RVZ group index out of range.");
-                long chunkIsoOffset = regionIsoOffset + (long)g * chunkSize;
-                int chunkLen = (int)Math.Min(chunkSize, regionIsoOffset + regionIsoSize - chunkIsoOffset);
+                long chunkIsoOffset = start + (long)g * chunkSize;
+                int chunkLen = (int)Math.Min(chunkSize, end - chunkIsoOffset);
                 if (chunkLen <= 0) break;
 
                 byte[] chunk = DecodeGroup(rvz, groupTable, (int)gi, groupEntrySize, isRvz,
-                                           compression, chunkLen, chunkIsoOffset, ref junkFilled);
+                                           compression, comprData, chunkLen, chunkIsoOffset, ref junkFilled);
 
-                output.Seek(chunkIsoOffset, SeekOrigin.Begin);
-                output.Write(chunk, 0, chunkLen);
+                // Skip the aligned-down lead-in before the region's true start.
+                int skip = (int)Math.Max(0, regionIsoOffset - chunkIsoOffset);
+                output.Seek(chunkIsoOffset + skip, SeekOrigin.Begin);
+                output.Write(chunk, skip, chunkLen - skip);
                 groupsDecoded++;
             }
         }
 
         // Ensure the ISO is the declared length (tail padding, if any, stays zero).
         if (output.Length < isoSize) { output.SetLength(isoSize); }
+        // The disc header's first 0x80 bytes live in the disc struct, not in any region.
+        output.Seek(0, SeekOrigin.Begin);
+        output.Write(rvz, ds + 0x10, (int)Math.Min(DiscHeadSize, isoSize));
 
         return new DecodeReport
         {
@@ -146,9 +159,8 @@ public static class RvzDecoder
         int ds = DiscStructOffset;
         var compression = (RvzCompression)BE32(rvz, ds + 0x04);
         uint chunkSize = BE32(rvz, ds + 0x0C);
-        if (compression is not (RvzCompression.Zstd or RvzCompression.None))
-            throw new GameCubeFormatException(
-                $"This RVZ uses the '{compression}' group codec, which isn't decoded yet — only zstd and none are.");
+        RequireSupportedCodec(compression);
+        byte[] comprData = CompressorData(rvz);
 
         uint numRawData = BE32(rvz, ds + 0xB4);
         ulong rawDataOffset = BE64(rvz, ds + 0xB8);
@@ -159,8 +171,8 @@ public static class RvzDecoder
         bool isRvz = info.Format == RvzFormat.Rvz;
         int groupEntrySize = isRvz ? 12 : 8;
 
-        byte[] rawTable = DecompressBlob(rvz, (long)rawDataOffset, (int)rawDataSize, compression, (int)(numRawData * 24));
-        byte[] groupTable = DecompressBlob(rvz, (long)groupOffset, (int)groupSize, compression,
+        byte[] rawTable = DecompressBlob(rvz, (long)rawDataOffset, (int)rawDataSize, compression, comprData, (int)(numRawData * 24));
+        byte[] groupTable = DecompressBlob(rvz, (long)groupOffset, (int)groupSize, compression, comprData,
                                            (int)(numGroup * (uint)groupEntrySize));
 
         limit = Math.Min(limit, (long)info.IsoSize);
@@ -174,21 +186,24 @@ public static class RvzDecoder
             if (regionIsoOffset >= limit) continue;
             uint firstGroup = BE32(rawTable, ro + 0x10);
             uint groupCount = BE32(rawTable, ro + 0x14);
+            var (start, end) = AlignRegion(regionIsoOffset, regionIsoSize);
 
             for (uint g = 0; g < groupCount; g++)
             {
-                long chunkIsoOffset = regionIsoOffset + (long)g * chunkSize;
+                long chunkIsoOffset = start + (long)g * chunkSize;
                 if (chunkIsoOffset >= limit) break;
                 uint gi = firstGroup + g;
                 if (gi >= numGroup) break;
-                int chunkLen = (int)Math.Min(chunkSize, regionIsoOffset + regionIsoSize - chunkIsoOffset);
+                int chunkLen = (int)Math.Min(chunkSize, end - chunkIsoOffset);
                 if (chunkLen <= 0) break;
-                byte[] chunk = DecodeGroup(rvz, groupTable, (int)gi, groupEntrySize, isRvz, compression,
+                byte[] chunk = DecodeGroup(rvz, groupTable, (int)gi, groupEntrySize, isRvz, compression, comprData,
                                            chunkLen, chunkIsoOffset, ref junk);
-                int copyLen = (int)Math.Min(chunkLen, limit - chunkIsoOffset);
-                Array.Copy(chunk, 0, prefix, (int)chunkIsoOffset, copyLen);
+                int skip = (int)Math.Max(0, regionIsoOffset - chunkIsoOffset);
+                int copyLen = (int)Math.Min(chunkLen - skip, limit - (chunkIsoOffset + skip));
+                if (copyLen > 0) Array.Copy(chunk, skip, prefix, (int)(chunkIsoOffset + skip), copyLen);
             }
         }
+        Array.Copy(rvz, ds + 0x10, prefix, 0, (int)Math.Min(DiscHeadSize, limit));
         return prefix;
     }
 
@@ -211,7 +226,8 @@ public static class RvzDecoder
     }
 
     private static byte[] DecodeGroup(byte[] rvz, byte[] groupTable, int gi, int entrySize, bool isRvz,
-                                      RvzCompression comp, int chunkLen, long chunkIsoOffset, ref long junkFilled)
+                                      RvzCompression comp, byte[] comprData, int chunkLen, long chunkIsoOffset,
+                                      ref long junkFilled)
     {
         int go = gi * entrySize;
         uint dataOffsetUnits = BE32(groupTable, go + 0x00);
@@ -220,7 +236,8 @@ public static class RvzDecoder
 
         long dataOffset = (long)dataOffsetUnits * 4;
         int storedSize = (int)(dataSizeFlag & 0x7FFFFFFF);
-        bool compressed = (dataSizeFlag & 0x80000000) != 0;
+        // RVZ flags each group (MSB of the size); in WIA every group uses the disc's codec.
+        bool compressed = isRvz ? (dataSizeFlag & 0x80000000) != 0 : comp != RvzCompression.None;
 
         // A zero-size group is an all-junk (or all-zero) chunk.
         if (storedSize == 0)
@@ -233,7 +250,7 @@ public static class RvzDecoder
 
         var stored = rvz.AsSpan((int)dataOffset, storedSize);
         byte[] payload = compressed
-            ? (comp == RvzCompression.Zstd ? ZstdDecoder.Decompress(stored) : stored.ToArray())
+            ? Decompress(stored, comp, comprData, rvzPacked != 0 ? (int)rvzPacked : chunkLen)
             : stored.ToArray();
 
         if (rvzPacked == 0)
@@ -273,12 +290,55 @@ public static class RvzDecoder
         return result;
     }
 
-    private static byte[] DecompressBlob(byte[] rvz, long offset, int size, RvzCompression comp, int expected)
+    private const int DiscHeadSize = 0x80;
+    private const long RegionAlignment = 0x8000;
+
+    /// <summary>A raw-data region's groups start at its offset rounded down to 0x8000.</summary>
+    private static (long start, long end) AlignRegion(long offset, long size) =>
+        (offset - offset % RegionAlignment, offset + size);
+
+    private static void RequireSupportedCodec(RvzCompression c)
+    {
+        if (c is not (RvzCompression.Zstd or RvzCompression.None or RvzCompression.Lzma or RvzCompression.Lzma2))
+            throw new GameCubeFormatException(
+                $"This RVZ/WIA uses the '{c}' group codec, which isn't decoded — zstd, LZMA, LZMA2 and none are. " +
+                "Recompress it as zstd (RVZ's default) with Dolphin/wit, or convert to ISO there.");
+    }
+
+    /// <summary>The disc struct's compressor data: LZMA's 5-byte properties, or LZMA2's 1-byte dictionary size.</summary>
+    private static byte[] CompressorData(byte[] rvz)
+    {
+        int len = Math.Min((int)rvz[DiscStructOffset + 0xD4], 7);
+        return rvz.AsSpan(DiscStructOffset + 0xD5, len).ToArray();
+    }
+
+    private static byte[] Decompress(ReadOnlySpan<byte> stored, RvzCompression comp, byte[] comprData, int expected)
+    {
+        try
+        {
+            return comp switch
+            {
+                RvzCompression.Zstd => ZstdDecoder.Decompress(stored),
+                RvzCompression.Lzma => comprData.Length >= 5
+                    ? Lzma1.Decode(comprData.AsSpan(0, 5), stored, expected)
+                    : throw new GameCubeFormatException("LZMA WIA/RVZ is missing its 5-byte LZMA properties."),
+                RvzCompression.Lzma2 => Lzma2.Decode(stored, expected, out _,
+                    comprData.Length >= 1 ? Lzma2Decoder.DictionarySizeFromProperty(comprData[0]) : 0),
+                _ => stored.ToArray(),
+            };
+        }
+        catch (InvalidDataException ex)
+        {
+            throw new GameCubeFormatException($"Corrupt {comp} data in the RVZ/WIA: {ex.Message}");
+        }
+    }
+
+    private static byte[] DecompressBlob(byte[] rvz, long offset, int size, RvzCompression comp, byte[] comprData, int expected)
     {
         if (offset < 0 || offset + size > rvz.Length)
             throw new GameCubeFormatException("RVZ table points outside the file.");
         var span = rvz.AsSpan((int)offset, size);
-        byte[] outb = comp == RvzCompression.Zstd ? ZstdDecoder.Decompress(span) : span.ToArray();
+        byte[] outb = comp == RvzCompression.None ? span.ToArray() : Decompress(span, comp, comprData, expected);
         if (outb.Length < expected)
             throw new GameCubeFormatException(
                 $"RVZ table decompressed to {outb.Length} bytes, expected at least {expected}.");

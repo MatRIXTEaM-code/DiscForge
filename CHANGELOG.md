@@ -13,6 +13,34 @@ it, and never defeats console security or decrypts protected content.
 
 ### Added
 
+- **RVZ/WIA: LZMA and LZMA2 groups, and a real-file layout fix** — `rvz-decode` and everything
+  built on `RvzDecoder` now decode LZMA and LZMA2-compressed GameCube RVZ/WIA images, as well as
+  zstd and uncompressed ones. Testing against real WIA files written by Wiimms ISO Tools also found
+  a bug that affected every real file, not just the new codecs. A raw-data region's groups are
+  stored from its offset rounded down to 0x8000, so the first region, which starts at 0x80 right
+  after the disc header held in the disc struct, is stored from 0. The decoder had written it 128
+  bytes too late. It now skips the aligned lead-in and restores the first 0x80 bytes from the disc
+  struct. Output is byte-identical to the source ISO for uncompressed, LZMA and LZMA2 WIAs (1 MiB
+  and 40 MiB images, several chunk sizes). A scrubbed WIA matches wit's own decode. bzip2 and purge
+  are still declined. New fixtures are in `tests/fixtures/wia`.
+- **Import a whole dump set** — Read Disc's "Import from external tool…" accepts a `.cue` or
+  `.gdi`. It copies the sheet, every track file it names, and the dumper's `.log` and
+  `.sbi`/`.sub` sidecars into a folder you choose. redumper writes one `.bin` per track, so a
+  single-file copy didn't give a usable dump. Missing track files are reported. With a redumper
+  log, every imported file named in its dat is SHA-1-checked (`DumpSet` in Core, with tests).
+- **Create xdelta patches** — `dforge xdelta-create <source> <target> <out.xdelta>`, and
+  "xdelta patch" in the Patch screen's "Create patch…". This is a clean-room VCDIFF encoder that
+  writes xdelta3-compatible patches: default code table, per-window Adler-32, and no secondary
+  compression.
+  - **Memory:** it runs in 8 MiB windows against a 64 MiB slice of the source, so DVD-size images
+    never need to fit in memory.
+  - **Moved data:** the slice follows data that has moved. If a large insertion or deletion puts
+    data beyond the slice, a sparse index of the whole source finds it again.
+  - **Checked with xdelta3 itself:** `xdelta3 -d` applied its patches byte-identically on 300–360
+    MB images with scattered edits, a 120 MB insertion, a 90 MB deletion and a moved block.
+  - **Speed and size:** about 70 MB/s in a Release build. Patches are close to xdelta3's own
+    uncompressed size, and smaller when data has moved further than xdelta3's default source window.
+
 - **xdelta / VCDIFF patches** — the Patch screen and two new commands (`xdelta-apply`,
   `xdelta-info`) apply xdelta3 patches, the usual format for PS1/PS2/GameCube translations and fan
   patches. It's a clean-room RFC 3284 VCDIFF decoder with the two xdelta3 extensions real patches

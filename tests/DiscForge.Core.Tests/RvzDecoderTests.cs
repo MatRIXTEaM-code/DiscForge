@@ -67,6 +67,32 @@ public class RvzDecoderTests
         Assert.Equal(full.AsSpan(0, limit).ToArray(), prefix);
     }
 
+    // Real WIA files written by Wiimms ISO Tools 3.05a (`wit copy small.iso --raw --wia=lzma|lzma2`),
+    // from a synthetic 1 MiB GameCube ISO — see tests/fixtures/README.md. These check the LZMA and
+    // LZMA2 group codecs AND the container's real layout: the first raw-data region starts at 0x80
+    // (after the disc header kept in the disc struct) and is stored from its 0x8000-aligned start.
+    [Theory]
+    [InlineData("small-lzma.wia")]
+    [InlineData("small-lzma2.wia")]
+    public void Reconstructs_real_wit_written_lzma_wia_bit_exact(string name)
+    {
+        var dir = AppContext.BaseDirectory;
+        string? path = null;
+        for (int i = 0; i < 8 && dir is not null && path is null; i++)
+        {
+            var candidate = Path.Combine(dir, "tests", "fixtures", "wia", name);
+            if (File.Exists(candidate)) path = candidate;
+            dir = Path.GetDirectoryName(dir);
+        }
+        Assert.NotNull(path);
+        using var ms = new MemoryStream();
+        var report = RvzDecoder.Decode(File.ReadAllBytes(path!), ms);
+        Assert.Equal(1048576, report.IsoBytes);
+        Assert.True(report.BitExact);
+        Assert.Equal("506e20181c1bf7fa3de4605ce69df22d056a1a23671b6235e73056cdaed72ff3",
+            System.Convert.ToHexString(SHA256.HashData(ms.ToArray())).ToLowerInvariant());
+    }
+
     private static (RvzDecoder.DecodeReport, string) Decode(string base64Rvz)
     {
         var rvz = System.Convert.FromBase64String(base64Rvz);
