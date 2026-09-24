@@ -13,6 +13,33 @@ it, and never defeats console security or decrypts protected content.
 
 ### Added
 
+- **redumper and MPF on Read Disc** — two new buttons on the third external-tool row for the
+  dumpers Redump asks submissions to come from: redumper (opened in a console that stays open in
+  its own folder, showing its usage, since it is command-line only and a bare launch would close
+  with its output) and MPF, the SabreTools front-end that drives it. Both are open source and
+  read the disc as-is; nothing here removes protection.
+- **Import reads the dumper's log** — "Import from external tool…" now looks for the dump's
+  `.log` beside the picked image (redumper's `<name>.log`, with a " (Track N)" suffix stripped)
+  and reports the tool version, drive and error counts. For a redumper log, the imported file is
+  SHA-1 hashed and checked against the hash in the log's `dat:` block. A DiscImageCreator log is
+  summarised the same way.
+- **redumper log parser** (`DiscForge.Core.Dumping.RedumperLogParser`) — tolerant reader for
+  redumper `.log` files: version, drive, disc type, write offset, the last `media errors:` block
+  (SCSI/C2/Q), and the last `dat:` block's per-file size/CRC32/MD5/SHA-1. `dforge dic-log` now
+  detects redumper logs automatically and reports them (text or `--json`); `--to-bad-sectors`
+  refuses them with an explanation, since redumper records error counts rather than per-LBA C2
+  positions. Covered by `RedumperLogTests`.
+- **Exact Audio Copy and CUERipper on Rip Audio** — escape-hatch buttons for the two rippers
+  audio-CD archivists compare against, for a second independent rip alongside DiscForge's own
+  AccurateRip-checked one.
+- **QPxTool and Opti Drive Control on the quality scan** — for the full C1/C2 (CD) and PI/PO
+  (DVD) surface graphs on drives that support them, which the built-in C2-pointer scan doesn't
+  attempt. The scan's report pane moved down 30px to make room.
+- **"Play in ScummVM"** — on both the Identify and Export boxes of the ScummVM screen: starts the
+  user's own ScummVM with `--path=<folder> --auto-detect` so the game opens directly.
+- `ExternalToolLauncher.Launch` gained an optional start-info hook (used for redumper's console
+  window and ScummVM's arguments); existing callers are unchanged.
+
 - **"Other tool…" button on Read Disc** — a generic, unnamed external-tool launcher alongside the
   existing Rawdump2/CloneCD/Xreveal/CloneBD/IsoBuster/DVDFab buttons, for whatever disc-reading
   tool a user already has that isn't covered by a named button. Added in place of a request to

@@ -150,6 +150,22 @@ private readonly CheckBox _captureSub = new()
         Text = "Other tool…", Location = new Point(12, 200), Width = 200, Height = 26,
         FlatStyle = FlatStyle.System,
     };
+    // The two dumpers Redump actually asks submissions to come from: redumper (the low-level
+    // dumper) and MPF (the SabreTools front-end that drives it and fills in the submission).
+    // Both are open source and read the disc as-is — nothing here strips protection — and the
+    // Submit screen and the log importer were already built around their output, so these were
+    // the most conspicuous gap on this row. "Import from external tool…" reads a redumper or
+    // DiscImageCreator .log sitting beside the imported image.
+    private readonly Button _externalDumpRedumper = new()
+    {
+        Text = "redumper…", Location = new Point(220, 200), Width = 130, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
+    private readonly Button _externalDumpMpf = new()
+    {
+        Text = "MPF (Redump front-end)…", Location = new Point(358, 200), Width = 190, Height = 26,
+        FlatStyle = FlatStyle.System,
+    };
     private readonly ListView _tracks = new()
     {
         // Sits below the four option checkboxes and the three external-tool rows (which end near
@@ -217,6 +233,21 @@ private readonly CheckBox _captureSub = new()
         _externalDumpDvdFab.Click += (_, _) => LaunchExternalDumperDvdFab();
         _externalDumpWit.Click += (_, _) => LaunchExternalDumperWit();
         _externalDumpOther.Click += (_, _) => LaunchExternalDumperOther();
+        // redumper is command-line only: opened in a console that stays up, showing its usage, so
+        // its output doesn't vanish the moment a bare launch finishes.
+        _externalDumpRedumper.Click += (_, _) => ExternalToolLauncher.Launch(
+            () => Settings.ExternalDumperPathRedumper,
+            p => Settings.ExternalDumperPathRedumper = p,
+            "Locate redumper (redumper.exe)",
+            "A console has opened in redumper's folder with its usage shown — run your dump there " +
+            "(e.g. redumper --drive=E: --image-name=mygame). When it's done, use \"Import from " +
+            "external tool…\" and pick the image; its .log beside it is read automatically.",
+            _log,
+            path => ExternalToolLauncher.ConsoleWindow(path, "--help"));
+        _externalDumpMpf.Click += (_, _) => LaunchExternalTool(
+            () => Settings.ExternalDumperPathMpf,
+            p => Settings.ExternalDumperPathMpf = p,
+            "Locate MPF (MPF.UI.exe)");
         _importExternal.Click += async (_, _) => await ImportExternalDumpAsync();
 
         Controls.Add(_drives); Controls.Add(detect); Controls.Add(readToc);
@@ -229,6 +260,7 @@ private readonly CheckBox _captureSub = new()
         Controls.Add(_externalDumpBluray); Controls.Add(_importExternal); Controls.Add(_externalDumpDvdFab);
         Controls.Add(_externalDumpWit);
         Controls.Add(_externalDumpOther);
+        Controls.Add(_externalDumpRedumper); Controls.Add(_externalDumpMpf);
         Controls.Add(_tracks);
         Controls.Add(_rip); Controls.Add(_progress);
         Controls.Add(_log);
@@ -793,12 +825,85 @@ private readonly CheckBox _captureSub = new()
             _log.Add($"Imported {Path.GetFileName(save.FileName)}. This came from an external " +
                      "tool, not a DiscForge read, so nothing here has verified it yet — run " +
                      "Inspect ▸ Verify on it before relying on it.", EventLogView.Level.Good);
+            await ReportDumpLogAsync(open.FileName);
         }
         catch (Exception ex)
         {
             _log.Add($"Import failed: {ex.Message}", EventLogView.Level.Error);
             AppLog.WriteException("import external dump", ex);
         }
+    }
+
+    /// <summary>
+    /// If the dumper left a log beside the image (redumper writes <c>&lt;name&gt;.log</c>; so does a
+    /// DiscImageCreator run driven by MPF), read it and say what it recorded: tool version, drive,
+    /// error counts. For a redumper log, whose <c>dat:</c> block carries a SHA-1 per file, the
+    /// imported file is hashed and checked against its entry — a real check of the copy against
+    /// what the dumper itself recorded, not a claim the log is right about the disc. Best-effort:
+    /// a missing or unreadable log just means nothing extra is reported.
+    /// </summary>
+    private async Task ReportDumpLogAsync(string imagePath)
+    {
+        try
+        {
+            string? logPath = FindDumpLog(imagePath);
+            if (logPath is null) return;
+            string text = await File.ReadAllTextAsync(logPath);
+
+            if (DiscForge.Core.Dumping.RedumperLogParser.LooksLikeRedumperLog(text))
+            {
+                var r = DiscForge.Core.Dumping.RedumperLogParser.ParseText(text, logPath);
+                _log.Add($"Found {Path.GetFileName(logPath)}: {r.Summary()}.",
+                    r.LooksClean ? EventLogView.Level.Info : EventLogView.Level.Warn);
+                if (r.WriteOffset is { Length: > 0 }) _log.Add($"  Write offset recorded by redumper: {r.WriteOffset}.");
+
+                var entry = r.Roms.FirstOrDefault(x =>
+                    string.Equals(x.Name, Path.GetFileName(imagePath), StringComparison.OrdinalIgnoreCase));
+                if (entry?.Sha1 is { Length: > 0 } expected)
+                {
+                    _log.Add($"Checking {entry.Name} against the SHA-1 redumper recorded…");
+                    string actual = await Task.Run(() =>
+                    {
+                        using var fs = File.OpenRead(imagePath);
+                        return Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(fs));
+                    });
+                    if (string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+                        _log.Add($"  SHA-1 matches the log ({actual.ToLowerInvariant()}).", EventLogView.Level.Good);
+                    else
+                        _log.Add($"  SHA-1 does NOT match the log: file {actual.ToLowerInvariant()}, " +
+                                 $"log {expected.ToLowerInvariant()}.", EventLogView.Level.Error);
+                }
+                else if (r.Roms.Count > 0)
+                {
+                    _log.Add($"  The log's dat lists {r.Roms.Count} file(s); \"{Path.GetFileName(imagePath)}\" " +
+                             "isn't one of them by name, so its hash wasn't checked.");
+                }
+            }
+            else
+            {
+                var d = DiscForge.Core.Dumping.DicLogParser.ParseText(text, logPath);
+                if (d.DicVersion is null && d.Tracks.Count == 0) return; // Some other tool's log — say nothing.
+                _log.Add($"Found {Path.GetFileName(logPath)}: {d.Summary()}.",
+                    d.LooksClean ? EventLogView.Level.Info : EventLogView.Level.Warn);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"dump log beside import: {ex.Message}");
+        }
+    }
+
+    /// <summary><c>&lt;name&gt;.log</c> beside the image, with redumper's " (Track N)" suffix stripped
+    /// so a picked track file still finds its dump's log; failing that, the folder's only .log.</summary>
+    private static string? FindDumpLog(string imagePath)
+    {
+        string dir = Path.GetDirectoryName(imagePath) ?? ".";
+        string stem = System.Text.RegularExpressions.Regex.Replace(
+            Path.GetFileNameWithoutExtension(imagePath), @"\s*\(Track \d+\)$", "");
+        string direct = Path.Combine(dir, stem + ".log");
+        if (File.Exists(direct)) return direct;
+        var logs = Directory.GetFiles(dir, "*.log");
+        return logs.Length == 1 ? logs[0] : null;
     }
 
     private static string Rate(double bytesDone, double secs)

@@ -14,7 +14,8 @@ namespace DiscForge.App;
 /// (RawDump2, CloneCD, Xreveal, CloneBD, IsoBuster, DVDFab, and a generic "Other tool…" slot for
 /// whatever isn't already covered by a named button), Burn's burners (ImgBurn,
 /// Alcohol 120%, DAEMON Tools), and the format-specific screens (Xbox's Xbox Backup Creator/
-/// abgx360, the memory card screen's MemcardRex). Originally lived only in ReadView as a private
+/// abgx360, the memory card screen's MemcardRex), plus redumper/MPF on Read, EAC/CUERipper on Rip
+/// Audio, QPxTool/Opti Drive Control on the quality scan, and ScummVM on the ScummVM screen. Originally lived only in ReadView as a private
 /// method; pulled out here once BurnView needed the identical behaviour, rather than
 /// copy-pasting it a second time. Ask for the tool's path once (via the <paramref
 /// name="getPath"/>/<paramref name="setPath"/> accessors the caller supplies — each button
@@ -50,7 +51,23 @@ internal static class ExternalToolLauncher
 {
     public static void Launch(
         Func<string?> getPath, Action<string?> setPath, string pickerTitle,
-        string followUpMessage, Action<string, bool> report)
+        string followUpMessage, Action<string, bool> report) =>
+        Launch(getPath, setPath, pickerTitle, followUpMessage, report, startInfo: null);
+
+    /// <summary>
+    /// Same as the plain overload, but lets the caller shape how the picked tool is started — for
+    /// the few tools where "just run the exe" is the wrong thing: a console dumper like redumper
+    /// (started bare, its window would vanish the moment it finished, taking its output with it —
+    /// so it's opened inside a console that stays open) or ScummVM (started pointed at the game
+    /// folder the screen already identified). <paramref name="startInfo"/> receives the tool's
+    /// full path and returns the <see cref="System.Diagnostics.ProcessStartInfo"/> to run; when null
+    /// the tool is started directly, exactly as before. The working directory is still forced to
+    /// the tool's own folder unless the caller set one, for the reason given on this class.
+    /// </summary>
+    public static void Launch(
+        Func<string?> getPath, Action<string?> setPath, string pickerTitle,
+        string followUpMessage, Action<string, bool> report,
+        Func<string, System.Diagnostics.ProcessStartInfo>? startInfo)
     {
         string? path = getPath();
         bool forceRePrompt = Control.ModifierKeys.HasFlag(Keys.Shift);
@@ -68,11 +85,11 @@ internal static class ExternalToolLauncher
 
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path)
-            {
-                UseShellExecute = true,
-                WorkingDirectory = Path.GetDirectoryName(path) ?? string.Empty,
-            });
+            var psi = startInfo?.Invoke(path)
+                      ?? new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true };
+            if (string.IsNullOrEmpty(psi.WorkingDirectory))
+                psi.WorkingDirectory = Path.GetDirectoryName(path) ?? string.Empty;
+            System.Diagnostics.Process.Start(psi);
             report($"Launched {Path.GetFileName(path)}. {followUpMessage}", false);
         }
         catch (Exception ex)
@@ -89,7 +106,27 @@ internal static class ExternalToolLauncher
     /// keeps their call sites reading exactly as before this method's reporting was generalised.</summary>
     public static void Launch(
         Func<string?> getPath, Action<string?> setPath, string pickerTitle,
-        string followUpMessage, EventLogView log) =>
+        string followUpMessage, EventLogView log,
+        Func<string, System.Diagnostics.ProcessStartInfo>? startInfo = null) =>
         Launch(getPath, setPath, pickerTitle, followUpMessage,
-            (msg, isError) => log.Add(msg, isError ? EventLogView.Level.Error : EventLogView.Level.Info));
+            (msg, isError) => log.Add(msg, isError ? EventLogView.Level.Error : EventLogView.Level.Info),
+            startInfo);
+
+    /// <summary>
+    /// Start a console tool inside a <c>cmd.exe /k</c> window opened in the tool's own folder, running
+    /// the tool once with <paramref name="firstArgs"/> (typically <c>--help</c>) so its usage is on
+    /// screen and the prompt stays open for the real command. Used for redumper, which is driven
+    /// entirely from the command line.
+    /// </summary>
+    public static System.Diagnostics.ProcessStartInfo ConsoleWindow(string toolPath, string firstArgs)
+    {
+        string dir = Path.GetDirectoryName(toolPath) ?? string.Empty;
+        return new System.Diagnostics.ProcessStartInfo("cmd.exe")
+        {
+            // Outer quotes are cmd /k's own: it strips exactly one pair, leaving the quoted path intact.
+            Arguments = $"/k \"\"{toolPath}\" {firstArgs}\"",
+            WorkingDirectory = dir,
+            UseShellExecute = true,
+        };
+    }
 }

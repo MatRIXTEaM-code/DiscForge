@@ -71,9 +71,24 @@ internal sealed class QualityView : UserControl
         Font = new Font(Theme.Ui.FontFamily, 10f, FontStyle.Bold),
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
     };
+    // The full surface graphs — C1/C2 on CD, PI/PO on DVD — need drive-vendor commands that only
+    // some drives answer and that this screen deliberately doesn't send (it uses the one standard
+    // command every CD drive has). QPxTool and Opti Drive Control are the established tools for
+    // those graphs, on the drives that support them; launched the same way as every other
+    // external-tool button (see ExternalToolLauncher).
+    private readonly Button _externalQpx = new()
+    {
+        Text = "QPxTool…", Location = new Point(12, 122), Width = 110, Height = 24,
+        FlatStyle = FlatStyle.System,
+    };
+    private readonly Button _externalOdc = new()
+    {
+        Text = "Opti Drive Control…", Location = new Point(128, 122), Width = 150, Height = 24,
+        FlatStyle = FlatStyle.System,
+    };
     private readonly TextBox _out = new()
     {
-        Location = new Point(12, 122), Size = new Size(712, 326),
+        Location = new Point(12, 152), Size = new Size(712, 296),
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
         Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
         BackColor = Color.White, WordWrap = false,
@@ -106,6 +121,12 @@ internal sealed class QualityView : UserControl
         eject.Click += (_, _) => Eject();
 
         _scan.Click += async (_, _) => await ScanAsync();
+        _externalQpx.Click += (_, _) => LaunchExternalScanner(
+            () => Settings.ExternalDumperPathQpxTool, p => Settings.ExternalDumperPathQpxTool = p,
+            "Locate QPxTool (qpxtool.exe)");
+        _externalOdc.Click += (_, _) => LaunchExternalScanner(
+            () => Settings.ExternalDumperPathOptiDriveControl, p => Settings.ExternalDumperPathOptiDriveControl = p,
+            "Locate Opti Drive Control (ODC.exe)");
         _saveLog.Click += (_, _) => SaveLog();
         _drives.SelectedIndexChanged += async (_, _) => await CheckMediaAsync();
 
@@ -114,6 +135,7 @@ internal sealed class QualityView : UserControl
         Controls.Add(_drives); Controls.Add(detect); Controls.Add(eject);
         Controls.Add(_scan); Controls.Add(_cancel); Controls.Add(_saveLog); Controls.Add(_elapsed);
         Controls.Add(_media); Controls.Add(_progress); Controls.Add(_verdict); Controls.Add(_out);
+        Controls.Add(_externalQpx); Controls.Add(_externalOdc);
 
         // Prose flows to the window; only the scan REPORT (whose columns are
         // monospace-aligned) needs wrap off — ShowProse/ShowReport switch modes.
@@ -130,6 +152,14 @@ internal sealed class QualityView : UserControl
             Environment.NewLine +
             "CD only — the command this uses does not exist for DVD or Blu-ray.");
     }
+
+    /// <summary>Launch QPxTool or Opti Drive Control via the shared <see cref="ExternalToolLauncher"/>;
+    /// the outcome goes to the text pane since this screen has no event log.</summary>
+    private void LaunchExternalScanner(Func<string?> getPath, Action<string?> setPath, string title) =>
+        ExternalToolLauncher.Launch(getPath, setPath, title,
+            "Run the scan there — and leave this screen idle meanwhile: two programs scanning one " +
+            "drive at once corrupt each other's results.",
+            (msg, _) => ShowProse(msg));
 
     /// <summary>Flowing text (help, errors): wrap to the window, whatever its size.</summary>
     private void ShowProse(string text) { _out.WordWrap = true; _out.Text = text; }

@@ -254,7 +254,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  redump-cue <in.cue> <disc.sub> <out.cue> [--snap-pregap]  Re-cut a split bin/cue at the subchannel's INDEX 00 boundaries (Redump-conformant, byte-preserving)");
     Console.WriteLine("  bad-sectors <map.badsectors.json> [--json]  Show a dump's unreadable-sector map: counts, coalesced runs, and per-track positions");
     Console.WriteLine("  redump-diff <cue> <dat> [--game \"name\"] [--json]  Explain WHY a dump doesn't match Redump: per-file verdict + the cause (split, padding, offset, bad sector)");
-    Console.WriteLine("  dic-log <dump.log> [--json] [--to-bad-sectors out.badsectors.json --total-sectors N]  Import a DiscImageCreator (DIC) .log: version, drive, media, per-track hashes, C2/error info — and optionally convert its C2 error LBAs into a DiscForge bad-sector-map sidecar for redump-diff/dump-audit");
+    Console.WriteLine("  dic-log <dump.log> [--json] [--to-bad-sectors out.badsectors.json --total-sectors N]  Import a DiscImageCreator (DIC) or redumper .log: version, drive, media, per-track hashes, C2/error info — and optionally convert its C2 error LBAs into a DiscForge bad-sector-map sidecar for redump-diff/dump-audit");
     Console.WriteLine("  cold-case <registry.json> add <image> --reason \"text\" [--not-before yyyy-mm-dd] [--note \"text\"]   Track an incomplete dump for a future re-attempt (cleaning, a different drive, a different day)");
     Console.WriteLine("  cold-case <registry.json> due [--json]                                                            List every tracked dump due for a re-attempt now");
     Console.WriteLine("  cold-case <registry.json> attempt <image> --resolved|--retry-in-days N [--note \"text\"]           Record a retry attempt: close the case out, or push the next retry further out");
@@ -8096,13 +8096,43 @@ static int DicLogCmd(string[] args)
                     "  was never formally specified, so unrecognised lines are skipped rather than rejected, and\n" +
                     "  every field is optional. Pass --to-bad-sectors to convert the log's C2 error LBAs into a\n" +
                     "  DiscForge bad-sector-map sidecar (needs --total-sectors, since a DIC log doesn't always\n" +
-                    "  state the disc's total sector count) usable directly by redump-diff and dump-audit.");
+                    "  state the disc's total sector count) usable directly by redump-diff and dump-audit.\n" +
+                    "  redumper .log files are detected automatically and reported the same way (version, drive,\n" +
+                    "  write offset, SCSI/C2/Q error counts, and the dat block's per-file hashes).");
     var logPath = args[1];
     if (!File.Exists(logPath)) return Fail($"'{logPath}' not found.");
 
     try
     {
-        var info = DiscForge.Core.Dumping.DicLogParser.Parse(logPath);
+        // A redumper log is handed to its own parser: same job (import what another dumper recorded),
+        // different line shapes. redumper's log doesn't list C2 errors per LBA, so --to-bad-sectors
+        // has nothing to convert for it and says so rather than writing an empty map.
+        string text = File.ReadAllText(logPath);
+        if (DiscForge.Core.Dumping.RedumperLogParser.LooksLikeRedumperLog(text))
+        {
+            if (OptVal(args, "--to-bad-sectors") is not null)
+                return Fail("--to-bad-sectors isn't available for redumper logs: they record error counts, not per-LBA C2 positions.");
+            var r = DiscForge.Core.Dumping.RedumperLogParser.ParseText(text, logPath);
+            if (args.Contains("--json"))
+            {
+                EmitJson(new
+                {
+                    tool = "redumper", r.SourcePath, r.RedumperVersion,
+                    r.DriveVendor, r.DriveProduct, r.DriveRevision, r.DiscType, r.WriteOffset,
+                    r.ScsiErrors, r.C2Errors, r.QErrors, r.LooksClean,
+                    roms = r.Roms.Select(x => new { x.Name, x.Size, x.Crc32, x.Md5, x.Sha1 }),
+                });
+                return r.LooksClean ? 0 : 2;
+            }
+            Console.WriteLine(r.Summary());
+            if (r.DriveRevision is { Length: > 0 }) Console.WriteLine($"  drive rev    : {r.DriveRevision}");
+            if (r.WriteOffset is { Length: > 0 }) Console.WriteLine($"  write offset : {r.WriteOffset}");
+            foreach (var x in r.Roms)
+                Console.WriteLine($"  {x.Name}  size={x.Size?.ToString() ?? "-"} CRC32={x.Crc32 ?? "-"} MD5={x.Md5 ?? "-"} SHA1={x.Sha1 ?? "-"}");
+            return r.LooksClean ? 0 : 2;
+        }
+
+        var info = DiscForge.Core.Dumping.DicLogParser.ParseText(text, logPath);
 
         string? bsOut = OptVal(args, "--to-bad-sectors");
         if (bsOut is not null)

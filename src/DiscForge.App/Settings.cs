@@ -177,6 +177,37 @@ internal sealed class SettingsModel
     /// other field here.</summary>
     public string? ExternalDumperPathCardFormatter { get; set; }
 
+    /// <summary>Last-used path to redumper — the low-level CD (and DVD/BD) dumper the Redump project
+    /// now prefers for submissions. Used from ReadView; its .log can then be read back in through
+    /// "Import from external tool…". Open source, reads and records the disc as-is — no protection
+    /// removal — so it fits the same launch-and-forget posture as every other field here.</summary>
+    public string? ExternalDumperPathRedumper { get; set; }
+
+    /// <summary>Last-used path to MPF (Media Preservation Frontend) — the SabreTools front-end that
+    /// drives redumper/DiscImageCreator/Aaru and fills in a Redump submission. Used from ReadView.</summary>
+    public string? ExternalDumperPathMpf { get; set; }
+
+    /// <summary>Last-used path to Exact Audio Copy — used from RipAudioView, for the audio-CD
+    /// archivist's reference ripper alongside DiscForge's own AccurateRip-verified rip.</summary>
+    public string? ExternalDumperPathEac { get; set; }
+
+    /// <summary>Last-used path to CUERipper (part of CUETools) — used from RipAudioView; the
+    /// open-source counterpart to EAC, with CTDB repair.</summary>
+    public string? ExternalDumperPathCueRipper { get; set; }
+
+    /// <summary>Last-used path to QPxTool — used from QualityView, for the full C1/C2 (CD) and
+    /// PI/PO (DVD) surface graphs on drives that report them, which DiscForge's own C2-pointer scan
+    /// does not attempt.</summary>
+    public string? ExternalDumperPathQpxTool { get; set; }
+
+    /// <summary>Last-used path to Opti Drive Control — used from QualityView, same job as QPxTool
+    /// with support for a different set of drives.</summary>
+    public string? ExternalDumperPathOptiDriveControl { get; set; }
+
+    /// <summary>Last-used path to ScummVM itself — used from ScummVmView's "Play in ScummVM" button,
+    /// which starts it pointed at the game folder that screen just identified.</summary>
+    public string? ExternalDumperPathScummVm { get; set; }
+
     /// <summary>Last-used path to a sector-level drive/image cloning tool (e.g. HDD Raw Copy Tool)
     /// — used from RawCopyView. A different domain from every other external-tool field here: those
     /// are all optical-disc/cartridge/floppy specific, while this clones a whole physical drive (or
@@ -378,6 +409,48 @@ internal static class Settings
     {
         get => _model.ExternalDumperPathCardFormatter;
         set { _model.ExternalDumperPathCardFormatter = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathRedumper
+    {
+        get => _model.ExternalDumperPathRedumper;
+        set { _model.ExternalDumperPathRedumper = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathMpf
+    {
+        get => _model.ExternalDumperPathMpf;
+        set { _model.ExternalDumperPathMpf = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathEac
+    {
+        get => _model.ExternalDumperPathEac;
+        set { _model.ExternalDumperPathEac = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathCueRipper
+    {
+        get => _model.ExternalDumperPathCueRipper;
+        set { _model.ExternalDumperPathCueRipper = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathQpxTool
+    {
+        get => _model.ExternalDumperPathQpxTool;
+        set { _model.ExternalDumperPathQpxTool = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathOptiDriveControl
+    {
+        get => _model.ExternalDumperPathOptiDriveControl;
+        set { _model.ExternalDumperPathOptiDriveControl = value; Save(); }
+    }
+
+    public static string? ExternalDumperPathScummVm
+    {
+        get => _model.ExternalDumperPathScummVm;
+        set { _model.ExternalDumperPathScummVm = value; Save(); }
     }
 
     public static string? ExternalDumperPathHddRawCopy

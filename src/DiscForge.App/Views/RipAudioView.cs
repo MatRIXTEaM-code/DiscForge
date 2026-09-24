@@ -49,6 +49,20 @@ internal sealed class RipAudioView : UserControl
         Text = "Continue past unreadable sectors (fills them with silence)", AutoSize = true,
         Location = new Point(360, 48), Font = Theme.Ui,
     };
+    // Escape hatches to the two rippers audio-CD archivists hold everything else up against:
+    // Exact Audio Copy and CUERipper (CUETools). Same launch-and-forget posture as every other
+    // external-tool button (see ExternalToolLauncher) — DiscForge's own rip already checks
+    // AccurateRip; these are for someone who wants a second, independent rip to compare with.
+    private readonly Button _externalEac = new()
+    {
+        Text = "Exact Audio Copy…", Location = new Point(360, 67), Width = 130, Height = 24,
+        FlatStyle = FlatStyle.System,
+    };
+    private readonly Button _externalCueRipper = new()
+    {
+        Text = "CUERipper…", Location = new Point(496, 67), Width = 104, Height = 24,
+        FlatStyle = FlatStyle.System,
+    };
     private readonly Button _rip = new()
     {
         Text = "Rip to WAV…", Location = new Point(458, 12), Width = 86, Height = 26,
@@ -124,6 +138,12 @@ internal sealed class RipAudioView : UserControl
             _tracks.Columns.Add(new ColumnHeader { Text = name, Width = w });
 
         _rip.Click += async (_, _) => await RipAsync();
+        _externalEac.Click += (_, _) => LaunchExternalRipper(
+            () => Settings.ExternalDumperPathEac, p => Settings.ExternalDumperPathEac = p,
+            "Locate Exact Audio Copy (EAC.exe)");
+        _externalCueRipper.Click += (_, _) => LaunchExternalRipper(
+            () => Settings.ExternalDumperPathCueRipper, p => Settings.ExternalDumperPathCueRipper = p,
+            "Locate CUERipper (CUERipper.exe)");
         _saveLog.Click += (_, _) => SaveLog();
         _drives.SelectedIndexChanged += async (_, _) => await ReadTocAsync();
         _useCdText.CheckedChanged += (_, _) => RefreshTrackList();
@@ -134,6 +154,7 @@ internal sealed class RipAudioView : UserControl
         Controls.Add(_rip); Controls.Add(_cancel); Controls.Add(_saveLog); Controls.Add(_elapsed);
         Controls.Add(_jitter); Controls.Add(_useCdText); Controls.Add(_continueOnError);
         Controls.Add(_tracks); Controls.Add(_progress); Controls.Add(_out);
+        Controls.Add(_externalEac); Controls.Add(_externalCueRipper);
 
         // Prose flows to the window; only the rip REPORT (whose columns are
         // monospace-aligned) needs wrap off — ShowProse/ShowReport switch modes.
@@ -149,6 +170,14 @@ internal sealed class RipAudioView : UserControl
             "against the database tells you whether your rip matches everyone " +
             "else's of the same pressing — which catches errors nothing reported.");
     }
+
+    /// <summary>Launch EAC or CUERipper via the shared <see cref="ExternalToolLauncher"/>; this screen
+    /// has no event log, so the outcome goes to the text pane. Release the drive here first — two
+    /// programs reading one drive at once is the fastest way to a bad rip in both.</summary>
+    private void LaunchExternalRipper(Func<string?> getPath, Action<string?> setPath, string title) =>
+        ExternalToolLauncher.Launch(getPath, setPath, title,
+            "Leave this screen idle while it rips — one program reading the drive at a time.",
+            (msg, _) => ShowProse(msg));
 
     /// <summary>Flowing text (help, errors): wrap to the window, whatever its size.</summary>
     private void ShowProse(string text) { _out.WordWrap = true; _out.Text = text; }

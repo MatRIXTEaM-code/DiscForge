@@ -27,6 +27,11 @@ internal sealed class ScummVmView : UserControl
     private readonly Button _detectFile = new() { Text = "File…", Width = 70, FlatStyle = FlatStyle.System };
     private readonly CheckBox _recursive = new() { Text = "Recurse subfolders", AutoSize = true, Font = Theme.Ui };
     private readonly Button _detectGo = new() { Text = "Fingerprint", Width = 100, FlatStyle = FlatStyle.System, Enabled = false };
+    // Starts ScummVM itself pointed at the folder above (or the folder the Export box just wrote),
+    // with --auto-detect so it opens the game straight away. ScummVM is the user's own install —
+    // never bundled — and its path is remembered like every other external tool's.
+    private readonly Button _playDetected = new() { Text = "Play in ScummVM", Width = 130, FlatStyle = FlatStyle.System, Enabled = false };
+    private readonly Button _playExported = new() { Text = "Play in ScummVM", Width = 130, FlatStyle = FlatStyle.System, Enabled = false };
     private readonly TextBox _detectOut = new()
     {
         Multiline = true, ReadOnly = true, Font = Theme.Mono, ScrollBars = ScrollBars.Both, WordWrap = false,
@@ -70,14 +75,16 @@ internal sealed class ScummVmView : UserControl
         _detectFile.Location = new Point(522, 42);
         _recursive.Location = new Point(12, 76);
         _detectGo.Location = new Point(160, 72);
+        _playDetected.Location = new Point(268, 72);
         _detectOut.Location = new Point(12, 104);
         detect.Controls.Add(detectHint);
-        foreach (Control c in new Control[] { _detectPath, _detectFolder, _detectFile, _recursive, _detectGo, _detectOut })
+        foreach (Control c in new Control[] { _detectPath, _detectFolder, _detectFile, _recursive, _detectGo, _playDetected, _detectOut })
             detect.Controls.Add(c);
 
         _detectFolder.Click += (_, _) => PickFolder(_detectPath, "Game folder to fingerprint…");
         _detectFile.Click += (_, _) => PickFile(_detectPath, "All files (*.*)|*.*");
         _detectGo.Click += async (_, _) => await DetectAsync();
+        _playDetected.Click += (_, _) => PlayInScummVm(_detectPath.Text);
 
         // ---- export group ----------------------------------------------------
         var export = new GroupBox
@@ -104,13 +111,15 @@ internal sealed class ScummVmView : UserControl
         _format.SelectedIndexChanged += (_, _) => UpdateQualityEnabled();
         UpdateQualityEnabled();
         _exportGo.Location = new Point(112, 104);
+        _playExported.Location = new Point(372, 104);
         export.Controls.Add(exportHint);
-        foreach (Control c in new Control[] { _cuePath, _cueBrowse, _outDir, _outBrowse, _format, _qualityLabel, _oggQuality, _exportGo })
+        foreach (Control c in new Control[] { _cuePath, _cueBrowse, _outDir, _outBrowse, _format, _qualityLabel, _oggQuality, _exportGo, _playExported })
             export.Controls.Add(c);
 
         _cueBrowse.Click += (_, _) => PickFile(_cuePath, "Cue sheet (*.cue)|*.cue|All files (*.*)|*.*", UpdateExportEnabled);
         _outBrowse.Click += (_, _) => PickFolder(_outDir, "Output folder for the ScummVM game…", UpdateExportEnabled);
         _exportGo.Click += async (_, _) => await ExportAsync();
+        _playExported.Click += (_, _) => PlayInScummVm(_outDir.Text);
 
         _log.Location = new Point(24, 400);
 
@@ -119,13 +128,38 @@ internal sealed class ScummVmView : UserControl
         Controls.Add(_log);
     }
 
+    /// <summary>Start the user's ScummVM with <c>--path=&lt;folder&gt; --auto-detect</c>, so it detects and
+    /// opens the game in that folder. A picked file means "the folder it's in".</summary>
+    private void PlayInScummVm(string pathOrFile)
+    {
+        if (string.IsNullOrWhiteSpace(pathOrFile)) return;
+        string folder = Directory.Exists(pathOrFile) ? pathOrFile : Path.GetDirectoryName(pathOrFile) ?? pathOrFile;
+        if (!Directory.Exists(folder))
+        {
+            _log.Add($"'{folder}' doesn't exist — export the game there first.", EventLogView.Level.Error);
+            return;
+        }
+        ExternalToolLauncher.Launch(
+            () => Settings.ExternalDumperPathScummVm,
+            p => Settings.ExternalDumperPathScummVm = p,
+            "Locate ScummVM (scummvm.exe)",
+            $"Asked it to detect and start the game in {folder}. If ScummVM doesn't recognise it, " +
+            "compare the fingerprints above with the game's ScummVM wiki entry.",
+            _log,
+            exe => new System.Diagnostics.ProcessStartInfo(exe)
+            {
+                Arguments = $"--path=\"{folder.TrimEnd('\\')}\" --auto-detect",
+                UseShellExecute = true,
+            });
+    }
+
     private void PickFile(TextBox target, string filter, Action? after = null)
     {
         using var dlg = new OpenFileDialog { Filter = filter, InitialDirectory = AppSettings.LastImageDirectory ?? "" };
         if (dlg.ShowDialog() != DialogResult.OK) return;
         target.Text = dlg.FileName;
         AppSettings.LastImageDirectory = Path.GetDirectoryName(dlg.FileName);
-        if (target == _detectPath) _detectGo.Enabled = true;
+        if (target == _detectPath) { _detectGo.Enabled = true; _playDetected.Enabled = true; }
         after?.Invoke();
     }
 
@@ -142,8 +176,11 @@ internal sealed class ScummVmView : UserControl
         after?.Invoke();
     }
 
-    private void UpdateExportEnabled() =>
+    private void UpdateExportEnabled()
+    {
         _exportGo.Enabled = !_busy && _cuePath.Text.Length > 0 && _outDir.Text.Length > 0;
+        _playExported.Enabled = _outDir.Text.Length > 0;
+    }
 
     // The quality choice only affects OGG (FLAC is lossless; WAV is raw).
     private void UpdateQualityEnabled()
