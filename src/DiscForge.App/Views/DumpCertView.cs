@@ -26,8 +26,8 @@ internal sealed class DumpCertView : UserControl
     // ---- create --------------------------------------------------------------
     private readonly TextBox _image = new() { ReadOnly = true, Location = new Point(90, 40), Width = 522, Font = Theme.Ui };
     private readonly Button _imagePick = new() { Text = "…", Location = new Point(618, 38), Width = 30, FlatStyle = FlatStyle.System };
-    private readonly TextBox _drive = new() { Location = new Point(90, 70), Width = 200, Font = Theme.Ui };
-    private readonly TextBox _firmware = new() { Location = new Point(342, 70), Width = 130, Font = Theme.Ui };
+    private readonly TextBox _drive = new() { Location = new Point(90, 70), Width = 170, Font = Theme.Ui };
+    private readonly TextBox _firmware = new() { Location = new Point(340, 70), Width = 132, Font = Theme.Ui };
     private readonly TextBox _settings = new() { Location = new Point(90, 100), Width = 382, Font = Theme.Ui };
     private readonly TextBox _note = new() { Location = new Point(90, 130), Width = 382, Font = Theme.Ui };
     private readonly ComboBox _sectorSize = new()
@@ -74,7 +74,7 @@ internal sealed class DumpCertView : UserControl
 
         Controls.Add(new Label { Text = "Image:", AutoSize = true, Location = new Point(12, 42), Font = Theme.Ui });
         Controls.Add(new Label { Text = "Drive:", AutoSize = true, Location = new Point(12, 72), Font = Theme.Ui });
-        Controls.Add(new Label { Text = "Firmware:", AutoSize = true, Location = new Point(280, 72), Font = Theme.Ui });
+        Controls.Add(new Label { Text = "Firmware:", AutoSize = true, Location = new Point(270, 72), Font = Theme.Ui });
         Controls.Add(new Label { Text = "Settings:", AutoSize = true, Location = new Point(12, 102), Font = Theme.Ui });
         Controls.Add(new Label { Text = "Note:", AutoSize = true, Location = new Point(12, 132), Font = Theme.Ui });
         Controls.Add(new Label { Text = "Sectors:", AutoSize = true, Location = new Point(12, 162), Font = Theme.Ui });
