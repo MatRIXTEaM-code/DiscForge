@@ -55,7 +55,7 @@ internal sealed class PsxAssetView : UserControl
         Padding = new Padding(12);
 
         Controls.Add(new Label { Text = "File:", AutoSize = true, Location = new Point(12, 16), Font = Theme.Ui });
-        var open = new Button { Text = "Open…", Location = new Point(548, 12), Width = 48, FlatStyle = FlatStyle.System };
+        var open = new Button { Text = "Open…", Location = new Point(546, 12), Width = 54, FlatStyle = FlatStyle.System };
         open.Click += (_, _) => Open();
         _save.Click += (_, _) => Save();
 

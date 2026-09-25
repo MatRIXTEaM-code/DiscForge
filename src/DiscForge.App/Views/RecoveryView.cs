@@ -46,17 +46,17 @@ internal sealed class RecoveryView : UserControl
     private readonly NumericUpDown _start = new()
     {
         Minimum = 0, Maximum = 500_000, Value = 0, Width = 84,
-        Location = new Point(70, 52), Font = Theme.Ui,
+        Location = new Point(80, 52), Font = Theme.Ui,
     };
     private readonly NumericUpDown _count = new()
     {
         Minimum = 1, Maximum = 100_000, Value = 64, Width = 72,
-        Location = new Point(220, 52), Font = Theme.Ui,
+        Location = new Point(232, 52), Font = Theme.Ui,
     };
     private readonly NumericUpDown _reads = new()
     {
         Minimum = 1, Maximum = 32, Value = 8, Width = 52,
-        Location = new Point(372, 52), Font = Theme.Ui,
+        Location = new Point(386, 52), Font = Theme.Ui,
     };
     private readonly ComboBox _speed = new()
     {
@@ -117,8 +117,8 @@ internal sealed class RecoveryView : UserControl
 
         Controls.Add(new Label { Text = "Drive:", AutoSize = true, Location = new Point(12, 16), Font = Theme.Ui });
         Controls.Add(new Label { Text = "From LBA:", AutoSize = true, Location = new Point(12, 55), Font = Theme.Ui });
-        Controls.Add(new Label { Text = "Sectors:", AutoSize = true, Location = new Point(162, 55), Font = Theme.Ui });
-        Controls.Add(new Label { Text = "Max reads:", AutoSize = true, Location = new Point(304, 55), Font = Theme.Ui });
+        Controls.Add(new Label { Text = "Sectors:", AutoSize = true, Location = new Point(176, 55), Font = Theme.Ui });
+        Controls.Add(new Label { Text = "Max reads:", AutoSize = true, Location = new Point(316, 55), Font = Theme.Ui });
         Controls.Add(new Label { Text = "Speed:", AutoSize = true, Location = new Point(12, 85), Font = Theme.Ui });
         Controls.Add(new Label
         {

@@ -21,7 +21,7 @@ namespace DiscForge.App.Views;
 /// </summary>
 internal sealed class DumpCertificateLedgerView : UserControl
 {
-    private readonly TextBox _ledgerPath = new() { ReadOnly = true, Location = new Point(90, 14), Width = 420, Font = Theme.Ui };
+    private readonly TextBox _ledgerPath = new() { ReadOnly = true, Location = new Point(112, 14), Width = 398, Font = Theme.Ui };
     private readonly Button _open = new() { Text = "Open…", Location = new Point(516, 12), Width = 80, FlatStyle = FlatStyle.System };
     private readonly Button _new = new() { Text = "New…", Location = new Point(600, 12), Width = 70, FlatStyle = FlatStyle.System };
     private readonly Button _verify = new()
@@ -35,11 +35,11 @@ internal sealed class DumpCertificateLedgerView : UserControl
         Text = "Consensus", Location = new Point(428, 46), Width = 90, Height = 26, FlatStyle = FlatStyle.System, Enabled = false,
     };
 
-    private readonly TextBox _keyPath = new() { ReadOnly = true, Location = new Point(90, 80), Width = 420, Font = Theme.Ui };
+    private readonly TextBox _keyPath = new() { ReadOnly = true, Location = new Point(112, 80), Width = 398, Font = Theme.Ui };
     private readonly Button _keyPick = new() { Text = "…", Location = new Point(516, 78), Width = 30, FlatStyle = FlatStyle.System };
     private readonly Button _keyGen = new() { Text = "Generate Key…", Location = new Point(552, 78), Width = 118, FlatStyle = FlatStyle.System };
 
-    private readonly TextBox _outputSha = new() { Location = new Point(90, 110), Width = 300, Font = Theme.Mono };
+    private readonly TextBox _outputSha = new() { Location = new Point(112, 110), Width = 278, Font = Theme.Mono };
     private readonly TextBox _label = new() { Location = new Point(500, 110), Width = 138, Font = Theme.Ui };
     private readonly Button _submit = new()
     {

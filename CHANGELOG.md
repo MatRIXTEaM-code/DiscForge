@@ -11,6 +11,8 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
+## [1.115.0] - 2026-09-25
+
 ### Added
 
 - **RVZ/WIA: LZMA and LZMA2 groups, and a real-file layout fix** — `rvz-decode` and everything
@@ -103,6 +105,15 @@ it, and never defeats console security or decrypts protected content.
   design the way the existing named tools do (they read/image a disc; protection handling is
   incidental for the ones that need it). Same launch-and-forget posture as every other button on
   this row — DiscForge starts the process the user points it at and knows nothing else about it.
+
+### Fixed
+
+- **Labels running into their boxes** on the Dump Certificate (Firmware), Dump Certificate Ledger
+  (Submitter key, Output SHA-256) and Recovery (From LBA / Sectors / Max reads) screens, and a
+  clipped "Open…" button on the PS1 asset screen. Found with a sweep of every screen that measures
+  each label with Segoe UI metrics against the control beside it.
+- **`build-discforge.ps1` / `.bat`** — one-step build, test, publish and installer, with a log file,
+  a pause at the end, and automatic repo detection when run from elsewhere.
 
 ## [1.114.0] - 2026-09-18
 
