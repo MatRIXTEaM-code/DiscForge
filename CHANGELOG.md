@@ -11,6 +11,41 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
+## [1.117.0] - 2026-09-25
+
+### Added
+
+- **LHA/LZH, LArc, ARJ and ZOO archives (read-only)** — new `DiscForge.Core.OldArchives`: a common
+  `OldArchive` (list, test, extract, same safe-path rules as ACE; ACE plugs in through an adapter) with
+  readers for LHA/LZH header levels 0–3 (64-bit sizes, Amiga/OS-9/LHARK quirks, self-extractors) and
+  methods -lh0/1/4/5/6/7/x- and -lz4/5/s-; ARJ methods 0–4, multi-volume sets (each part CRC-checked),
+  self-extractors and classic garbled files; ZOO stored/LZW/LZH with long names and folders. Not
+  supported: -lh2-/-lh3-, PMarc, ARJ-SECURITY and GOST encryption; LHA symlinks are skipped.
+- **Folder check** — `ArchiveSweep` finds every old archive under a folder (sets counted once,
+  self-extracting .exe/.com included), tests each, reports OK / damaged / missing volume / needs
+  password, writes CSV, and can extract the good ones mirroring the folder layout.
+- **Archives on disc images** — `DiscImageArchives` lists the old archives in an ISO/UDF image
+  (via `ImageBrowser`) and tests or extracts them, volume sets included, without a manual copy.
+- **CLI** — `unpack-list [--json]`, `unpack-test`, `unpack [--out] [--password] [--overwrite] [--pause]`,
+  `unpack-sweep <folder> [--extract dir] [--csv file] [--no-exe] [--top-only]`,
+  `unpack-image <image> [--out dir]`.
+- **App** — the Extract tile opens all four formats, lists and extracts archives on disc images, and
+  has "Check a folder…" with a CSV report; `DiscForge.exe --extract <file>` (or a bare file path)
+  opens a file straight in the Extract tile.
+- **Installer** — optional Explorer menu ("Extract with DiscForge", "Open in DiscForge") for .ace,
+  .lzh, .lha, .arj and .zoo via SystemFileAssociations, and an optional (off by default) association.
+- **Tests** — `tests/fixtures/oldarc` (LHA/LArc archives from 12 original tools out of Lhasa's corpus;
+  ARJ and ZOO archives made with ARJ 3.10 and zoo 2.10), every file compared with the reference tool's
+  own extraction; the full Lhasa corpus (about 220 archives, including a 4.7 GB member) passes when
+  `LHASA_TESTDATA` is set.
+
+### Provenance
+
+- The LHA static-Huffman and -lh1- decoders are written from Okumura's ar002 and Okumura/Yoshizaki's
+  LZHUF descriptions; LArc, LHARK and LHA header details follow Lhasa (ISC licence, credited in NOTICE
+  and the source). ARJ follows Robert Jung's 1993 technical note; ZOO follows Rahul Dhesi's format
+  description. See `docs/OLD_ARCHIVES.md`.
+
 ## [1.116.0] - 2026-09-25
 
 ### Added

@@ -5,6 +5,7 @@
 using System.Drawing;
 using System.Windows.Forms;
 using DiscForge.Core.Ace;
+using DiscForge.Core.OldArchives;
 using DiscForge.Core.Fat;
 using DiscForge.Core.Floppy;
 using DiscForge.Core.PlayStation;
@@ -24,8 +25,10 @@ namespace DiscForge.App.Views;
 /// A thin shell over the same Core readers the <c>dforge</c> *-extract commands
 /// use (WbfsReader, D64/Adf/Fat12Reader, PsxMemoryCard, GcMemoryCardReader,
 /// VmuImage, PbpFile). DATA.PSP, when present in a PBP, is written raw and is
-/// never decrypted. ACE archives (WinAce / DOS ACE 1.0 and 2.0 — solid, multi-volume, self-extracting,
-/// password-protected) are read with AceArchive; "Extract all" keeps their folder structure.
+/// never decrypted. Old archives — ACE, LHA/LZH, ARJ and ZOO, including multi-volume, self-extracting
+/// and password-protected ones — are read with OldArchive; "Extract all" keeps their folder structure.
+/// A disc image lists the old archives stored on it, and "Check a folder…" tests every old archive in
+/// a folder tree and can unpack the good ones.
 /// </summary>
 internal sealed class ExtractView : UserControl
 {
@@ -33,7 +36,8 @@ internal sealed class ExtractView : UserControl
     // dropping a huge disc image here (WBFS is handled stream-only, before this).
     private const long MaxInMemoryBytes = 512L * 1024 * 1024;
 
-    private sealed record Item(string Display, string Detail, string SuggestedName, Action<string> ExtractTo);
+    /// <param name="Folder">true when the item extracts into a folder (an archive) rather than to one file.</param>
+    private sealed record Item(string Display, string Detail, string SuggestedName, Action<string> ExtractTo, bool Folder = false);
 
     private readonly TextBox _path = new() { ReadOnly = true, Width = 470, Font = Theme.Ui, Location = new Point(90, 14) };
     private readonly Label _kind = new() { AutoSize = true, Font = Theme.UiBold, Location = new Point(12, 46) };
@@ -46,11 +50,18 @@ internal sealed class ExtractView : UserControl
     private readonly Button _selected = new() { Text = "Extract selected…", Location = new Point(12, 380), Width = 150, FlatStyle = FlatStyle.System, Enabled = false, Anchor = AnchorStyles.Left | AnchorStyles.Bottom };
     private readonly Button _all = new() { Text = "Extract all…", Location = new Point(170, 380), Width = 120, FlatStyle = FlatStyle.System, Enabled = false, Anchor = AnchorStyles.Left | AnchorStyles.Bottom };
 
+    private readonly Button _sweep = new() { Text = "Check a folder…", Location = new Point(298, 380), Width = 130, FlatStyle = FlatStyle.System, Anchor = AnchorStyles.Left | AnchorStyles.Bottom };
+    private readonly Button _report = new() { Text = "Save report…", Location = new Point(436, 380), Width = 110, FlatStyle = FlatStyle.System, Visible = false, Anchor = AnchorStyles.Left | AnchorStyles.Bottom };
+
     private readonly List<Item> _items = new();
 
-    // Set while an ACE archive is loaded: "Extract all" then unpacks it with its folders.
-    private string? _acePath;
-    private string? _acePassword;
+    // What is loaded, when it isn't a plain container: an old archive, a disc image holding old
+    // archives, or the result of a folder check. "Extract all" handles each its own way.
+    private string? _archivePath;
+    private string? _imagePath;
+    private string? _sweepFolder;
+    private List<SweepItem>? _sweepItems;
+    private string? _password;
 
     public ExtractView()
     {
@@ -70,10 +81,12 @@ internal sealed class ExtractView : UserControl
         pick.Click += (_, _) => Choose();
         _selected.Click += (_, _) => ExtractSelected();
         _all.Click += (_, _) => ExtractAll();
+        _sweep.Click += (_, _) => CheckFolder();
+        _report.Click += (_, _) => SaveReport();
         _list.SelectedIndexChanged += (_, _) => _selected.Enabled = _list.SelectedIndices.Count > 0;
 
-        Controls.AddRange(new Control[] { _path, pick, _kind, _list, _selected, _all });
-        _kind.Text = "Drop a WBFS, floppy image, memory card, EBOOT.PBP or ACE archive to list its contents.";
+        Controls.AddRange(new Control[] { _path, pick, _kind, _list, _selected, _all, _sweep, _report });
+        _kind.Text = "Drop a WBFS, floppy, memory card, EBOOT.PBP, old archive (ACE/LHA/ARJ/ZOO) or disc image.";
         _kind.ForeColor = Color.Gray;
     }
 
@@ -83,13 +96,17 @@ internal sealed class ExtractView : UserControl
     {
         using var dlg = new OpenFileDialog
         {
-            Filter = "Extractable containers (*.wbfs;*.d64;*.adf;*.img;*.mcr;*.mc;*.raw;*.bin;*.vmu;*.pbp;*.ace)|" +
-                     "*.wbfs;*.d64;*.adf;*.img;*.mcr;*.mc;*.raw;*.bin;*.vmu;*.pbp;*.ace|" +
-                     "ACE archives (*.ace;*.c00;*.exe)|*.ace;*.c??;*.exe|All files (*.*)|*.*",
+            Filter = "Extractable files (*.wbfs;*.d64;*.adf;*.img;*.mcr;*.mc;*.raw;*.bin;*.vmu;*.pbp;*.ace;*.lzh;*.lha;*.arj;*.zoo;*.iso;*.cue;*.cdi)|" +
+                     "*.wbfs;*.d64;*.adf;*.img;*.mcr;*.mc;*.raw;*.bin;*.vmu;*.pbp;*.ace;*.lzh;*.lha;*.arj;*.zoo;*.iso;*.cue;*.cdi|" +
+                     "Old archives (*.ace;*.lzh;*.lha;*.lzs;*.arj;*.zoo;*.c00;*.a01;*.exe)|*.ace;*.lzh;*.lha;*.lzs;*.arj;*.zoo;*.c??;*.a??;*.exe|" +
+                     "Disc images (*.iso;*.cue;*.bin;*.img;*.cdi)|*.iso;*.cue;*.bin;*.img;*.cdi|All files (*.*)|*.*",
             InitialDirectory = AppSettings.LastImageDirectory ?? "",
         };
         if (dlg.ShowDialog() == DialogResult.OK) LoadFile(dlg.FileName);
     }
+
+    /// <summary>Open a file as if it had been dropped here (used for "Open with DiscForge").</summary>
+    public void OpenFile(string path) => LoadFile(path);
 
     private void LoadFile(string path)
     {
@@ -99,14 +116,13 @@ internal sealed class ExtractView : UserControl
         _list.Items.Clear();
         _selected.Enabled = false;
         _all.Enabled = false;
-        _acePath = null;
-        _acePassword = null;
+        ResetModes();
 
         try
         {
             if (!Detect(path))
             {
-                _kind.Text = "Nothing to extract — not a WBFS, floppy, memory card, PBP or ACE archive DiscForge can open.";
+                _kind.Text = "Nothing to extract — not a container, old archive or disc image DiscForge can open.";
                 _kind.ForeColor = Color.FromArgb(0xA0, 0x60, 0x00);
                 return;
             }
@@ -154,27 +170,23 @@ internal sealed class ExtractView : UserControl
             }
         }
 
-        // ACE: also streamed (archives can be large, and self-extractors are .exe files).
-        if (AceArchive.IsAceFile(path) || IsAceVolume(path))
+        // Old archives (ACE, LHA/LZH, ARJ, ZOO): streamed, since they can be large and self-extractors
+        // are .exe files.
+        if (OldArchive.IsNumberedVolume(path) || OldArchive.Detect(path) is not null)
         {
-            using var ace = AceArchive.Open(path);
-            _acePath = path;
-            var bits = new List<string> { $"ACE {AceArchive.VersionText(ace.VersionNeeded)} archive" };
-            if (ace.IsSolid) bits.Add("solid");
-            if (ace.IsMultiVolume) bits.Add($"{ace.VolumePaths.Count} volume(s)");
-            if (ace.StartOffset > 0) bits.Add("self-extracting");
-            if (ace.AnyEncrypted) bits.Add("password-protected");
-            int files = ace.Members.Count(m => !m.IsDirectory);
-            _kind.Text = string.Join(", ", bits) + $" — {files} file(s)" + (ace.Warnings.Count > 0 ? "  (see note)" : "");
-            if (ace.Comment.Length > 0 || ace.Warnings.Count > 0)
-                RetroMessageBox.Show(string.Join("\n\n", ace.Warnings.Concat(ace.Comment.Length > 0 ? new[] { "Archive comment:\n" + ace.Comment } : Array.Empty<string>())));
-            foreach (var m in ace.Members)
+            using var arc = OldArchive.Open(path);
+            _archivePath = path;
+            int files = arc.Entries.Count(e => !e.IsDirectory);
+            _kind.Text = $"{arc.Description} — {files} file(s)" + (arc.Warnings.Count > 0 ? "  (see note)" : "");
+            if (arc.Comment.Length > 0 || arc.Warnings.Count > 0)
+                RetroMessageBox.Show(string.Join("\n\n", arc.Warnings.Concat(arc.Comment.Length > 0 ? new[] { "Archive comment:\n" + arc.Comment } : Array.Empty<string>())));
+            foreach (var e in arc.Entries)
             {
-                if (m.IsDirectory) continue;
-                int index = m.Index;
-                string leaf = m.Name.Contains('/') ? m.Name[(m.Name.LastIndexOf('/') + 1)..] : m.Name;
-                string detail = $"{m.Size:N0} B, {m.MethodText}" + (m.IsEncrypted ? ", password" : "") + (m.VolumeCount > 1 ? $", {m.VolumeCount} volumes" : "");
-                _items.Add(new Item(m.Name, detail, leaf, dest => ExtractAceMember(path, index, dest)));
+                if (e.IsDirectory) continue;
+                int index = e.Index;
+                string leaf = e.Name.Contains('/') ? e.Name[(e.Name.LastIndexOf('/') + 1)..] : e.Name;
+                string detail = $"{e.Size:N0} B, {e.Method}" + (e.IsEncrypted ? ", password" : "") + (e.VolumeCount > 1 ? $", {e.VolumeCount} volumes" : "");
+                _items.Add(new Item(e.Name, detail, leaf, dest => ExtractArchiveEntry(path, index, dest)));
             }
             return true;
         }
@@ -307,7 +319,28 @@ internal sealed class ExtractView : UserControl
             return true;
         }
 
-        return false;
+        return DetectDiscImage(path);
+    }
+
+    private static readonly string[] ImageExtensions = { ".iso", ".cue", ".bin", ".img", ".cdi", ".mdf", ".nrg" };
+
+    /// <summary>A disc image with old archives on it: one item per archive (or volume set).</summary>
+    private bool DetectDiscImage(string path)
+    {
+        if (!ImageExtensions.Contains(Path.GetExtension(path).ToLowerInvariant())) return false;
+        var (found, error) = DiscImageArchives.Find(path);
+        if (error is not null || found.Count == 0) return false;
+        _imagePath = path;
+        _kind.Text = $"Disc image — {found.Count} old archive(s) on it (ACE/LHA/ARJ/ZOO). Each extracts into its own folder.";
+        foreach (var f in found)
+        {
+            var archive = f;
+            string leaf = archive.PathInImage.TrimStart('/');
+            string folder = Path.GetFileNameWithoutExtension(leaf);
+            string detail = $"{archive.Size:N0} B" + (archive.VolumePathsInImage.Count > 1 ? $", {archive.VolumePathsInImage.Count} volumes" : "");
+            _items.Add(new Item(leaf, detail, Sanitize(folder), dest => ExtractArchiveFromImage(path, archive, dest), Folder: true));
+        }
+        return true;
     }
 
     private void ExtractSelected()
@@ -315,7 +348,8 @@ internal sealed class ExtractView : UserControl
         var picked = _list.SelectedIndices.Cast<int>().Select(i => _items[i]).ToList();
         if (picked.Count == 0) return;
 
-        if (picked.Count == 1)
+        if (_sweepItems is not null) { ExtractSweep(picked); return; }
+        if (picked.Count == 1 && !picked[0].Folder)
         {
             var item = picked[0];
             using var dlg = new SaveFileDialog { FileName = item.SuggestedName, Filter = "All files (*.*)|*.*" };
@@ -330,38 +364,54 @@ internal sealed class ExtractView : UserControl
         }
     }
 
-    private static bool IsAceVolume(string path)
+    private void ResetModes()
     {
-        string ext = Path.GetExtension(path);
-        return ext.Length == 4 && (ext[1] is 'c' or 'C') && char.IsAsciiDigit(ext[2]) && char.IsAsciiDigit(ext[3]);
+        _archivePath = null;
+        _imagePath = null;
+        _sweepFolder = null;
+        _sweepItems = null;
+        _password = null;
+        _report.Visible = false;
+        _list.Columns[2].Text = "Saves as";
     }
 
-    private void ExtractAceMember(string path, int index, string dest)
+    private void ExtractArchiveEntry(string path, int index, string dest)
     {
-        using var ace = AceArchive.Open(path);
-        var member = ace.Members[index];
-        string? pw = member.IsEncrypted ? AskAcePassword() : null;
-        if (member.IsEncrypted && pw is null) throw new OperationCanceledException("No password entered.");
-        string tmp = dest + ".dfpart";
+        using var arc = OldArchive.Open(path);
+        var entry = arc.Entries[index];
+        string? pw = entry.IsEncrypted ? AskPassword() : null;
+        if (entry.IsEncrypted && pw is null) throw new OperationCanceledException("No password entered.");
+        try { SafeExtract.WriteFile(dest, entry.Modified, s => arc.Extract(entry, s, pw)); }
+        catch (OldArchivePasswordException) { _password = null; throw; }
+    }
+
+    private void ExtractArchiveFromImage(string imagePath, DiscImageArchives.Found archive, string destFolder)
+    {
+        string? temp = null;
         try
         {
-            using (var fs = File.Create(tmp)) ace.Extract(member, fs, pw);
-            File.Move(tmp, dest, overwrite: true);
-            File.SetLastWriteTime(dest, member.Modified);
+            string local = DiscImageArchives.CopyOut(imagePath, archive, out temp);
+            using var arc = OldArchive.Open(local);
+            string? pw = arc.AnyEncrypted ? AskPassword() : null;
+            var r = arc.ExtractAll(destFolder, pw);
+            if (!r.AllOk)
+                throw new IOException($"{r.Failed} of {r.Entries.Count} item(s) failed — first: {r.Entries.First(e => !e.Ok).Entry.Name}: {r.Entries.First(e => !e.Ok).Error}");
         }
-        catch (AcePasswordException) { _acePassword = null; throw; }
-        finally { if (File.Exists(tmp)) File.Delete(tmp); }
+        finally
+        {
+            if (temp is not null) try { Directory.Delete(temp, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
     }
 
-    private string? AskAcePassword()
+    private string? AskPassword()
     {
-        if (_acePassword is not null) return _acePassword;
+        if (_password is not null) return _password;
         using var form = new Form
         {
             Text = "Password", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
             MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false, ClientSize = new Size(340, 110), Font = Theme.Ui,
         };
-        var label = new Label { Text = "This ACE archive has password-protected files.\nPassword:", AutoSize = true, Location = new Point(12, 10) };
+        var label = new Label { Text = "This archive has password-protected files.\nPassword:", AutoSize = true, Location = new Point(12, 10) };
         var box = new TextBox { UseSystemPasswordChar = true, Location = new Point(12, 46), Width = 316 };
         var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(172, 76), Width = 75, FlatStyle = FlatStyle.System };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(253, 76), Width = 75, FlatStyle = FlatStyle.System };
@@ -369,48 +419,166 @@ internal sealed class ExtractView : UserControl
         form.AcceptButton = ok;
         form.CancelButton = cancel;
         if (form.ShowDialog(this) != DialogResult.OK) return null;
-        return _acePassword = box.Text;
+        return _password = box.Text;
     }
 
-    private async void ExtractAceAll(string path)
+    private void SetBusy(bool busy)
+    {
+        _all.Enabled = !busy && _items.Count > 0;
+        _selected.Enabled = !busy && _list.SelectedIndices.Count > 0;
+        _sweep.Enabled = !busy;
+        UseWaitCursor = busy;
+    }
+
+    private void ShowFailures(string headline, IEnumerable<string> problems)
+    {
+        var list = problems.ToList();
+        if (list.Count == 0) return;
+        RetroMessageBox.Show(headline + "\n\n" + string.Join("\n", list.Take(12)) + (list.Count > 12 ? $"\n… and {list.Count - 12} more." : ""));
+    }
+
+    private async void ExtractArchiveAll(string path)
     {
         string? dir = ChooseFolder();
         if (dir is null) return;
         string? pw = null;
-        using (var probe = AceArchive.Open(path))
-            if (probe.AnyEncrypted && (pw = AskAcePassword()) is null) return;
-        _all.Enabled = _selected.Enabled = false;
+        using (var probe = OldArchive.Open(path))
+            if (probe.AnyEncrypted && (pw = AskPassword()) is null) return;
+        SetBusy(true);
         StatusBus.Report($"Extracting {Path.GetFileName(path)}…");
         try
         {
             var result = await Task.Run(() =>
             {
-                using var ace = AceArchive.Open(path);
-                return ace.ExtractAll(dir, pw);
+                using var arc = OldArchive.Open(path);
+                return arc.ExtractAll(dir, pw);
             });
-            var failed = result.Members.Where(m => !m.Ok).ToList();
-            if (failed.Any(f => f.Error?.Contains("password", StringComparison.OrdinalIgnoreCase) == true)) _acePassword = null;
+            var failed = result.Entries.Where(e => !e.Ok).ToList();
+            if (failed.Any(f => f.Error?.Contains("password", StringComparison.OrdinalIgnoreCase) == true)) _password = null;
             StatusBus.Report($"Extracted {result.Ok} item(s) to {dir}.");
-            if (failed.Count > 0)
-                RetroMessageBox.Show($"Extracted {result.Ok} of {result.Members.Count}.\n\n" +
-                    string.Join("\n", failed.Take(12).Select(f => $"{f.Member.Name}: {f.Error}")) +
-                    (failed.Count > 12 ? $"\n… and {failed.Count - 12} more." : ""));
+            ShowFailures($"Extracted {result.Ok} of {result.Entries.Count}.", failed.Select(f => $"{f.Entry.Name}: {f.Error}"));
         }
         catch (Exception ex)
         {
             RetroMessageBox.Show(ex.Message);
             AppLog.WriteException("extract", ex);
         }
-        finally
+        finally { SetBusy(false); }
+    }
+
+    private async void ExtractImageAll(string imagePath)
+    {
+        string? dir = ChooseFolder();
+        if (dir is null) return;
+        SetBusy(true);
+        StatusBus.Report($"Extracting the archives on {Path.GetFileName(imagePath)}…");
+        try
         {
-            _all.Enabled = _items.Count > 0;
-            _selected.Enabled = _list.SelectedIndices.Count > 0;
+            string? pw = _password;
+            var items = await Task.Run(() => DiscImageArchives.Process(imagePath, dir, pw, overwrite: false));
+            StatusBus.Report(ArchiveSweep.Summary(items));
+            ShowFailures(ArchiveSweep.Summary(items), items.Where(i => !i.Ok).Select(i => $"{i.Path}: {i.Status} — {i.Detail}"));
         }
+        catch (Exception ex)
+        {
+            RetroMessageBox.Show(ex.Message);
+            AppLog.WriteException("extract", ex);
+        }
+        finally { SetBusy(false); }
+    }
+
+    // ---- folder check -------------------------------------------------------------------------
+
+    private async void CheckFolder()
+    {
+        using var dlg = new FolderBrowserDialog { Description = "Choose a folder to check for old archives (ACE, LHA/LZH, ARJ, ZOO)", UseDescriptionForTitle = true };
+        if (dlg.ShowDialog() != DialogResult.OK) return;
+        string folder = dlg.SelectedPath;
+        _path.Text = folder;
+        _items.Clear();
+        _list.Items.Clear();
+        ResetModes();
+        _kind.ForeColor = Theme.Text;
+        _kind.Text = "Checking…";
+        SetBusy(true);
+        try
+        {
+            var progress = new Progress<(int Done, int Total, string Name)>(p =>
+            {
+                if (p.Total > 0) _kind.Text = $"Checking {Math.Min(p.Done + 1, p.Total)} of {p.Total}: {Path.GetFileName(p.Name)}";
+            });
+            var items = await Task.Run(() => ArchiveSweep.Run(folder, new SweepOptions(), progress));
+            _sweepFolder = folder;
+            _sweepItems = items;
+            _list.Columns[2].Text = "Status";
+            foreach (var i in items)
+            {
+                var item = i;
+                string rel = Path.GetRelativePath(folder, item.Path);
+                string leaf = Sanitize(Path.GetFileNameWithoutExtension(item.Path));
+                _items.Add(new Item(rel, $"{item.Format ?? "?"}, {item.Files} file(s) — {item.Detail}", leaf, _ => { }, Folder: true));
+                var lvi = new ListViewItem(new[] { rel, $"{item.Format ?? "?"}, {item.Files} file(s) — {item.Detail}", item.Status });
+                if (!item.Ok) lvi.ForeColor = Theme.Bad;
+                _list.Items.Add(lvi);
+            }
+            _kind.Text = items.Count == 0 ? "No ACE, LHA/LZH, ARJ or ZOO archives in that folder." : ArchiveSweep.Summary(items);
+            _kind.ForeColor = items.All(i => i.Ok) ? Theme.Good : Theme.Warn;
+            _report.Visible = items.Count > 0;
+            StatusBus.Report(_kind.Text);
+        }
+        catch (Exception ex)
+        {
+            _kind.Text = "The folder check stopped: " + ex.Message;
+            _kind.ForeColor = Theme.Bad;
+            AppLog.WriteException("extract", ex);
+        }
+        finally { SetBusy(false); }
+    }
+
+    private async void ExtractSweep(IReadOnlyList<Item> picked)
+    {
+        if (_sweepItems is null || _sweepFolder is null) return;
+        string? dir = ChooseFolder();
+        if (dir is null) return;
+        var chosen = picked.Select(p => _sweepItems[_items.IndexOf(p)]).ToList();
+        string folder = _sweepFolder;
+        SetBusy(true);
+        try
+        {
+            string? pw = chosen.Any(c => c.Status == SweepItem.StatusPassword) ? AskPassword() : _password;
+            var opt = new SweepOptions { Password = pw };
+            var results = await Task.Run(() => chosen.Select(c =>
+            {
+                string rel = Path.GetRelativePath(folder, Path.GetDirectoryName(c.Path)!);
+                string dest = Path.Combine(dir, rel == "." ? "" : rel, Path.GetFileNameWithoutExtension(c.Path));
+                return ArchiveSweep.Check(c.Path, opt, dest);
+            }).ToList());
+            StatusBus.Report($"Extracted {results.Count(r => r.Ok)} of {results.Count} archive(s) to {dir}.");
+            ShowFailures($"Extracted {results.Count(r => r.Ok)} of {results.Count} archive(s).",
+                results.Where(r => !r.Ok).Select(r => $"{Path.GetFileName(r.Path)}: {r.Status} — {r.Detail}"));
+        }
+        catch (Exception ex)
+        {
+            RetroMessageBox.Show(ex.Message);
+            AppLog.WriteException("extract", ex);
+        }
+        finally { SetBusy(false); }
+    }
+
+    private void SaveReport()
+    {
+        if (_sweepItems is null) return;
+        using var dlg = new SaveFileDialog { FileName = "archive-check.csv", Filter = "CSV (*.csv)|*.csv|All files (*.*)|*.*" };
+        if (dlg.ShowDialog() != DialogResult.OK) return;
+        File.WriteAllText(dlg.FileName, ArchiveSweep.ToCsv(_sweepItems, _sweepFolder));
+        StatusBus.Report($"Report saved to {dlg.FileName}");
     }
 
     private void ExtractAll()
     {
-        if (_acePath is not null) { ExtractAceAll(_acePath); return; }
+        if (_sweepItems is not null) { ExtractSweep(_items.ToList()); return; }
+        if (_archivePath is not null) { ExtractArchiveAll(_archivePath); return; }
+        if (_imagePath is not null) { ExtractImageAll(_imagePath); return; }
         string? dir = ChooseFolder();
         if (dir is null) return;
         RunExtract(_items.Select(it => (it, Path.Combine(dir, it.SuggestedName))).ToList());

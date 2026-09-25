@@ -2,7 +2,7 @@
 
 *Auto-generated from the CLI's own help (`dforge` with no args). Regenerate after adding commands.*
 
-DiscForge exposes **349 commands** (341 plus `dic-log` and `cold-case`, added 2026-09-18, `xdelta-apply`/`xdelta-info`/`xdelta-create`, added 2026-09-24, and `ace-list`/`ace-test`/`ace-extract`, added 2026-09-25 — this
+DiscForge exposes **354 commands** (341 plus `dic-log` and `cold-case`, added 2026-09-18, `xdelta-apply`/`xdelta-info`/`xdelta-create`, added 2026-09-24, and `ace-list`/`ace-test`/`ace-extract` and `unpack`/`unpack-list`/`unpack-test`/`unpack-sweep`/`unpack-image`, added 2026-09-25 — this
 count was hand-bumped, not re-derived from a real `dforge` run; run `scripts\check-commands-sync.ps1`
 against a real build to confirm it, and note `docs/CLI.md` separately claims 347 and `README.md`
 claims 380 — a pre-existing drift across the three docs that predates tonight and is flagged here
@@ -297,6 +297,11 @@ All analysis is clean-room: DiscForge identifies, verifies, and preserves — it
 - `ace-list <archive.ace> [--json]  List an ACE (WinAce / DOS ACE 1.0-2.0) archive: files, sizes, method, dates, comments. Single, multi-volume (.ace + .c00, .c01 …, open any volume) or self-extracting .exe.`
 - `ace-test <archive.ace> [--password X]  Decompress every file and check its CRC-32, writing nothing. Exit code 2 if anything fails.`
 - `ace-extract <archive.ace> [--out dir] [--password X] [--overwrite]  Extract with folders (default: a folder named after the archive, next to it). Solid, multi-volume, self-extracting and password-protected archives. Stored names are cleaned and can never write outside the output folder; each file is CRC-checked before it is kept. Read-only support: DiscForge never creates ACE archives.`
+- `unpack-list <archive> [--json]  List an old archive — ACE, LHA/LZH (and LArc .lzs), ARJ or ZOO — including multi-volume sets (open any volume) and self-extracting .exe files.`
+- `unpack-test <archive> [--password X]  Decompress every file and check its CRC, writing nothing. Exit code 2 if anything fails.`
+- `unpack <archive> [--out dir] [--password X] [--overwrite] [--pause]  Extract with folders (default: a folder named after the archive, next to it). Names are cleaned and can never write outside the folder; each file is CRC-checked first. --pause keeps the console open (used by Explorer's "Extract with DiscForge").`
+- `unpack-sweep <folder> [--extract dir] [--csv report.csv] [--password X] [--no-exe] [--top-only] [--overwrite]  Find every old archive under a folder (split sets counted once, self-extracting .exe files unless --no-exe), test each, report OK / damaged / missing volume / needs password, optionally extract the good ones to <dir>/<same sub-folder>/<archive name>/. Exit code 2 if any has a problem.`
+- `unpack-image <disc image> [--out dir] [--password X] [--overwrite]  List and test the old archives stored on an ISO / bin-cue / CDI image; with --out, extract each into <dir>/<its path on the disc>/ without copying it off first.`
 
 ## Split / join / licence
 

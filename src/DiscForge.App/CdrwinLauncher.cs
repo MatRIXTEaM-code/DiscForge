@@ -232,6 +232,20 @@ new("pack",    "Pack Discs",    C(0x70,0xA0,0x80), C(0x30,0x60,0x48), "📦",
         return -1;
     }
 
+    /// <summary>A file to open in the Extract tile as soon as the window is up (set from the command line).</summary>
+    public string? StartupExtractFile { get; init; }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        if (StartupExtractFile is { } file)
+        {
+            var view = new Views.ExtractView();
+            new CdrwinTaskWindow("Extract", view).Show(this);
+            BeginInvoke(() => view.OpenFile(file));
+        }
+    }
+
     private void Launch(Tile tile)
     {
         switch (tile.Key)

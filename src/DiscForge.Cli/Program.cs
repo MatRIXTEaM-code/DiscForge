@@ -305,6 +305,11 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  ace-list <archive.ace> [--json]  List an ACE (WinAce) archive: files, sizes, method, dates, comments; single, multi-volume (.c00…) or self-extracting");
     Console.WriteLine("  ace-test <archive.ace> [--password X]  Decompress every file in an ACE archive and check its CRC, writing nothing");
     Console.WriteLine("  ace-extract <archive.ace> [--out dir] [--password X] [--overwrite]  Extract an ACE 1.0/2.0 archive (read-only support; names are cleaned and can't escape the output folder)");
+    Console.WriteLine("  unpack-list <archive> [--json]  List an old archive: ACE, LHA/LZH (and LArc), ARJ or ZOO, including multi-volume and self-extracting ones");
+    Console.WriteLine("  unpack-test <archive> [--password X]  Decompress every file in an old archive and check its CRC, writing nothing");
+    Console.WriteLine("  unpack <archive> [--out dir] [--password X] [--overwrite] [--pause]  Extract an ACE, LHA/LZH, ARJ or ZOO archive (names cleaned; nothing can land outside the folder)");
+    Console.WriteLine("  unpack-sweep <folder> [--extract dir] [--csv report.csv] [--password X] [--no-exe] [--top-only] [--overwrite]  Find, test (and optionally extract) every old archive in a folder");
+    Console.WriteLine("  unpack-image <disc image> [--out dir] [--password X] [--overwrite]  Find the old archives on a disc image (ISO, bin/cue, CDI …) and test or extract them without copying them out first");
     Console.WriteLine("  create-udf <folder> <out.udf> [--udf-version 1.02|1.50|2.00|2.01|2.50|2.60]  Build a UDF filesystem image from a folder");
     Console.WriteLine("                          --volume NAME sets the volume label");
     Console.WriteLine("  create-udf-bridge <folder> <out.iso>  Build a UDF-bridge image readable as BOTH");
@@ -712,6 +717,11 @@ return args[0].ToLowerInvariant() switch
     "ace-list" => AceList(args),
     "ace-test" => AceTest(args),
     "ace-extract" => AceExtract(args),
+    "unpack-list" => UnpackList(args),
+    "unpack-test" => UnpackTest(args),
+    "unpack" => UnpackExtract(args),
+    "unpack-sweep" => UnpackSweep(args),
+    "unpack-image" => UnpackImage(args),
     "create-udf" => CreateUdf(args),
     "create-udf-bridge" => CreateUdfBridge(args),
     "dvd-video-plan" => DvdVideoPlanCmd(args),
@@ -18786,6 +18796,169 @@ static int AceExtract(string[] args)
         foreach (var m in r.Members.Where(m => !m.Ok)) Console.WriteLine($"  FAILED  {m.Member.Name}: {m.Error}");
         Console.WriteLine($"Extracted {r.Ok:N0} item(s) to {outDir}" + (r.Failed > 0 ? $"; {r.Failed:N0} failed." : "."));
         return r.AllOk ? 0 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static string? OldPassword(string[] args, DiscForge.Core.OldArchives.OldArchive? a)
+{
+    var pw = AceArg(args, "--password");
+    if (pw is not null || (a is not null && !a.AnyEncrypted) || Console.IsInputRedirected) return pw;
+    Console.Write("Password (Enter for none): ");
+    var sb = new System.Text.StringBuilder();
+    while (true)
+    {
+        var k = Console.ReadKey(intercept: true);
+        if (k.Key == ConsoleKey.Enter) break;
+        if (k.Key == ConsoleKey.Backspace) { if (sb.Length > 0) sb.Length--; continue; }
+        if (k.KeyChar != '\0') sb.Append(k.KeyChar);
+    }
+    Console.WriteLine();
+    return sb.Length == 0 ? null : sb.ToString();
+}
+
+static int UnpackList(string[] args)
+{
+    if (args.Length < 2) return Fail("usage: dforge unpack-list <archive> [--json]");
+    if (!File.Exists(args[1])) return Fail($"Archive not found: {args[1]}");
+    try
+    {
+        using var a = DiscForge.Core.OldArchives.OldArchive.Open(args[1]);
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                a.Format, a.Description, Volumes = a.VolumePaths.Select(Path.GetFileName).ToArray(), a.StartOffset, a.Comment, a.Warnings,
+                Files = a.Entries.Select(e => new { e.Name, e.Size, e.PackedSize, e.Modified, e.IsDirectory, e.IsEncrypted, e.Method, e.Comment, e.VolumeCount }).ToArray(),
+            });
+            return 0;
+        }
+        Console.WriteLine(a.Description);
+        if (a.Comment.Length > 0) Console.WriteLine("  comment: " + a.Comment.Replace("\n", "\n           "));
+        Console.WriteLine();
+        Console.WriteLine($"{"Size",14} {"Packed",14}  {"Date",-16}  {"Method",-18} Name");
+        foreach (var e in a.Entries)
+            Console.WriteLine($"{(e.IsDirectory ? "<dir>" : e.Size.ToString("N0")),14} {e.PackedSize,14:N0}  {e.Modified:yyyy-MM-dd HH:mm}  {e.Method,-18} " +
+                              $"{e.Name}{(e.IsEncrypted ? "  [password]" : "")}{(e.VolumeCount > 1 ? $"  [spans {e.VolumeCount} volumes]" : "")}");
+        var files = a.Entries.Where(e => !e.IsDirectory).ToList();
+        Console.WriteLine($"{files.Sum(e => e.Size),14:N0} {a.Entries.Sum(e => e.PackedSize),14:N0}  {files.Count:N0} file(s), {a.Entries.Count - files.Count:N0} folder(s)");
+        foreach (var w in a.Warnings) Console.Error.WriteLine($"warning: {w}");
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int UnpackTest(string[] args)
+{
+    if (args.Length < 2) return Fail("usage: dforge unpack-test <archive> [--password X]");
+    if (!File.Exists(args[1])) return Fail($"Archive not found: {args[1]}");
+    try
+    {
+        using var a = DiscForge.Core.OldArchives.OldArchive.Open(args[1]);
+        foreach (var w in a.Warnings) Console.Error.WriteLine($"warning: {w}");
+        var r = a.TestAll(OldPassword(args, a));
+        foreach (var e in r.Entries.Where(e => !e.Ok)) Console.WriteLine($"  FAILED  {e.Entry.Name}: {e.Error}");
+        Console.WriteLine(r.AllOk ? $"{a.Description}: all {r.Ok:N0} item(s) OK." : $"{a.Description}: {r.Ok:N0} OK, {r.Failed:N0} failed.");
+        return r.AllOk ? 0 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int UnpackExtract(string[] args)
+{
+    if (!args.Contains("--pause")) return UnpackExtractCore(args);
+    // Run from Explorer's "Extract with DiscForge": keep the window open so the result can be read.
+    int rc = UnpackExtractCore(args);
+    Console.WriteLine();
+    Console.Write(rc == 0 ? "Done. Press Enter to close." : "Finished with problems (see above). Press Enter to close.");
+    Console.ReadLine();
+    return rc;
+}
+
+static int UnpackExtractCore(string[] args)
+{
+    if (args.Length < 2) return Fail("usage: dforge unpack <archive> [--out <folder>] [--password X] [--overwrite]\n" +
+                                     "  Extracts an ACE, LHA/LZH (LArc), ARJ or ZOO archive — single, multi-volume or self-extracting.\n" +
+                                     "  Default folder: the archive's name next to it. Existing files are kept unless --overwrite.");
+    if (!File.Exists(args[1])) return Fail($"Archive not found: {args[1]}");
+    try
+    {
+        using var a = DiscForge.Core.OldArchives.OldArchive.Open(args[1]);
+        foreach (var w in a.Warnings) Console.Error.WriteLine($"warning: {w}");
+        string first = a.VolumePaths[0];
+        string outDir = AceArg(args, "--out") ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(first))!, Path.GetFileNameWithoutExtension(first));
+        var pw = OldPassword(args, a);
+        Console.WriteLine($"{a.Description}: extracting {a.Entries.Count:N0} item(s) to {outDir} …");
+        var r = a.ExtractAll(outDir, pw, args.Contains("--overwrite"));
+        foreach (var e in r.Entries.Where(e => !e.Ok)) Console.WriteLine($"  FAILED  {e.Entry.Name}: {e.Error}");
+        Console.WriteLine($"Extracted {r.Ok:N0} item(s)" + (r.Failed > 0 ? $"; {r.Failed:N0} failed." : "."));
+        return r.AllOk ? 0 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static void PrintSweep(IReadOnlyCollection<DiscForge.Core.OldArchives.SweepItem> items, string? baseFolder)
+{
+    foreach (var i in items)
+    {
+        string p = baseFolder is null ? i.Path : Path.GetRelativePath(baseFolder, i.Path);
+        Console.WriteLine($"  {i.Status,-15} {i.Format ?? "?",-4} {i.Files,6:N0} file(s)  {p}");
+        if (!i.Ok) Console.WriteLine($"                  {i.Detail}");
+    }
+    Console.WriteLine(DiscForge.Core.OldArchives.ArchiveSweep.Summary(items));
+}
+
+static int UnpackSweep(string[] args)
+{
+    if (args.Length < 2) return Fail("usage: dforge unpack-sweep <folder> [--extract <dir>] [--csv <report.csv>] [--password X] [--no-exe] [--top-only] [--overwrite]\n" +
+                                     "  Finds every ACE, LHA/LZH, ARJ and ZOO archive under <folder> (split sets counted once; self-extracting\n" +
+                                     "  .exe files too unless --no-exe), tests each one, and with --extract unpacks the good ones into\n" +
+                                     "  <dir>/<same sub-folder>/<archive name>/. Exit code 2 if any archive has a problem.");
+    if (!Directory.Exists(args[1])) return Fail($"Folder not found: {args[1]}");
+    try
+    {
+        var opt = new DiscForge.Core.OldArchives.SweepOptions
+        {
+            IncludeExecutables = !args.Contains("--no-exe"),
+            Recursive = !args.Contains("--top-only"),
+            Password = AceArg(args, "--password"),
+            ExtractTo = AceArg(args, "--extract"),
+            Overwrite = args.Contains("--overwrite"),
+        };
+        var progress = new SyncProgress<(int Done, int Total, string Name)>(p =>
+        {
+            if (p.Name.Length > 0 && !Console.IsErrorRedirected) Console.Error.Write($"\r  checking {p.Done + 1}/{p.Total} …   ");
+        });
+        var items = DiscForge.Core.OldArchives.ArchiveSweep.Run(args[1], opt, progress);
+        if (!Console.IsErrorRedirected) Console.Error.Write("\r                                  \r");
+        if (items.Count == 0) { Console.WriteLine("No ACE, LHA/LZH, ARJ or ZOO archives found."); return 0; }
+        PrintSweep(items, args[1]);
+        var csv = AceArg(args, "--csv");
+        if (csv is not null)
+        {
+            File.WriteAllText(csv, DiscForge.Core.OldArchives.ArchiveSweep.ToCsv(items, args[1]));
+            Console.WriteLine($"Report written to {csv}");
+        }
+        return items.All(i => i.Ok) ? 0 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int UnpackImage(string[] args)
+{
+    if (args.Length < 2) return Fail("usage: dforge unpack-image <disc image> [--out <folder>] [--password X] [--overwrite]\n" +
+                                     "  Lists the ACE/LHA/ARJ/ZOO archives stored on a disc image and tests them; with --out, extracts\n" +
+                                     "  each into <folder>/<its path on the disc>/.");
+    if (!File.Exists(args[1])) return Fail($"Image not found: {args[1]}");
+    try
+    {
+        var (found, error) = DiscForge.Core.OldArchives.DiscImageArchives.Find(args[1]);
+        if (error is not null) return Fail(error);
+        if (found.Count == 0) { Console.WriteLine("No ACE, LHA/LZH, ARJ or ZOO archives on this image."); return 0; }
+        Console.WriteLine($"{found.Count} archive(s) on the image:");
+        var items = DiscForge.Core.OldArchives.DiscImageArchives.Process(args[1], AceArg(args, "--out"), AceArg(args, "--password"), args.Contains("--overwrite"));
+        PrintSweep(items, null);
+        return items.All(i => i.Ok) ? 0 : 2;
     }
     catch (Exception ex) { return Fail(ex.Message); }
 }

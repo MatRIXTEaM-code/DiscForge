@@ -280,10 +280,13 @@ internal static class HelpContent
 
         new("extract", "🗃", "Extract", "Pull files/saves out of a container",
             "Opens a WBFS container, a floppy image (D64/ADF/FAT12), a memory card (PS1 .mcr, GameCube card, " +
-            "Dreamcast VMU), a PSP EBOOT.PBP or an ACE archive, lists what's inside, and extracts one item or " +
-            "all of them. ACE covers WinAce and DOS ACE 1.0/2.0 archives, including solid, multi-volume " +
-            "(.ace + .c00, .c01…), self-extracting .exe and password-protected ones; \"Extract all\" keeps the " +
-            "archive's folders, and no stored name can write outside the folder you pick. " +
+            "Dreamcast VMU), a PSP EBOOT.PBP or an old archive — ACE (WinAce), LHA/LZH, ARJ or ZOO, including " +
+            "split sets (.ace + .c00…, .arj + .a01…), self-extracting .exe files and password-protected ones — " +
+            "lists what's inside, and extracts one item or all of them. \"Extract all\" keeps an archive's " +
+            "folders, and no stored name can write outside the folder you pick. Drop a disc image (ISO, " +
+            "bin/cue, CDI) to see the old archives on it and unpack them straight off the image. " +
+            "\"Check a folder…\" tests every old archive in a folder tree, shows which are OK, damaged, missing " +
+            "a volume or need a password, saves a CSV report, and can unpack the good ones. " +
             "The write-side companion to Examine."),
 
         new("cheat", "🎯", "Cheat Codes", "Decode / encode cheat codes",

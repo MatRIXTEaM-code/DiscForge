@@ -15,6 +15,9 @@
 ;   - Start Menu group with DiscForge, the CLI prompt, docs and uninstaller
 ;   - optional desktop icon (task on the wizard's "Select Additional Tasks")
 ;   - optional "add dforge to PATH" (task) so the CLI works from any terminal
+;   - optional Explorer menu for old archives (.ace .lzh .lha .arj .zoo): "Extract with DiscForge"
+;     (runs dforge unpack into a folder next to the archive) and "Open in DiscForge" (Extract tile);
+;     optional file association for the same types (off by default, so WinRAR/7-Zip keep theirs)
 ;   - registers a proper uninstaller in Add/Remove Programs
 ;   - requests admin at install time (raw disc access needs elevation)
 
@@ -44,6 +47,7 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 ChangesEnvironment=yes
+ChangesAssociations=yes
 SetupIconFile=..\src\DiscForge.App\DiscForge.ico
 ; Raw SPTI disc access needs elevation; install for all users.
 PrivilegesRequired=admin
@@ -57,6 +61,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "modifypath"; Description: "Add the dforge command-line tool to PATH"; GroupDescription: "Command line:"
+Name: "archivemenu"; Description: "Add ""Extract with DiscForge"" to the right-click menu for .ace, .lzh, .lha, .arj and .zoo files"; GroupDescription: "Old archives:"
+Name: "archiveassoc"; Description: "Open .ace, .lzh, .lha, .arj and .zoo files with DiscForge when double-clicked"; GroupDescription: "Old archives:"; Flags: unchecked
 
 [Files]
 ; The entire self-contained publish folder. excludes keep the licence copy and
@@ -71,6 +77,56 @@ Name: "{group}\Documentation";              Filename: "{app}\docs"
 Name: "{group}\Licence";                    Filename: "{app}\LICENSE.txt"
 Name: "{group}\Uninstall {#AppName}";       Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}";           Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+
+
+[Registry]
+; Old-archive integration. The menu uses SystemFileAssociations, so it adds verbs without taking
+; over whichever program already opens these types; the association task makes DiscForge the default.
+Root: HKA; Subkey: "Software\Classes\DiscForge.OldArchive"; ValueType: string; ValueName: ""; ValueData: "Old archive (DiscForge)"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\DiscForge.OldArchive\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\DiscForge.ico"
+Root: HKA; Subkey: "Software\Classes\DiscForge.OldArchive\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" --extract ""%1"""
+Root: HKA; Subkey: "Software\Classes\DiscForge.OldArchive\shell\DiscForge.Unpack"; ValueType: string; ValueName: ""; ValueData: "Extract with DiscForge"
+Root: HKA; Subkey: "Software\Classes\DiscForge.OldArchive\shell\DiscForge.Unpack\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#CliExeName}"" unpack ""%1"" --pause"
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ace\shell\DiscForge.Unpack"; ValueType: string; ValueName: ""; ValueData: "Extract with DiscForge"; Flags: uninsdeletekey; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ace\shell\DiscForge.Unpack"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\DiscForge.ico"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ace\shell\DiscForge.Unpack\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#CliExeName}"" unpack ""%1"" --pause"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ace\shell\DiscForge.Open"; ValueType: string; ValueName: ""; ValueData: "Open in DiscForge"; Flags: uninsdeletekey; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ace\shell\DiscForge.Open"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\DiscForge.ico"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ace\shell\DiscForge.Open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" --extract ""%1"""; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\.ace\OpenWithProgids"; ValueType: string; ValueName: "DiscForge.OldArchive"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.ace"; ValueType: string; ValueName: ""; ValueData: "DiscForge.OldArchive"; Flags: uninsdeletevalue; Tasks: archiveassoc
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lzh\shell\DiscForge.Unpack"; ValueType: string; ValueName: ""; ValueData: "Extract with DiscForge"; Flags: uninsdeletekey; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lzh\shell\DiscForge.Unpack"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\DiscForge.ico"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lzh\shell\DiscForge.Unpack\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#CliExeName}"" unpack ""%1"" --pause"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lzh\shell\DiscForge.Open"; ValueType: string; ValueName: ""; ValueData: "Open in DiscForge"; Flags: uninsdeletekey; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lzh\shell\DiscForge.Open"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\DiscForge.ico"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lzh\shell\DiscForge.Open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" --extract ""%1"""; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\.lzh\OpenWithProgids"; ValueType: string; ValueName: "DiscForge.OldArchive"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.lzh"; ValueType: string; ValueName: ""; ValueData: "DiscForge.OldArchive"; Flags: uninsdeletevalue; Tasks: archiveassoc
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lha\shell\DiscForge.Unpack"; ValueType: string; ValueName: ""; ValueData: "Extract with DiscForge"; Flags: uninsdeletekey; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lha\shell\DiscForge.Unpack"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\DiscForge.ico"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lha\shell\DiscForge.Unpack\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#CliExeName}"" unpack ""%1"" --pause"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lha\shell\DiscForge.Open"; ValueType: string; ValueName: ""; ValueData: "Open in DiscForge"; Flags: uninsdeletekey; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lha\shell\DiscForge.Open"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\DiscForge.ico"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.lha\shell\DiscForge.Open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" --extract ""%1"""; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\.lha\OpenWithProgids"; ValueType: string; ValueName: "DiscForge.OldArchive"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.lha"; ValueType: string; ValueName: ""; ValueData: "DiscForge.OldArchive"; Flags: uninsdeletevalue; Tasks: archiveassoc
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.arj\shell\DiscForge.Unpack"; ValueType: string; ValueName: ""; ValueData: "Extract with DiscForge"; Flags: uninsdeletekey; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.arj\shell\DiscForge.Unpack"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\DiscForge.ico"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.arj\shell\DiscForge.Unpack\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#CliExeName}"" unpack ""%1"" --pause"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.arj\shell\DiscForge.Open"; ValueType: string; ValueName: ""; ValueData: "Open in DiscForge"; Flags: uninsdeletekey; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.arj\shell\DiscForge.Open"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\DiscForge.ico"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.arj\shell\DiscForge.Open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" --extract ""%1"""; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\.arj\OpenWithProgids"; ValueType: string; ValueName: "DiscForge.OldArchive"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.arj"; ValueType: string; ValueName: ""; ValueData: "DiscForge.OldArchive"; Flags: uninsdeletevalue; Tasks: archiveassoc
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.zoo\shell\DiscForge.Unpack"; ValueType: string; ValueName: ""; ValueData: "Extract with DiscForge"; Flags: uninsdeletekey; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.zoo\shell\DiscForge.Unpack"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\DiscForge.ico"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.zoo\shell\DiscForge.Unpack\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#CliExeName}"" unpack ""%1"" --pause"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.zoo\shell\DiscForge.Open"; ValueType: string; ValueName: ""; ValueData: "Open in DiscForge"; Flags: uninsdeletekey; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.zoo\shell\DiscForge.Open"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\DiscForge.ico"; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.zoo\shell\DiscForge.Open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" --extract ""%1"""; Tasks: archivemenu
+Root: HKA; Subkey: "Software\Classes\.zoo\OpenWithProgids"; ValueType: string; ValueName: "DiscForge.OldArchive"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.zoo"; ValueType: string; ValueName: ""; ValueData: "DiscForge.OldArchive"; Flags: uninsdeletevalue; Tasks: archiveassoc
 
 [Run]
 ; The app manifest is requireAdministrator, but Inno runs post-install steps

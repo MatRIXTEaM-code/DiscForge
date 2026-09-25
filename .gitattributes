@@ -35,3 +35,10 @@
 *.ace binary
 *.c[0-9][0-9] binary
 *.C[0-9][0-9] binary
+*.lzh binary
+*.lha binary
+*.lzs binary
+*.arj binary
+*.a[0-9][0-9] binary
+*.zoo binary
+*.run binary

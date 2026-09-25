@@ -10,7 +10,7 @@ namespace DiscForge.App;
 static class Program
 {
     [STAThread]
-    static void Main()
+    static void Main(string[] args)
     {
         AppLog.Start();
 
@@ -27,7 +27,20 @@ static class Program
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        Application.Run(new CdrwinLauncher());
+        Application.Run(new CdrwinLauncher { StartupExtractFile = ExtractArgument(args) });
+    }
+
+    /// <summary>"DiscForge.exe --extract &lt;file&gt;" (what the .ace/.lzh/.arj/.zoo association and the
+    /// Explorer menu run), or a bare file path, opens that file in the Extract tile.</summary>
+    private static string? ExtractArgument(string[] args)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i].Equals("--extract", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length && File.Exists(args[i + 1]))
+                return args[i + 1];
+        }
+        if (args.Length == 1 && File.Exists(args[0])) return args[0];
+        return null;
     }
 
     private static void Fatal(string where, Exception ex)
