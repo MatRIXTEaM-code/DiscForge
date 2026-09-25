@@ -1,52 +1,49 @@
-DiscForge End-User Licence Agreement
-====================================
+DiscForge Freeware Licence
+==========================
 
 Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
 
-This End-User Licence Agreement ("Agreement") is between you (the person or
-organisation installing or using the software, "you") and MaTRIX TeAm ("we",
-"us"). It covers the DiscForge application, the dforge command-line tool, their
-documentation and any updates we supply (together, "the Software"). By
-installing, copying or using the Software you agree to this Agreement. If you
-do not agree, do not install or use it.
+This licence is between you (the person or organisation installing or using the
+software, "you") and MaTRIX TeAm ("we", "us"). It covers the DiscForge
+application, the dforge command-line tool, their documentation and any updates
+we supply (together, "the Software"). By installing, copying or using the
+Software you agree to this licence. If you do not agree, do not install or use
+it.
 
-1. The Software is licensed, not sold
-   We (and our licensors, if any) own the Software and all intellectual
-   property in it. You receive only the rights stated in this Agreement.
+1. Free of charge
+   The Software is freeware. You may install and use it on any number of
+   computers, for personal or business purposes, without paying anything.
 
-2. Evaluation
-   You may use the Software free of charge for evaluation for 30 days from its
-   first run on a computer. After the evaluation period you need a valid
-   licence key to continue using it.
+2. Donations
+   Donations are voluntary. A donation is a gift: it does not buy the
+   Software, a licence, extra features, support or any other right, and it is
+   not refundable except where the law requires. Every feature is available
+   whether or not you donate.
 
-3. Licence grant
-   On purchase of a licence and for as long as you comply with this Agreement,
-   we grant you a non-exclusive, non-transferable licence to install and use
-   the Software on the number of computers your licence covers (one computer if
-   the licence key is locked to a machine id, or as stated when you bought it),
-   for your own personal or internal business purposes.
+3. Sharing
+   You may give others copies of the unmodified, official installer free of
+   charge. You must not charge for it, bundle it with other software, or
+   distribute a modified copy.
 
 4. Restrictions
-   Except as expressly allowed by this Agreement or by law that cannot be
+   Except as expressly allowed by this licence or by law that cannot be
    excluded, you must not:
-   a) copy, distribute, sell, rent, lend, sublicense or publish the Software or
-      any licence key;
+   a) sell, rent, lend or sublicense the Software;
    b) modify, translate or create derivative works of the Software;
    c) decompile, disassemble or reverse engineer the Software, except to the
-      extent applicable law expressly permits despite this restriction;
-   d) remove, disable or work around the licence-key or evaluation checks; or
-   e) remove or alter any copyright or proprietary notice.
+      extent applicable law expressly permits despite this restriction; or
+   d) remove or alter any copyright or proprietary notice.
 
-5. Lawful use
+5. Ownership
+   The Software is licensed, not sold. We own it and all intellectual property
+   in it; you receive only the rights stated in this licence.
+
+6. Lawful use
    The Software reads, images, converts, burns and verifies media. You are
    solely responsible for making sure your use complies with the law in your
    country, including copyright law. The Software does not circumvent copy
    protection; external tools you choose to launch from it are governed by
    their own licences and are your responsibility.
-
-6. Updates and support
-   We may, but are not obliged to, provide updates or support. Updates are
-   covered by this Agreement unless they come with different terms.
 
 7. No warranty
    To the fullest extent permitted by law, the Software is provided "as is",
@@ -56,28 +53,21 @@ do not agree, do not install or use it.
    media or data. Always keep backups.
 
 8. Limitation of liability
-   To the fullest extent permitted by law, we are not liable for any indirect,
-   incidental, special or consequential loss, or for loss of data, media,
-   profits or business, arising from use of or inability to use the Software.
-   Our total liability under this Agreement is limited to the amount you paid
-   for your licence. Nothing in this Agreement limits liability that cannot be
-   limited by law, including for death or personal injury caused by
-   negligence, or for fraud.
+   To the fullest extent permitted by law, we are not liable for any loss or
+   damage arising from use of or inability to use the Software, including loss
+   of data, media, profits or business. Nothing in this licence limits
+   liability that cannot be limited by law, including for death or personal
+   injury caused by negligence, or for fraud.
 
 9. Consumer rights
-   If you are a consumer, you have statutory rights that this Agreement does
-   not affect.
+   If you are a consumer, you have statutory rights that this licence does not
+   affect.
 
 10. Termination
-    This Agreement ends automatically if you breach it. On termination you must
+    This licence ends automatically if you breach it. On termination you must
     stop using the Software and delete all copies.
 
 11. Governing law
-    This Agreement is governed by the laws of England and Wales, and the courts
+    This licence is governed by the laws of England and Wales, and the courts
     of England and Wales have exclusive jurisdiction, except where the law of
     your country of residence gives you the right to bring proceedings there.
-
-12. Entire agreement
-    This Agreement is the entire agreement between you and us about the
-    Software. If any part of it is found unenforceable, the rest remains in
-    effect.

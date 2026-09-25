@@ -45,7 +45,7 @@ DiscForge is also the only tool of the whole set that runs one engine on Windows
 |---|---|---|---|---|
 | **Latest release** | 6.9, Jul 2026 | 19.x, 2026 | 25.x, 2025 | active |
 | **Platforms** | Windows only | Windows only | **Linux/Unix (KDE) only** | **Win / macOS / Linux** (CLI) |
-| **Licence** | Freeware (Pro paid), closed | Freeware (Premium/Pro paid), closed | **GPL** | Commercial (30-day free trial), closed source |
+| **Licence** | Freeware (Pro paid), closed | Freeware (Premium/Pro paid), closed | **GPL** | Freeware (donations welcome), closed source |
 | **Free-tier catch** | Pro adds only 2 minor things | Copy/spanning/recovery/audio-extract are **paid** | none | — |
 | **Adware history** | clean | clean | clean | none |
 | **Surface** | GUI | GUI | KDE GUI | **CLI (286 cmds)** + Win GUI |

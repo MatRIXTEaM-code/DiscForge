@@ -3,12 +3,12 @@
 [![CI](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/ci.yml/badge.svg)](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/ci.yml)
 [![Build](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/build.yml/badge.svg)](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/MatRIXTEaM-code/DiscForge)](https://github.com/MatRIXTEaM-code/DiscForge/releases/latest)
-[![License: Commercial](https://img.shields.io/badge/License-Commercial-orange.svg)](LICENSE)
+[![License: Freeware](https://img.shields.io/badge/License-Freeware-green.svg)](LICENSE)
 
 *A clean-room disc-imaging and retro-preservation toolkit for C# / .NET 8.*
 
-**Commercial software** with a free 30-day trial; a licence key is needed after that. See
-[LICENSE](LICENSE) (the end-user licence agreement) and [NOTICE](NOTICE).
+**Freeware** — free to use, closed source; donations welcome but entirely optional. See
+[LICENSE](LICENSE) and [NOTICE](NOTICE).
 Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
 
 DiscForge reads, writes, converts, verifies, repairs and **re-burns** optical-disc

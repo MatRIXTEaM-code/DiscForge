@@ -1,6 +1,6 @@
 # Community outreach drafts — DiscForge
 
-> **Out of date (v1.115.0):** written for the GPL release. DiscForge is now commercial software and the
+> **Out of date (v1.115.0):** written for the GPL release. DiscForge is now closed-source freeware and the
 > repository is private — rewrite the licence and link details before using any of this.
 
 *Drafts only — nothing here has been posted. Review and edit before sending; each community has its

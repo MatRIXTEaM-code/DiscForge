@@ -1,6 +1,6 @@
 # DiscForge — registry submission drafts
 
-> **Out of date (v1.115.0):** written for the GPL release. DiscForge is now commercial software and the
+> **Out of date (v1.115.0):** written for the GPL release. DiscForge is now closed-source freeware and the
 > repository is private — rewrite the licence and link details before using any of this.
 
 Two paste-ready drafts: the COPTR tool page and an awesome-list PR entry.

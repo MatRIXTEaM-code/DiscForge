@@ -14,7 +14,7 @@ namespace DiscForge.App;
 ///
 /// This is often the only place a customer looks for the version and licence, so
 /// it earns its keep: name, version, what it is, and how to get the diagnostics
-/// out. Restrained on purpose — a paid tool shouldn't feel like shareware.
+/// out, plus the optional donation link (see <see cref="Support"/>).
 /// </summary>
 internal sealed class AboutForm : Form
 {
@@ -58,15 +58,13 @@ internal sealed class AboutForm : Form
             Font = RetroTheme.Ui,
             ForeColor = RetroTheme.Text,
             Text = "Copyright \u00A9 2026 MaTRIX TeAm. All rights reserved.\r\n" +
-                   "This software is proprietary. See the licence for terms of use.",
+                   "Free to use. See the licence for terms of use.",
         };
 
-        var status = LicenseGate.Status;
-        var licenceStatus = new Label
+        var supportLine = new Label
         {
-            Location = new Point(16, 258), Size = new Size(430, 20), Font = RetroTheme.UiBold,
-            ForeColor = status.IsValid ? Color.FromArgb(0x1C, 0x7C, 0x34) : Color.FromArgb(0xB0, 0x5A, 0x00),
-            Text = status.IsValid ? $"Licensed to {status.Info?.Name} ({status.Info?.Edition})" : LicenseGate.StatusText,
+            Location = new Point(16, 250), Size = new Size(430, 46), Font = RetroTheme.Ui,
+            ForeColor = RetroTheme.Text, Text = Support.Blurb,
         };
 
         var diagnostics = new Button
@@ -83,19 +81,12 @@ internal sealed class AboutForm : Form
         };
         licence.Click += (_, _) => ShowLicence();
 
-        var activate = new Button
+        var donate = new Button
         {
-            Text = "Activate…", Location = new Point(236, 300), Width = 92, Height = 26,
-            FlatStyle = FlatStyle.System, Font = RetroTheme.Ui,
+            Text = "Donate (PayPal)…", Location = new Point(236, 300), Width = 116, Height = 26,
+            FlatStyle = FlatStyle.System, Font = RetroTheme.Ui, Visible = Support.HasDonateLink,
         };
-        activate.Click += (_, _) =>
-        {
-            using var a = new ActivationForm();
-            a.ShowDialog(this);
-            var s = LicenseGate.Status;
-            licenceStatus.Text = s.IsValid ? $"Licensed to {s.Info?.Name} ({s.Info?.Edition})" : LicenseGate.StatusText;
-            licenceStatus.ForeColor = s.IsValid ? Color.FromArgb(0x1C, 0x7C, 0x34) : Color.FromArgb(0xB0, 0x5A, 0x00);
-        };
+        donate.Click += (_, _) => Support.OpenDonate(this);
 
         var ok = new Button
         {
@@ -107,10 +98,10 @@ internal sealed class AboutForm : Form
 
         Controls.Add(body);
         Controls.Add(copyright);
-        Controls.Add(licenceStatus);
+        Controls.Add(supportLine);
         Controls.Add(diagnostics);
         Controls.Add(licence);
-        Controls.Add(activate);
+        Controls.Add(donate);
         Controls.Add(ok);
         Controls.Add(banner);          // added last so it docks to the very top
 
@@ -161,7 +152,8 @@ internal sealed class AboutForm : Form
     private void ShowLicence()
     {
         // Show the licence that shipped, not a copy that might drift from it.
-        var path = Path.Combine(AppContext.BaseDirectory, "LICENSE");
+        var path = Path.Combine(AppContext.BaseDirectory, "LICENSE.txt");
+        if (!File.Exists(path)) path = Path.Combine(AppContext.BaseDirectory, "LICENSE");
         if (File.Exists(path))
         {
             try
@@ -173,10 +165,10 @@ internal sealed class AboutForm : Form
         }
 
         RetroMessageBox.Show(this,
-            "DiscForge is proprietary software.\r\n\r\n" +
+            "DiscForge is freeware: free to use, closed source.\r\n\r\n" +
             "Copyright \u00A9 2026 MaTRIX TeAm. All rights reserved.\r\n\r\n" +
-            "No permission is granted to copy, publish, distribute, sell, fork or " +
-            "create derivative works, except under a separate written agreement.\r\n\r\n" +
+            "You may use it and share the unmodified installer free of charge. You may not " +
+            "sell it, modify it or reverse engineer it. Donations are voluntary.\r\n\r\n" +
             "The full licence accompanies your copy.",
             "DiscForge — Licence", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }

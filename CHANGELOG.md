@@ -108,18 +108,17 @@ it, and never defeats console security or decrypts protected content.
 
 ### Changed
 
-- **DiscForge is now commercial software.** `LICENSE` is an end-user licence agreement, `NOTICE`
-  records the change, every source header is proprietary again, and the GPL-era `CLA.md` and
-  relicensing script are gone. The EFM table's provenance now cites the ECMA-130 standard directly
-  (all 256 entries checked against Annex D) instead of a GPL project.
-- **30-day free trial, then a licence key.** Without a key, the app and the CLI run fully for 30
-  days from first run, with the days left in the title bar. After that the app asks for a key at
-  start-up and closes without one. The CLI stops with exit code 3, but `license` and `version`
-  always work. The start date is kept in two places, each tied to the machine with an HMAC, and
-  a clock set back is detected. Code is in `DiscForge.Core.Licensing.Trial`/`TrialStore`/
-  `Entitlement`, with tests in `TrialTests`. New CLI commands: `dforge license status` and
-  `dforge license activate <key>`. `license machine-id` now reports the same id as the app's
-  Activation dialog (it used the computer name before).
+- **DiscForge is now closed-source freeware.** Free to use for everyone, with optional
+  donations that unlock nothing. `LICENSE` is a freeware licence: free use on any number of PCs,
+  sharing of the unmodified installer allowed, no selling, modifying or reverse engineering.
+  `NOTICE`, the README and the docs were updated to match, and every source header is proprietary
+  again. The GPL-era `CLA.md` and the relicensing script were removed. The EFM table's provenance
+  now cites the ECMA-130 standard directly (all 256 entries checked against Annex D) instead of a
+  GPL project.
+- **No more licence nag.** The "UNLICENSED (evaluation)" title, the start-up activation dialog and
+  the Activate button are gone. The About box now has an optional **Donate (PayPal)** button,
+  driven by one constant (`Support.DonateUrl`) and hidden until that constant is set.
+  `dforge license keygen|issue|verify|machine-id` remain as developer tooling only.
 
 ### Fixed
 

@@ -180,7 +180,7 @@ new("pack",    "Pack Discs",    C(0x70,0xA0,0x80), C(0x30,0x60,0x48), "📦",
                 null, "Close DiscForge"),
         };
 
-        Text = TitleText();
+        Text = "DiscForge";
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -213,29 +213,6 @@ new("pack",    "Pack Discs",    C(0x70,0xA0,0x80), C(0x30,0x60,0x48), "📦",
         MouseLeave += (_, _) => { if (_hot != -1) { _hot = -1; Invalidate(); } };
         MouseClick += (_, e) => { int h = HitTest(e.Location); if (h >= 0) Launch(_tiles[h]); };
     }
-
-    private bool _nagShown;
-
-    protected override void OnShown(EventArgs e)
-    {
-        base.OnShown(e);
-        if (_nagShown || LicenseGate.IsLicensed) return;
-        _nagShown = true;
-
-        // During the trial: a reminder with the days left, once per launch. After it: activation is
-        // required — closing the dialog without a valid key closes DiscForge.
-        using (var a = new ActivationForm()) a.ShowDialog(this);
-        if (!LicenseGate.CanRun)
-        {
-            Close();
-            return;
-        }
-        Text = TitleText();
-        Invalidate();
-    }
-
-    private static string TitleText() =>
-        LicenseGate.IsLicensed ? "DiscForge" : "DiscForge — " + LicenseGate.Trial.Describe();
 
     private static Color C(int r, int g, int b) => Color.FromArgb(r, g, b);
 
@@ -320,11 +297,10 @@ new("pack",    "Pack Discs",    C(0x70,0xA0,0x80), C(0x30,0x60,0x48), "📦",
                 new Rectangle(strip.X + 44, strip.Y, strip.Width - 48, strip.Height),
                 Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
         string ver = "CD / DVD / Blu-ray  v" + typeof(CdrwinLauncher).Assembly.GetName().Version?.ToString(3);
-        bool licensed = LicenseGate.IsLicensed;
         using (var sub = new Font("MS Sans Serif", 8f))
-            TextRenderer.DrawText(g, licensed ? ver : ver + "   •   " + LicenseGate.Trial.Describe().ToUpperInvariant(), sub,
+            TextRenderer.DrawText(g, ver, sub,
                 new Rectangle(strip.X, strip.Y, strip.Width - 8, strip.Height),
-                licensed ? Color.FromArgb(0xC8, 0xD8, 0xF0) : Color.FromArgb(0xFF, 0xD8, 0x60),
+                Color.FromArgb(0xC8, 0xD8, 0xF0),
                 TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
 
         for (int i = 0; i < _tiles.Length; i++)
