@@ -134,8 +134,30 @@ function Get-FolderSizeMB([string]$Path) {
 # Main
 # ---------------------------------------------------------------------------------------------
 
-if (-not $Repo) { $Repo = (Get-Location).Path }
-$Repo = (Resolve-Path $Repo).Path
+# Find the repo: the given/script folder first, then the current folder, then the usual
+# C:\dev\DiscForge, and finally ask with a folder picker - so a copy of this script run from
+# somewhere else (Desktop, Downloads) still finds the code.
+function Test-RepoRoot([string]$Path) { return $Path -and (Test-Path (Join-Path $Path 'DiscForge.sln')) }
+$candidates = @($Repo, (Get-Location).Path, 'C:\dev\DiscForge')
+$found = $candidates | Where-Object { Test-RepoRoot $_ } | Select-Object -First 1
+if (-not $found) {
+    Write-Host "DiscForge.sln isn't in '$Repo' - please pick your DiscForge folder..." -ForegroundColor Yellow
+    try {
+        Add-Type -AssemblyName System.Windows.Forms | Out-Null
+        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+        $dlg.Description = 'Select your DiscForge folder (the one containing DiscForge.sln)'
+        if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK -and (Test-RepoRoot $dlg.SelectedPath)) {
+            $found = $dlg.SelectedPath
+        }
+    } catch { }
+}
+if (-not $found) {
+    Write-Host "BUILD FAILED: couldn't find DiscForge.sln. Run the copy of this script inside your DiscForge" -ForegroundColor Red
+    Write-Host "folder (C:\dev\DiscForge\build-discforge.bat), or pass -Repo C:\path\to\DiscForge." -ForegroundColor Red
+    if (-not $NoPause) { [void](Read-Host 'Press Enter to close') }
+    exit 1
+}
+$Repo = (Resolve-Path $found).Path
 $logDir = Join-Path $Repo 'build-logs'
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 $logFile = Join-Path $logDir ('build-{0:yyyyMMdd-HHmmss}.txt' -f $script:StartTime)
