@@ -10,8 +10,8 @@ with optional donations. This document covers signing and shipping a build.
 
 The app's only link to money is the optional donation button in the About box.
 Its target is one constant, `Support.DonateUrl` in
-`src/DiscForge.App/Support.cs` — set it to your PayPal.Me or PayPal donate
-link. While it's empty the button is hidden. A donation unlocks nothing.
+`src/DiscForge.App/Support.cs`, currently https://paypal.me/DiscForgeUK.
+If it's ever emptied, the button hides itself. A donation unlocks nothing.
 
 ## 2. The old licence-key code
 

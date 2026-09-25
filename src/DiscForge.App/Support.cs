@@ -16,7 +16,7 @@ namespace DiscForge.App;
 internal static class Support
 {
     /// <summary>Your PayPal link, e.g. "https://paypal.me/YourName". Empty = no donate buttons.</summary>
-    public const string DonateUrl = "";
+    public const string DonateUrl = "https://paypal.me/DiscForgeUK";
 
     public static bool HasDonateLink => DonateUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
 

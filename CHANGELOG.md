@@ -117,7 +117,7 @@ it, and never defeats console security or decrypts protected content.
   GPL project.
 - **No more licence nag.** The "UNLICENSED (evaluation)" title, the start-up activation dialog and
   the Activate button are gone. The About box now has an optional **Donate (PayPal)** button,
-  driven by one constant (`Support.DonateUrl`) and hidden until that constant is set.
+  which opens https://paypal.me/DiscForgeUK (one constant, `Support.DonateUrl`).
   `dforge license keygen|issue|verify|machine-id` remain as developer tooling only.
 
 ### Fixed
