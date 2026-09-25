@@ -326,6 +326,7 @@ public static class FormatIdentifier
             return Make("ZIP", "archive", "PKZIP (also .jar/.epub/.cbz)");
         if (MagicAt(head, 0, (byte)'7', (byte)'z', 0xBC, 0xAF)) return Make("7-Zip", "archive", "7z archive");
         if (Ascii(head, 0, "Rar!")) return Make("RAR", "archive", "WinRAR archive");
+        if (Ascii(head, 7, "**ACE**")) return Make("ACE", "archive", "WinAce / ACE archive (open it in Extract, or dforge ace-extract)");
         if (head.Length > 1 && head[0] == 0x1F && head[1] == 0x8B) return Make("gzip", "archive", "gzip stream");
         if (Ascii(head, 0, "BZh")) return Make("bzip2", "archive", "bzip2 stream");
         if (MagicAt(head, 0, 0xFD, (byte)'7', (byte)'z', (byte)'X')) return Make("xz", "archive", "xz stream");

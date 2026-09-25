@@ -16,7 +16,8 @@ formats derives solely from public documentation and standards (for example
 ECMA-130 for the CD physical format) and from the observed behaviour of
 hardware and of files supplied by the copyright holder. No third-party binary
 has been disassembled, decompiled or otherwise reverse engineered in its
-creation, and no third-party source code has been copied into it. See the
+creation, and no third-party source code has been copied into it, with the
+single exception listed under "Third-party components" below. See the
 `docs/` directory, which records the derivation of each format.
 
 Product names referenced in the documentation are used only to identify the
@@ -40,3 +41,34 @@ Windows; SG_IO on Linux) supplied with the operating system. It bundles no
 other third-party code. External tools that DiscForge can launch are not part
 of DiscForge, are never bundled with it, and remain subject to their own
 licences.
+
+ACE decompression (src/DiscForge.Core/Ace) is a C# port of acefile
+(https://github.com/droe/acefile), used under the BSD 2-clause licence:
+
+  Copyright (c) 2017-2026, Daniel Roethlisberger and contributors.
+  All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions
+  are met:
+
+  1. Redistributions of source code must retain the above copyright
+     notice, this list of conditions, and the following disclaimer.
+
+  2. Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+  THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+  IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+  OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+  INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+  NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+  THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The ACE archive format and its algorithms were designed by Marcel Lemke.
+DiscForge only reads ACE archives; see docs/ACE_FORMAT.md.

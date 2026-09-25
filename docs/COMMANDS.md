@@ -2,7 +2,7 @@
 
 *Auto-generated from the CLI's own help (`dforge` with no args). Regenerate after adding commands.*
 
-DiscForge exposes **346 commands** (341 plus `dic-log` and `cold-case`, added 2026-09-18, and `xdelta-apply`/`xdelta-info`/`xdelta-create`, added 2026-09-24 — this
+DiscForge exposes **349 commands** (341 plus `dic-log` and `cold-case`, added 2026-09-18, `xdelta-apply`/`xdelta-info`/`xdelta-create`, added 2026-09-24, and `ace-list`/`ace-test`/`ace-extract`, added 2026-09-25 — this
 count was hand-bumped, not re-derived from a real `dforge` run; run `scripts\check-commands-sync.ps1`
 against a real build to confirm it, and note `docs/CLI.md` separately claims 347 and `README.md`
 claims 380 — a pre-existing drift across the three docs that predates tonight and is flagged here
@@ -291,6 +291,12 @@ All analysis is clean-room: DiscForge identifies, verifies, and preserves — it
 - `cheat-decode <platform> <code>  Decode a Game Genie / GameShark code to address/value platform: nes|snes|genesis|gb|gs-ps1`
 - `cheat-encode <platform> <address> <value> [compare]  Encode a Game Genie code platform: nes|snes|genesis|gb (hex address/value)`
 - `cheat-apply-nes <rom> <code> <out>  Apply an NES Game Genie code to a ROM (NROM)`
+
+## Archives (read-only)
+
+- `ace-list <archive.ace> [--json]  List an ACE (WinAce / DOS ACE 1.0-2.0) archive: files, sizes, method, dates, comments. Single, multi-volume (.ace + .c00, .c01 …, open any volume) or self-extracting .exe.`
+- `ace-test <archive.ace> [--password X]  Decompress every file and check its CRC-32, writing nothing. Exit code 2 if anything fails.`
+- `ace-extract <archive.ace> [--out dir] [--password X] [--overwrite]  Extract with folders (default: a folder named after the archive, next to it). Solid, multi-volume, self-extracting and password-protected archives. Stored names are cleaned and can never write outside the output folder; each file is CRC-checked before it is kept. Read-only support: DiscForge never creates ACE archives.`
 
 ## Split / join / licence
 

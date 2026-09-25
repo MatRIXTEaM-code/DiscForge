@@ -4,7 +4,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.115.0</Version>
+    <Version>1.116.0</Version>
     <Copyright>Copyright (c) 2026 MaTRIX TeAm. All rights reserved.</Copyright>
     <Company>DiscForge</Company>
     <Product>DiscForge</Product>

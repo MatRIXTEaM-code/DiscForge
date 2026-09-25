@@ -11,6 +11,38 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
+## [1.116.0] - 2026-09-25
+
+### Added
+
+- **ACE archives (read-only)** — new `DiscForge.Core.Ace` reader: `AceArchive` lists, tests and
+  extracts ACE 1.0 and 2.0 archives (WinAce, DOS ACE): stored, LZ77 and the ACE 2.0 blocked method
+  with its LZ77, DELTA, EXE, SOUND (8/16/32-bit) and PIC sub-modes; solid archives; multi-volume sets
+  (`.ace`, `.c00`, `.c01` …, opened from any volume, with a clear warning when a volume is missing);
+  self-extracting `.exe` archives (header search in the first 512 KB); Blowfish-encrypted members with a
+  password; archive and file comments; UTF-8 or code page 437 names. Recovery records and NTFS
+  security data are skipped. No ACE writing.
+- **Safe extraction** — stored names are cleaned (drive letters, colons, `..`, leading separators,
+  control/wildcard characters, Windows device names, trailing dots/spaces) and the final path must
+  be inside the output folder; existing links/junctions inside it are never written through
+  (covers CVE-2018-20250-style traversal). Files go to a `.dfpart` temp file and are renamed only
+  after the CRC-32 matches; existing files are kept unless `--overwrite`.
+- **CLI** — `ace-list [--json]`, `ace-test [--password X]`, `ace-extract [--out dir] [--password X]
+  [--overwrite]`; the password is asked for (hidden) when needed and not given.
+- **App** — the Extract tile opens ACE archives (listing, extract selected, extract all with folders,
+  password prompt, comment and missing-volume notes). Identify names ACE archives.
+- **Tests** — `tests/fixtures/ace` (built by `make-fixtures.py` from a real WinAce 2.0 archive and
+  hand-built bit streams, no compressor involved) with every member compared against acefile's
+  output; the full 5.6 MB WinAce test archive (268 entries, LZ77 + DELTA + EXE) extracts
+  byte-identically too. SOUND and PIC were also cross-checked against acefile on thousands of
+  generated streams.
+
+### Provenance
+
+- The container follows Marcel Lemke's public ACE 1.2 technical note. The decompression is a C# port
+  of acefile by Daniel Roethlisberger (BSD 2-clause), credited in NOTICE, `docs/ACE_FORMAT.md` and the
+  source. This is the first third-party code in DiscForge; NOTICE is updated to say so.
+
 ## [1.115.0] - 2026-09-25
 
 ### Added

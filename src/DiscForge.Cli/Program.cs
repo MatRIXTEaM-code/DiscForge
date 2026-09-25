@@ -302,6 +302,9 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  xdelta-apply <patch.xdelta> <source> [--out f] [--no-verify]  Apply an xdelta3/VCDIFF patch (streams; per-window Adler-32 verified; LZMA-compressed patches supported, DJW/FGK not)");
     Console.WriteLine("  xdelta-create <source> <target> <out.xdelta>  Build an xdelta3-compatible VCDIFF patch (streamed, 8 MiB windows, per-window Adler-32; no secondary compression)");
     Console.WriteLine("  xdelta-info <patch.xdelta> [--json]  Show an xdelta3/VCDIFF patch's header: windows, output size, secondary compression, file names, and whether DiscForge can apply it");
+    Console.WriteLine("  ace-list <archive.ace> [--json]  List an ACE (WinAce) archive: files, sizes, method, dates, comments; single, multi-volume (.c00…) or self-extracting");
+    Console.WriteLine("  ace-test <archive.ace> [--password X]  Decompress every file in an ACE archive and check its CRC, writing nothing");
+    Console.WriteLine("  ace-extract <archive.ace> [--out dir] [--password X] [--overwrite]  Extract an ACE 1.0/2.0 archive (read-only support; names are cleaned and can't escape the output folder)");
     Console.WriteLine("  create-udf <folder> <out.udf> [--udf-version 1.02|1.50|2.00|2.01|2.50|2.60]  Build a UDF filesystem image from a folder");
     Console.WriteLine("                          --volume NAME sets the volume label");
     Console.WriteLine("  create-udf-bridge <folder> <out.iso>  Build a UDF-bridge image readable as BOTH");
@@ -706,6 +709,9 @@ return args[0].ToLowerInvariant() switch
     "xdelta-apply" => XdeltaApply(args),
     "xdelta-info" => XdeltaInfo(args),
     "xdelta-create" => XdeltaCreate(args),
+    "ace-list" => AceList(args),
+    "ace-test" => AceTest(args),
+    "ace-extract" => AceExtract(args),
     "create-udf" => CreateUdf(args),
     "create-udf-bridge" => CreateUdfBridge(args),
     "dvd-video-plan" => DvdVideoPlanCmd(args),
@@ -18664,6 +18670,122 @@ static int MediaMortalityCmd(string[] args)
         }
 
         return Fail($"Unknown media-mortality sub-command '{sub}' (expected observe, merge, estimate or show).");
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static string? AceArg(string[] args, string name)
+{
+    for (int i = 2; i < args.Length - 1; i++) if (args[i] == name) return args[i + 1];
+    return null;
+}
+
+/// <summary>--password, or ask (without echoing) when the archive has encrypted files and a person is at the keyboard.</summary>
+static string? AcePassword(string[] args, DiscForge.Core.Ace.AceArchive a)
+{
+    var pw = AceArg(args, "--password");
+    if (pw is not null || !a.AnyEncrypted || Console.IsInputRedirected) return pw;
+    Console.Write("Password: ");
+    var sb = new System.Text.StringBuilder();
+    while (true)
+    {
+        var k = Console.ReadKey(intercept: true);
+        if (k.Key == ConsoleKey.Enter) break;
+        if (k.Key == ConsoleKey.Backspace) { if (sb.Length > 0) sb.Length--; continue; }
+        if (k.KeyChar != '\0') sb.Append(k.KeyChar);
+    }
+    Console.WriteLine();
+    return sb.ToString();
+}
+
+static void AceWarnings(DiscForge.Core.Ace.AceArchive a)
+{
+    foreach (var w in a.Warnings) Console.Error.WriteLine($"warning: {w}");
+}
+
+static int AceList(string[] args)
+{
+    if (args.Length < 2) return Fail("usage: dforge ace-list <archive.ace> [--json]");
+    if (!File.Exists(args[1])) return Fail($"Archive not found: {args[1]}");
+    try
+    {
+        using var a = DiscForge.Core.Ace.AceArchive.Open(args[1]);
+        if (args.Contains("--json"))
+        {
+            EmitJson(new
+            {
+                Volumes = a.VolumePaths.Select(Path.GetFileName).ToArray(),
+                a.IsSolid, a.IsMultiVolume, a.IsLocked, a.IsSelfExtracting, a.HasRecoveryRecord,
+                VersionNeeded = DiscForge.Core.Ace.AceArchive.VersionText(a.VersionNeeded),
+                MadeBy = DiscForge.Core.Ace.AceArchive.VersionText(a.VersionMadeBy),
+                a.HostOs, a.Created, a.Comment, a.Advert, a.Warnings,
+                Files = a.Members.Select(m => new
+                {
+                    m.Name, m.Size, m.PackedSize, m.Modified, m.IsDirectory, m.IsEncrypted, Method = m.MethodText,
+                    Crc32 = m.Crc32.ToString("X8"), m.Comment, m.VolumeCount,
+                }).ToArray(),
+            });
+            return 0;
+        }
+        Console.WriteLine($"ACE {DiscForge.Core.Ace.AceArchive.VersionText(a.VersionNeeded)} archive, made by ACE {DiscForge.Core.Ace.AceArchive.VersionText(a.VersionMadeBy)} on {a.HostOs}, {a.Created:yyyy-MM-dd HH:mm}");
+        var flags = new List<string>();
+        if (a.IsSolid) flags.Add("solid");
+        if (a.IsMultiVolume) flags.Add($"{a.VolumePaths.Count} volume(s)");
+        if (a.IsSelfExtracting || a.StartOffset > 0) flags.Add($"self-extracting (archive starts at byte {a.StartOffset:N0})");
+        if (a.IsLocked) flags.Add("locked");
+        if (a.HasRecoveryRecord) flags.Add("recovery record");
+        if (a.AnyEncrypted) flags.Add("password-protected files");
+        if (flags.Count > 0) Console.WriteLine("  " + string.Join(", ", flags));
+        if (a.Advert.Length > 0) Console.WriteLine($"  advert: {a.Advert}");
+        if (a.Comment.Length > 0) Console.WriteLine("  comment: " + a.Comment.Replace("\n", "\n           "));
+        Console.WriteLine();
+        Console.WriteLine($"{"Size",14} {"Packed",14}  {"Date",-16}  {"Method",-17} Name");
+        foreach (var m in a.Members)
+            Console.WriteLine($"{(m.IsDirectory ? "<dir>" : m.Size.ToString("N0")),14} {m.PackedSize,14:N0}  {m.Modified:yyyy-MM-dd HH:mm}  {(m.IsDirectory ? "" : m.MethodText),-17} " +
+                              $"{m.Name}{(m.IsEncrypted ? "  [password]" : "")}{(m.VolumeCount > 1 ? $"  [spans {m.VolumeCount} volumes]" : "")}");
+        var files = a.Members.Where(m => !m.IsDirectory).ToList();
+        Console.WriteLine($"{files.Sum(m => m.Size),14:N0} {a.Members.Sum(m => m.PackedSize),14:N0}  {files.Count:N0} file(s), {a.Members.Count - files.Count:N0} folder(s)");
+        AceWarnings(a);
+        return 0;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int AceTest(string[] args)
+{
+    if (args.Length < 2) return Fail("usage: dforge ace-test <archive.ace> [--password X]");
+    if (!File.Exists(args[1])) return Fail($"Archive not found: {args[1]}");
+    try
+    {
+        using var a = DiscForge.Core.Ace.AceArchive.Open(args[1]);
+        AceWarnings(a);
+        var r = a.TestAll(AcePassword(args, a));
+        foreach (var m in r.Members.Where(m => !m.Ok)) Console.WriteLine($"  FAILED  {m.Member.Name}: {m.Error}");
+        Console.WriteLine(r.AllOk ? $"All {r.Ok:N0} item(s) OK." : $"{r.Ok:N0} OK, {r.Failed:N0} failed.");
+        return r.AllOk ? 0 : 2;
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static int AceExtract(string[] args)
+{
+    if (args.Length < 2) return Fail("usage: dforge ace-extract <archive.ace> [--out <folder>] [--password X] [--overwrite]\n" +
+                                     "  Extracts an ACE 1.0/2.0 archive (WinAce, DOS ACE; solid, multi-volume .c00/.c01…, self-extracting,\n" +
+                                     "  password-protected). Default folder: the archive's name next to it. Existing files are kept\n" +
+                                     "  unless --overwrite. Every stored name is cleaned so nothing can be written outside the folder.");
+    if (!File.Exists(args[1])) return Fail($"Archive not found: {args[1]}");
+    try
+    {
+        using var a = DiscForge.Core.Ace.AceArchive.Open(args[1]);
+        AceWarnings(a);
+        string first = a.VolumePaths[0];
+        string outDir = AceArg(args, "--out") ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(first))!, Path.GetFileNameWithoutExtension(first));
+        var pw = AcePassword(args, a);
+        Console.WriteLine($"Extracting {a.Members.Count:N0} item(s) to {outDir} …");
+        var r = a.ExtractAll(outDir, pw, args.Contains("--overwrite"));
+        foreach (var m in r.Members.Where(m => !m.Ok)) Console.WriteLine($"  FAILED  {m.Member.Name}: {m.Error}");
+        Console.WriteLine($"Extracted {r.Ok:N0} item(s) to {outDir}" + (r.Failed > 0 ? $"; {r.Failed:N0} failed." : "."));
+        return r.AllOk ? 0 : 2;
     }
     catch (Exception ex) { return Fail(ex.Message); }
 }

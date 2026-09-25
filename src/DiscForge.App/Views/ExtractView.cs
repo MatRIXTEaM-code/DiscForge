@@ -4,6 +4,7 @@
 
 using System.Drawing;
 using System.Windows.Forms;
+using DiscForge.Core.Ace;
 using DiscForge.Core.Fat;
 using DiscForge.Core.Floppy;
 using DiscForge.Core.PlayStation;
@@ -23,7 +24,8 @@ namespace DiscForge.App.Views;
 /// A thin shell over the same Core readers the <c>dforge</c> *-extract commands
 /// use (WbfsReader, D64/Adf/Fat12Reader, PsxMemoryCard, GcMemoryCardReader,
 /// VmuImage, PbpFile). DATA.PSP, when present in a PBP, is written raw and is
-/// never decrypted.
+/// never decrypted. ACE archives (WinAce / DOS ACE 1.0 and 2.0 — solid, multi-volume, self-extracting,
+/// password-protected) are read with AceArchive; "Extract all" keeps their folder structure.
 /// </summary>
 internal sealed class ExtractView : UserControl
 {
@@ -46,6 +48,10 @@ internal sealed class ExtractView : UserControl
 
     private readonly List<Item> _items = new();
 
+    // Set while an ACE archive is loaded: "Extract all" then unpacks it with its folders.
+    private string? _acePath;
+    private string? _acePassword;
+
     public ExtractView()
     {
         Size = new Size(736, 416);
@@ -67,7 +73,7 @@ internal sealed class ExtractView : UserControl
         _list.SelectedIndexChanged += (_, _) => _selected.Enabled = _list.SelectedIndices.Count > 0;
 
         Controls.AddRange(new Control[] { _path, pick, _kind, _list, _selected, _all });
-        _kind.Text = "Drop a WBFS, floppy image, memory card, or EBOOT.PBP to list its contents.";
+        _kind.Text = "Drop a WBFS, floppy image, memory card, EBOOT.PBP or ACE archive to list its contents.";
         _kind.ForeColor = Color.Gray;
     }
 
@@ -77,8 +83,9 @@ internal sealed class ExtractView : UserControl
     {
         using var dlg = new OpenFileDialog
         {
-            Filter = "Extractable containers (*.wbfs;*.d64;*.adf;*.img;*.mcr;*.mc;*.raw;*.bin;*.vmu;*.pbp)|" +
-                     "*.wbfs;*.d64;*.adf;*.img;*.mcr;*.mc;*.raw;*.bin;*.vmu;*.pbp|All files (*.*)|*.*",
+            Filter = "Extractable containers (*.wbfs;*.d64;*.adf;*.img;*.mcr;*.mc;*.raw;*.bin;*.vmu;*.pbp;*.ace)|" +
+                     "*.wbfs;*.d64;*.adf;*.img;*.mcr;*.mc;*.raw;*.bin;*.vmu;*.pbp;*.ace|" +
+                     "ACE archives (*.ace;*.c00;*.exe)|*.ace;*.c??;*.exe|All files (*.*)|*.*",
             InitialDirectory = AppSettings.LastImageDirectory ?? "",
         };
         if (dlg.ShowDialog() == DialogResult.OK) LoadFile(dlg.FileName);
@@ -92,12 +99,14 @@ internal sealed class ExtractView : UserControl
         _list.Items.Clear();
         _selected.Enabled = false;
         _all.Enabled = false;
+        _acePath = null;
+        _acePassword = null;
 
         try
         {
             if (!Detect(path))
             {
-                _kind.Text = "Nothing to extract — not a WBFS, floppy, memory card, or PBP DiscForge can open.";
+                _kind.Text = "Nothing to extract — not a WBFS, floppy, memory card, PBP or ACE archive DiscForge can open.";
                 _kind.ForeColor = Color.FromArgb(0xA0, 0x60, 0x00);
                 return;
             }
@@ -143,6 +152,31 @@ internal sealed class ExtractView : UserControl
                 }
                 return true;
             }
+        }
+
+        // ACE: also streamed (archives can be large, and self-extractors are .exe files).
+        if (AceArchive.IsAceFile(path) || IsAceVolume(path))
+        {
+            using var ace = AceArchive.Open(path);
+            _acePath = path;
+            var bits = new List<string> { $"ACE {AceArchive.VersionText(ace.VersionNeeded)} archive" };
+            if (ace.IsSolid) bits.Add("solid");
+            if (ace.IsMultiVolume) bits.Add($"{ace.VolumePaths.Count} volume(s)");
+            if (ace.StartOffset > 0) bits.Add("self-extracting");
+            if (ace.AnyEncrypted) bits.Add("password-protected");
+            int files = ace.Members.Count(m => !m.IsDirectory);
+            _kind.Text = string.Join(", ", bits) + $" — {files} file(s)" + (ace.Warnings.Count > 0 ? "  (see note)" : "");
+            if (ace.Comment.Length > 0 || ace.Warnings.Count > 0)
+                RetroMessageBox.Show(string.Join("\n\n", ace.Warnings.Concat(ace.Comment.Length > 0 ? new[] { "Archive comment:\n" + ace.Comment } : Array.Empty<string>())));
+            foreach (var m in ace.Members)
+            {
+                if (m.IsDirectory) continue;
+                int index = m.Index;
+                string leaf = m.Name.Contains('/') ? m.Name[(m.Name.LastIndexOf('/') + 1)..] : m.Name;
+                string detail = $"{m.Size:N0} B, {m.MethodText}" + (m.IsEncrypted ? ", password" : "") + (m.VolumeCount > 1 ? $", {m.VolumeCount} volumes" : "");
+                _items.Add(new Item(m.Name, detail, leaf, dest => ExtractAceMember(path, index, dest)));
+            }
+            return true;
         }
 
         var info = new FileInfo(path);
@@ -296,8 +330,87 @@ internal sealed class ExtractView : UserControl
         }
     }
 
+    private static bool IsAceVolume(string path)
+    {
+        string ext = Path.GetExtension(path);
+        return ext.Length == 4 && (ext[1] is 'c' or 'C') && char.IsAsciiDigit(ext[2]) && char.IsAsciiDigit(ext[3]);
+    }
+
+    private void ExtractAceMember(string path, int index, string dest)
+    {
+        using var ace = AceArchive.Open(path);
+        var member = ace.Members[index];
+        string? pw = member.IsEncrypted ? AskAcePassword() : null;
+        if (member.IsEncrypted && pw is null) throw new OperationCanceledException("No password entered.");
+        string tmp = dest + ".dfpart";
+        try
+        {
+            using (var fs = File.Create(tmp)) ace.Extract(member, fs, pw);
+            File.Move(tmp, dest, overwrite: true);
+            File.SetLastWriteTime(dest, member.Modified);
+        }
+        catch (AcePasswordException) { _acePassword = null; throw; }
+        finally { if (File.Exists(tmp)) File.Delete(tmp); }
+    }
+
+    private string? AskAcePassword()
+    {
+        if (_acePassword is not null) return _acePassword;
+        using var form = new Form
+        {
+            Text = "Password", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
+            MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false, ClientSize = new Size(340, 110), Font = Theme.Ui,
+        };
+        var label = new Label { Text = "This ACE archive has password-protected files.\nPassword:", AutoSize = true, Location = new Point(12, 10) };
+        var box = new TextBox { UseSystemPasswordChar = true, Location = new Point(12, 46), Width = 316 };
+        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(172, 76), Width = 75, FlatStyle = FlatStyle.System };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(253, 76), Width = 75, FlatStyle = FlatStyle.System };
+        form.Controls.AddRange(new Control[] { label, box, ok, cancel });
+        form.AcceptButton = ok;
+        form.CancelButton = cancel;
+        if (form.ShowDialog(this) != DialogResult.OK) return null;
+        return _acePassword = box.Text;
+    }
+
+    private async void ExtractAceAll(string path)
+    {
+        string? dir = ChooseFolder();
+        if (dir is null) return;
+        string? pw = null;
+        using (var probe = AceArchive.Open(path))
+            if (probe.AnyEncrypted && (pw = AskAcePassword()) is null) return;
+        _all.Enabled = _selected.Enabled = false;
+        StatusBus.Report($"Extracting {Path.GetFileName(path)}…");
+        try
+        {
+            var result = await Task.Run(() =>
+            {
+                using var ace = AceArchive.Open(path);
+                return ace.ExtractAll(dir, pw);
+            });
+            var failed = result.Members.Where(m => !m.Ok).ToList();
+            if (failed.Any(f => f.Error?.Contains("password", StringComparison.OrdinalIgnoreCase) == true)) _acePassword = null;
+            StatusBus.Report($"Extracted {result.Ok} item(s) to {dir}.");
+            if (failed.Count > 0)
+                RetroMessageBox.Show($"Extracted {result.Ok} of {result.Members.Count}.\n\n" +
+                    string.Join("\n", failed.Take(12).Select(f => $"{f.Member.Name}: {f.Error}")) +
+                    (failed.Count > 12 ? $"\n… and {failed.Count - 12} more." : ""));
+        }
+        catch (Exception ex)
+        {
+            RetroMessageBox.Show(ex.Message);
+            AppLog.WriteException("extract", ex);
+        }
+        finally
+        {
+            _all.Enabled = _items.Count > 0;
+            _selected.Enabled = _list.SelectedIndices.Count > 0;
+        }
+    }
+
     private void ExtractAll()
     {
+        if (_acePath is not null) { ExtractAceAll(_acePath); return; }
         string? dir = ChooseFolder();
         if (dir is null) return;
         RunExtract(_items.Select(it => (it, Path.Combine(dir, it.SuggestedName))).ToList());
