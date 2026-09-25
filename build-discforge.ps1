@@ -296,9 +296,41 @@ try {
     elseif (-not $iscc) { Write-Warn 'Skipped - Inno Setup 6 is not installed (see step 1).' }
     else {
         $outDir = Join-Path $Repo 'installer\Output'
+        New-Item -ItemType Directory -Force -Path $outDir | Out-Null
         $before = Get-Date
-        if ((Invoke-Tool $iscc @('/Qp', $iss)) -ne 0) {
-            Stop-Build 'Inno Setup could not compile installer\DiscForge.iss (see above).'
+
+        # A previous installer with the same name can be locked: still running, open in Explorer's
+        # preview, or being scanned by antivirus. Close/delete it first, and fall back to a new name.
+        Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'DiscForge-Setup*' } |
+            ForEach-Object { Write-Info "Closing a running installer ($($_.ProcessName))"; Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+        $locked = $false
+        foreach ($old in @(Get-ChildItem $outDir -Filter 'DiscForge-Setup-*.exe' -ErrorAction SilentlyContinue)) {
+            $gone = $false
+            for ($try = 1; $try -le 5 -and -not $gone; $try++) {
+                try { Remove-Item $old.FullName -Force -ErrorAction Stop; $gone = $true }
+                catch { Start-Sleep -Seconds 2 }
+            }
+            if (-not $gone) { $locked = $true; Write-Warn "$($old.Name) is in use by another program and couldn't be replaced." }
+        }
+        $isccArgs = @('/Qp')
+        if ($locked) {
+            $alt = 'DiscForge-Setup-' + $version + '-' + (Get-Date -Format 'HHmmss')
+            Write-Info "Writing the new installer as $alt.exe instead."
+            $isccArgs += "/F$alt"
+        }
+        $isccArgs += $iss
+
+        $rc = Invoke-Tool $iscc $isccArgs
+        if ($rc -ne 0) {
+            # Antivirus often holds a freshly written file for a moment; wait and try once more.
+            Write-Warn 'Inno Setup failed; waiting 5 seconds and trying once more.'
+            Start-Sleep -Seconds 5
+            $alt = 'DiscForge-Setup-' + $version + '-' + (Get-Date -Format 'HHmmss')
+            $rc = Invoke-Tool $iscc @('/Qp', "/F$alt", $iss)
+        }
+        if ($rc -ne 0) {
+            Stop-Build ('Inno Setup could not compile installer\DiscForge.iss (see above). If it says "being used by another process", ' +
+                        'close any open DiscForge installer and File Explorer windows showing installer\Output, then run this again.')
         }
         $setupExe = Get-ChildItem $outDir -Filter 'DiscForge-Setup-*.exe' -ErrorAction SilentlyContinue |
                     Where-Object { $_.LastWriteTime -ge $before.AddSeconds(-5) } |
