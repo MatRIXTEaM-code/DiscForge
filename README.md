@@ -3,12 +3,13 @@
 [![CI](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/ci.yml/badge.svg)](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/ci.yml)
 [![Build](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/build.yml/badge.svg)](https://github.com/MatRIXTEaM-code/DiscForge/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/MatRIXTEaM-code/DiscForge)](https://github.com/MatRIXTEaM-code/DiscForge/releases/latest)
-[![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
+[![License: Commercial](https://img.shields.io/badge/License-Commercial-orange.svg)](LICENSE)
 
 *A clean-room disc-imaging and retro-preservation toolkit for C# / .NET 8.*
 
-**Free software — GPL-3.0-or-later.** See [LICENSE](LICENSE) and [NOTICE](NOTICE).
-Copyright (C) 2026 MaTRIX TeAm.
+**Commercial software** with a free 30-day trial; a licence key is needed after that. See
+[LICENSE](LICENSE) (the end-user licence agreement) and [NOTICE](NOTICE).
+Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
 
 DiscForge reads, writes, converts, verifies, repairs and **re-burns** optical-disc
 images (CD / DVD / Blu-ray and the classic console formats), and its surface is
@@ -101,7 +102,7 @@ offline test harness.
   locks or console security; cheat-code *generation*; and decrypting encrypted
   console content. DiscForge detects and preserves protection; it never
   circumvents it. See [NOTICE](NOTICE) — this is a deliberate and permanent
-  limitation, unchanged by the GPL relicense.
+  limitation.
 
 ## How it compares
 

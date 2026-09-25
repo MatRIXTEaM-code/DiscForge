@@ -1,9 +1,6 @@
-// DiscForge — Copyright (C) 2026 MaTRIX TeAm.
-// SPDX-License-Identifier: GPL-3.0-or-later
-// This program is free software: you can redistribute it and/or modify it under the terms of the
-// GNU General Public License as published by the Free Software Foundation, either version 3 of
-// the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY;
-// see the GNU General Public License (LICENSE at the repository root) for details.
+// DiscForge — proprietary. Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
+// Not open source. No permission is granted to copy, fork or redistribute.
+// See LICENSE at the root of this repository.
 
 using System.Diagnostics;
 using System.Drawing;
@@ -69,7 +66,7 @@ internal sealed class AboutForm : Form
         {
             Location = new Point(16, 258), Size = new Size(430, 20), Font = RetroTheme.UiBold,
             ForeColor = status.IsValid ? Color.FromArgb(0x1C, 0x7C, 0x34) : Color.FromArgb(0xB0, 0x5A, 0x00),
-            Text = status.IsValid ? $"Licensed to {status.Info?.Name} ({status.Info?.Edition})" : "Unlicensed — evaluation copy",
+            Text = status.IsValid ? $"Licensed to {status.Info?.Name} ({status.Info?.Edition})" : LicenseGate.StatusText,
         };
 
         var diagnostics = new Button
@@ -96,7 +93,7 @@ internal sealed class AboutForm : Form
             using var a = new ActivationForm();
             a.ShowDialog(this);
             var s = LicenseGate.Status;
-            licenceStatus.Text = s.IsValid ? $"Licensed to {s.Info?.Name} ({s.Info?.Edition})" : "Unlicensed — evaluation copy";
+            licenceStatus.Text = s.IsValid ? $"Licensed to {s.Info?.Name} ({s.Info?.Edition})" : LicenseGate.StatusText;
             licenceStatus.ForeColor = s.IsValid ? Color.FromArgb(0x1C, 0x7C, 0x34) : Color.FromArgb(0xB0, 0x5A, 0x00);
         };
 

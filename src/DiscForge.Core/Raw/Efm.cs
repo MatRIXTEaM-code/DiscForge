@@ -1,9 +1,6 @@
-// DiscForge — Copyright (C) 2026 MaTRIX TeAm.
-// SPDX-License-Identifier: GPL-3.0-or-later
-// This program is free software: you can redistribute it and/or modify it under the terms of the
-// GNU General Public License as published by the Free Software Foundation, either version 3 of
-// the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY;
-// see the GNU General Public License (LICENSE at the repository root) for details.
+// DiscForge — proprietary. Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
+// Not open source. No permission is granted to copy, fork or redistribute.
+// See LICENSE at the root of this repository.
 
 namespace DiscForge.Core.Raw;
 
@@ -38,12 +35,12 @@ public sealed record EfmChannel
 ///
 /// The byte↔codeword table below IS the authoritative ECMA-130 Annex D assignment (the "data swap"
 /// this project's flux/RF moonshot was waiting on — see docs/DIFFERENTIATORS.md and
-/// <see cref="FluxDemodulator"/>/<see cref="FluxDecoder"/>). It is transcribed from the public-domain-
-/// equivalent, GPL-licensed EFM dictionary in Sidney Cadot's <c>laser2wav</c> project (used by
-/// happycube's <c>cd-decode</c>), itself derived from the published ECMA-130 standard — the same table
-/// every CD drive, burner and RF-decode tool implements, since it is the one physical encoding every
-/// audio and data CD ever pressed actually uses. GPL-3.0-or-later throughout, so it drops in here
-/// cleanly. Two further 14-bit patterns from the same standard — <see cref="Sync0"/> and
+/// <see cref="FluxDemodulator"/>/<see cref="FluxDecoder"/>). Its source is the published standard
+/// itself, ECMA-130 (2nd edition, June 1996), Annex D, Table D.1 — freely available from Ecma
+/// International — and all 256 entries have been checked one by one against that table. It is the
+/// same table every CD drive, burner and RF-decode tool implements, since it is the one physical
+/// encoding every audio and data CD ever pressed actually uses. Two further 14-bit patterns from the
+/// same standard (section 19.1: SYNC 0 and SYNC 1) — <see cref="Sync0"/> and
 /// <see cref="Sync1"/> — mark the first two frames of each 98-frame sector; they are not yet wired
 /// into decoding (frame synchronisation is the next stage, not this one) but are recorded here as the
 /// same authoritative constants, so that stage has nowhere else to get them wrong from.

@@ -1,9 +1,6 @@
-// DiscForge — Copyright (C) 2026 MaTRIX TeAm.
-// SPDX-License-Identifier: GPL-3.0-or-later
-// This program is free software: you can redistribute it and/or modify it under the terms of the
-// GNU General Public License as published by the Free Software Foundation, either version 3 of
-// the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY;
-// see the GNU General Public License (LICENSE at the repository root) for details.
+// DiscForge — proprietary. Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
+// Not open source. No permission is granted to copy, fork or redistribute.
+// See LICENSE at the root of this repository.
 
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -183,7 +180,7 @@ new("pack",    "Pack Discs",    C(0x70,0xA0,0x80), C(0x30,0x60,0x48), "📦",
                 null, "Close DiscForge"),
         };
 
-        Text = LicenseGate.IsLicensed ? "DiscForge" : "DiscForge — UNLICENSED (evaluation)";
+        Text = TitleText();
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -222,16 +219,23 @@ new("pack",    "Pack Discs",    C(0x70,0xA0,0x80), C(0x30,0x60,0x48), "📦",
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        // One-time evaluation reminder per launch (soft enforcement — never blocks).
-        if (!_nagShown && !LicenseGate.IsLicensed)
+        if (_nagShown || LicenseGate.IsLicensed) return;
+        _nagShown = true;
+
+        // During the trial: a reminder with the days left, once per launch. After it: activation is
+        // required — closing the dialog without a valid key closes DiscForge.
+        using (var a = new ActivationForm()) a.ShowDialog(this);
+        if (!LicenseGate.CanRun)
         {
-            _nagShown = true;
-            using var a = new ActivationForm();
-            a.ShowDialog(this);
-            Text = LicenseGate.IsLicensed ? "DiscForge" : "DiscForge — UNLICENSED (evaluation)";
-            Invalidate();
+            Close();
+            return;
         }
+        Text = TitleText();
+        Invalidate();
     }
+
+    private static string TitleText() =>
+        LicenseGate.IsLicensed ? "DiscForge" : "DiscForge — " + LicenseGate.Trial.Describe();
 
     private static Color C(int r, int g, int b) => Color.FromArgb(r, g, b);
 
@@ -318,7 +322,7 @@ new("pack",    "Pack Discs",    C(0x70,0xA0,0x80), C(0x30,0x60,0x48), "📦",
         string ver = "CD / DVD / Blu-ray  v" + typeof(CdrwinLauncher).Assembly.GetName().Version?.ToString(3);
         bool licensed = LicenseGate.IsLicensed;
         using (var sub = new Font("MS Sans Serif", 8f))
-            TextRenderer.DrawText(g, licensed ? ver : ver + "   •   UNLICENSED", sub,
+            TextRenderer.DrawText(g, licensed ? ver : ver + "   •   " + LicenseGate.Trial.Describe().ToUpperInvariant(), sub,
                 new Rectangle(strip.X, strip.Y, strip.Width - 8, strip.Height),
                 licensed ? Color.FromArgb(0xC8, 0xD8, 0xF0) : Color.FromArgb(0xFF, 0xD8, 0x60),
                 TextFormatFlags.VerticalCenter | TextFormatFlags.Right);

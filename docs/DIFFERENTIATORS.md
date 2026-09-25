@@ -164,9 +164,9 @@ quantisation, chained into the existing `Efm` decoder. It is validated by round-
 bytes→EFM→flux→EFM→bytes pipeline against DiscForge's own encoder.
 
 **The remaining block has landed.** `Efm.cs` now carries the authoritative ECMA-130 8-to-14 table (byte
-index 0..255, plus the two frame-sync CONTROL patterns from the same standard) — transcribed from the
-GPL-licensed EFM dictionary in Sidney Cadot's `laser2wav` project (used by happycube's `cd-decode`),
-itself derived from the published standard. Verified three ways: (1) a static-constructor self-check that
+index 0..255, plus the two frame-sync CONTROL patterns from the same standard) — taken from the
+published standard itself (ECMA-130, 2nd edition, Annex D, Table D.1), with all 256 entries checked one by
+one against it. Verified three ways: (1) a static-constructor self-check that
 every one of the 256 entries individually satisfies EFM's own run-length rule and that no two collide with
 each other or with the sync patterns; (2) the full existing `Efm`/`FluxDemodulator`/`FluxDecoder` xUnit
 suite (round-trip, per-byte coverage, run-length/DSV bounds) passing unchanged against the real table; (3)

@@ -231,7 +231,7 @@ audio side.
 5. **Automated, VOBU-aware layer-break planning** versus ImgBurn's manual entry.
 6. **Modern format breadth** — CHD create/extract, GDI, CSO/ZSO, WBFS — none of which ImgBurn
    touches.
-7. **Active development, open source (GPL-3.0-or-later)** versus 13 years of no updates and a
+7. **Active development and support** versus 13 years of no updates and a
    bundled-adware installer.
 8. **Offline burn-sequence preview** (`burn-plan`) — explicitly called out in the CLI's own help
    text as having no ImgBurn equivalent.

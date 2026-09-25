@@ -106,6 +106,21 @@ it, and never defeats console security or decrypts protected content.
   incidental for the ones that need it). Same launch-and-forget posture as every other button on
   this row — DiscForge starts the process the user points it at and knows nothing else about it.
 
+### Changed
+
+- **DiscForge is now commercial software.** `LICENSE` is an end-user licence agreement, `NOTICE`
+  records the change, every source header is proprietary again, and the GPL-era `CLA.md` and
+  relicensing script are gone. The EFM table's provenance now cites the ECMA-130 standard directly
+  (all 256 entries checked against Annex D) instead of a GPL project.
+- **30-day free trial, then a licence key.** Without a key, the app and the CLI run fully for 30
+  days from first run, with the days left in the title bar. After that the app asks for a key at
+  start-up and closes without one. The CLI stops with exit code 3, but `license` and `version`
+  always work. The start date is kept in two places, each tied to the machine with an HMAC, and
+  a clock set back is detected. Code is in `DiscForge.Core.Licensing.Trial`/`TrialStore`/
+  `Entitlement`, with tests in `TrialTests`. New CLI commands: `dforge license status` and
+  `dforge license activate <key>`. `license machine-id` now reports the same id as the app's
+  Activation dialog (it used the computer name before).
+
 ### Fixed
 
 - **Labels running into their boxes** on the Dump Certificate (Firmware), Dump Certificate Ledger

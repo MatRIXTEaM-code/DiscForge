@@ -45,29 +45,12 @@ PRs that cross it will be closed, however technically interesting.
 - **Style:** match the surrounding code. Long doc-comments explaining *why* a
   format works the way it does are the house style and are welcome.
 
-## Licensing of contributions
+## Licensing
 
-DiscForge is GPL-3.0-or-later. By submitting a contribution you agree to the
-Contributor License Agreement in [CLA.md](CLA.md) — in short: your contribution
-is licensed to the project under GPL-3.0-or-later like everything else, **and**
-you grant the maintainer the additional right to relicense or dual-license it.
-This keeps future licensing decisions (for example, offering commercial
-exceptions) possible without tracking down every past contributor. You keep
-your copyright.
-
-To signal agreement, add this line to each commit message (git's standard
-sign-off, `git commit -s`):
-
-```
-Signed-off-by: Your Name <your@email>
-```
-
-and include this sentence once in your first PR description:
-
-> I have read CLA.md and I agree to its terms for this and my future
-> contributions to DiscForge.
-
-PRs without a sign-off can't be merged.
+DiscForge is commercial, closed-source software (see [LICENSE](LICENSE)). The
+repository is private and outside contributions are not accepted. Anyone given
+access to work on it does so under a separate written agreement with
+MaTRIX TeAm, which assigns or licenses their work to MaTRIX TeAm.
 
 ## Reporting bugs
 

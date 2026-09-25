@@ -1,9 +1,6 @@
-// DiscForge — Copyright (C) 2026 MaTRIX TeAm.
-// SPDX-License-Identifier: GPL-3.0-or-later
-// This program is free software: you can redistribute it and/or modify it under the terms of the
-// GNU General Public License as published by the Free Software Foundation, either version 3 of
-// the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY;
-// see the GNU General Public License (LICENSE at the repository root) for details.
+// DiscForge — proprietary. Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
+// Not open source. No permission is granted to copy, fork or redistribute.
+// See LICENSE at the root of this repository.
 
 using System.Drawing;
 using System.Windows.Forms;
@@ -50,8 +47,11 @@ internal sealed class ActivationForm : Form
             Location = new Point(16, 16), Size = new Size(452, 60), Font = RetroTheme.Ui, ForeColor = RetroTheme.Text,
             Text = st.IsValid
                 ? $"This copy is licensed to {st.Info?.Name}."
-                : "This copy is unlicensed (evaluation). Paste a licence key below to activate, " +
-                  "or send the machine id to your vendor for a machine-locked key.",
+                : LicenseGate.Trial.CanRun
+                    ? $"{LicenseGate.Trial.Describe()} of your free 30-day trial. To keep using DiscForge " +
+                      "afterwards, buy a licence and paste the key below (for a machine-locked key, send the machine id)."
+                    : $"{LicenseGate.Trial.Describe()}. Paste your licence key below to keep using DiscForge " +
+                      "(for a machine-locked key, send the machine id). Without a key, DiscForge will close.",
         });
         Controls.Add(new Label { Text = "Machine id:", AutoSize = true, Location = new Point(16, 99), Font = RetroTheme.Ui });
         Controls.Add(new Label { Text = "Licence key:", AutoSize = true, Location = new Point(16, 132), Font = RetroTheme.Ui });
@@ -72,7 +72,8 @@ internal sealed class ActivationForm : Form
 
         var close = new Button
         {
-            Text = "Close", DialogResult = DialogResult.Cancel, Location = new Point(384, 272), Size = new Size(84, 28),
+            Text = st.IsValid ? "Close" : LicenseGate.Trial.CanRun ? "Continue trial" : "Exit",
+            DialogResult = DialogResult.Cancel, Location = new Point(360, 272), Size = new Size(108, 28),
             Anchor = AnchorStyles.Bottom | AnchorStyles.Right, FlatStyle = FlatStyle.System, Font = RetroTheme.Ui,
         };
 

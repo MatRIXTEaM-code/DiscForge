@@ -1,5 +1,8 @@
 # Community outreach drafts — DiscForge
 
+> **Out of date (v1.115.0):** written for the GPL release. DiscForge is now commercial software and the
+> repository is private — rewrite the licence and link details before using any of this.
+
 *Drafts only — nothing here has been posted. Review and edit before sending; each community has its
 own norms (Redump especially is strict about self-promotion and evidence-first claims), so these are
 written humble and falsifiable rather than as marketing copy. Swap in the real repo link, your own

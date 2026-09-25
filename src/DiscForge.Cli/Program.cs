@@ -1,9 +1,6 @@
-// DiscForge — Copyright (C) 2026 MaTRIX TeAm.
-// SPDX-License-Identifier: GPL-3.0-or-later
-// This program is free software: you can redistribute it and/or modify it under the terms of the
-// GNU General Public License as published by the Free Software Foundation, either version 3 of
-// the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY;
-// see the GNU General Public License (LICENSE at the repository root) for details.
+// DiscForge — proprietary. Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
+// Not open source. No permission is granted to copy, fork or redistribute.
+// See LICENSE at the root of this repository.
 
 using DiscForge.Core.Audio;
 using DiscForge.Core.BluRay;
@@ -85,7 +82,7 @@ if (args.Length == 0)
     Console.WriteLine("  submission-info <image> [--out f]  Redump-style hashes/cuesheet/subchannel for a dump");
     Console.WriteLine("  submission-pack <image> <out-dir> [--game N]  Assemble a submission-ready folder (dump+info+dat+cue)");
     Console.WriteLine("  library rename <dir> --dat f [--apply]  Rename verified files to canonical names");
-    Console.WriteLine("  license <keygen|issue|verify|machine-id> …  Manage DiscForge licence keys (see --help)");
+    Console.WriteLine("  license <status|activate|keygen|issue|verify|machine-id> …  Licence status, activation and key management");
     Console.WriteLine("  1g1r <dat> [--regions USA,Europe,Japan] [--keep-proto] [--drop-unlicensed] [--out f]");
     Console.WriteLine("                          One-game-one-ROM: pick the best region per game from a DAT");
     Console.WriteLine("  rebuild <src> <dest> --dat f [--per-game] [--move] [--apply]");
@@ -542,6 +539,31 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  bin2src <file> [--name ID] [--asm] [--per-line N] [--out f]   Emit a file as C/asm source bytes");
     Console.WriteLine("  search <file> (--hex 4d5a | --ascii TEXT) [--limit N]   Search a file for a hex or ASCII pattern");
     return 0;
+}
+
+// Licence / trial gate: the same check the app makes. A valid key, or a running 30-day trial, is
+// needed for every command except the licence and version commands themselves (so a customer can
+// always activate, and support can always ask for the version).
+{
+    string first = args[0].ToLowerInvariant();
+    if (first is not ("license" or "licence" or "version" or "--version" or "-v" or "help" or "--help" or "-h"))
+    {
+        string machine = DiscForge.Core.Licensing.Entitlement.CurrentMachineId();
+        var lic = DiscForge.Core.Licensing.Entitlement.CurrentLicense(machine, DateTime.UtcNow);
+        if (!lic.IsValid)
+        {
+            var trial = DiscForge.Core.Licensing.TrialStore.Check(machine, DateTime.UtcNow);
+            if (!trial.CanRun)
+            {
+                Console.Error.WriteLine($"dforge: {trial.Describe()}. A DiscForge licence key is needed to continue.");
+                Console.Error.WriteLine("  Activate with:  dforge license activate <key>   (or from the DiscForge app's About box)");
+                Console.Error.WriteLine($"  This machine's id (for a machine-locked key): {machine}");
+                return 3;
+            }
+            if (trial.DaysLeft <= 7)
+                Console.Error.WriteLine($"dforge: {trial.Describe()} of the free trial — activate with: dforge license activate <key>");
+        }
+    }
 }
 
 return args[0].ToLowerInvariant() switch
@@ -5010,7 +5032,9 @@ static int RebuildCmd(string[] args)
 static int LicenseCmd(string[] args)
 {
     if (args.Length < 2)
-        return Fail("usage: dforge license <keygen|issue|verify|machine-id> …\n" +
+        return Fail("usage: dforge license <status|activate|keygen|issue|verify|machine-id> …\n" +
+                    "  status                                       show this copy's licence / trial state\n" +
+                    "  activate <key>                               install a licence key on this machine\n" +
                     "  keygen <private.pem> <public.txt>            create a signing key pair (keep the private key!)\n" +
                     "  issue --private <f.pem> --name \"…\" [--edition Pro] [--days N] [--machine <id>]\n" +
                     "  verify <key> [--machine <id>]                check a key against the embedded public key\n" +
@@ -5093,12 +5117,42 @@ static int LicenseCmd(string[] args)
             }
 
             case "machine-id":
-                Console.WriteLine(DiscForge.Core.Licensing.MachineId.FromRaw(Environment.MachineName));
-                Console.WriteLine("(the DiscForge app shows the authoritative machine id in its Activation dialog)");
+                Console.WriteLine(DiscForge.Core.Licensing.Entitlement.CurrentMachineId());
                 return 0;
 
+            case "status":
+            {
+                string machine = DiscForge.Core.Licensing.Entitlement.CurrentMachineId();
+                var lic = DiscForge.Core.Licensing.Entitlement.CurrentLicense(machine, DateTime.UtcNow);
+                if (lic.IsValid)
+                {
+                    Console.WriteLine($"Licensed to {lic.Info?.Name} ({lic.Info?.Edition})" +
+                                      (lic.Info?.ExpiresUtc is { } exp ? $", expires {exp:yyyy-MM-dd}" : "") + ".");
+                    return 0;
+                }
+                var trial = DiscForge.Core.Licensing.TrialStore.Check(machine, DateTime.UtcNow);
+                Console.WriteLine(trial.Describe() + (trial.CanRun ? " of the free trial." : "."));
+                Console.WriteLine($"Machine id: {machine}");
+                return trial.CanRun ? 0 : 3;
+            }
+
+            case "activate":
+            {
+                if (args.Length < 3) return Fail("usage: dforge license activate <key>");
+                string machine = DiscForge.Core.Licensing.Entitlement.CurrentMachineId();
+                string key = args[2].Trim();
+                var r = DiscForge.Core.Licensing.License.Validate(
+                    key, DiscForge.Core.Licensing.LicenseConfig.PublicSpki, machine, DateTime.UtcNow);
+                if (!r.IsValid) return Fail($"That key isn't valid on this machine: {r.Message}");
+                string path = DiscForge.Core.Licensing.Entitlement.LicensePath;
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, key);
+                Console.WriteLine($"Activated — licensed to {r.Info?.Name} ({r.Info?.Edition}). Thank you!");
+                return 0;
+            }
+
             default:
-                return Fail($"Unknown subcommand '{sub}' (keygen|issue|verify|machine-id).");
+                return Fail($"Unknown subcommand '{sub}' (status|activate|keygen|issue|verify|machine-id).");
         }
     }
     catch (Exception ex) { return Fail(ex.Message); }

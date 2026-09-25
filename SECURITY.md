@@ -27,9 +27,9 @@ otherwise.
 - The integrity model is a deliberate defence: decoders verify against
   format-carried checksums (CRC-64, SHA-1, EDC/ECC) or decline. A finding that
   defeats one of these gates is high severity.
-- The licence-key code in `DiscForge.Core/Licensing` is **not** a security
-  boundary under the GPL (anyone may build without it); findings there are
-  ordinary bugs.
+- The licence-key and trial code in `DiscForge.Core/Licensing` protects the
+  commercial product. Ways to forge a key or bypass the trial should be
+  reported privately, like any other vulnerability.
 - DiscForge never decrypts protected content and contains no circumvention
   code; reports requesting such functionality are out of scope by policy
   (see [NOTICE](NOTICE)).

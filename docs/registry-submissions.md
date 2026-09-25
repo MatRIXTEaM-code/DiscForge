@@ -1,5 +1,8 @@
 # DiscForge — registry submission drafts
 
+> **Out of date (v1.115.0):** written for the GPL release. DiscForge is now commercial software and the
+> repository is private — rewrite the licence and link details before using any of this.
+
 Two paste-ready drafts: the COPTR tool page and an awesome-list PR entry.
 URLs point at the published repo (https://github.com/MatRIXTEaM-code/DiscForge);
 everything else is accurate to the shipped feature set as of August 2026.

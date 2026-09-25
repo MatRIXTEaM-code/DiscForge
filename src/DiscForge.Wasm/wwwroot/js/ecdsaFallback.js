@@ -1,5 +1,5 @@
-// DiscForge — Copyright (C) 2026 MaTRIX TeAm.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// DiscForge — proprietary. Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
+// Not open source. No permission is granted to copy, fork or redistribute.
 //
 // .NET 8's browser-wasm runtime has no ECDSA implementation (System.Security.Cryptography.ECDsa.Create()
 // throws PlatformNotSupportedException there) — see docs/DIFFERENTIATORS.md and the v1.105.0/v1.106.0

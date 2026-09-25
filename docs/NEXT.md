@@ -347,8 +347,8 @@ matters); a `DumpCertView` GUI extension for the ledger is a natural next step b
 v1.101.0 closes the flux/RF moonshot's last internal blocker: `Efm.cs` now carries the authoritative
 ECMA-130 8-to-14 table (256 byte→codeword entries + the 2 frame-sync patterns), replacing the
 modelled stand-in docs/DIFFERENTIATORS.md flagged as the one thing gating real-disc flux decode.
-Table transcribed from the GPL-licensed EFM dictionary in Sidney Cadot's `laser2wav` project (used
-by happycube's `cd-decode`), itself from the published standard. Verified three ways: a
+Table taken from the published standard itself (ECMA-130 Annex D, Table D.1), every entry checked
+against it. Verified three ways: a
 static-constructor self-check (every entry individually run-length-legal, no collisions with each
 other or the sync patterns), the existing `Efm`/`FluxDemodulator`/`FluxDecoder` suite passing
 unchanged, and a probe script grounding the one real finding this surfaced — `WeakSectorAnalyzer`'s

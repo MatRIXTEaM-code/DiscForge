@@ -1,9 +1,6 @@
-// DiscForge — Copyright (C) 2026 MaTRIX TeAm.
-// SPDX-License-Identifier: GPL-3.0-or-later
-// This program is free software: you can redistribute it and/or modify it under the terms of the
-// GNU General Public License as published by the Free Software Foundation, either version 3 of
-// the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY;
-// see the GNU General Public License (LICENSE at the repository root) for details.
+// DiscForge — proprietary. Copyright (c) 2026 MaTRIX TeAm. All rights reserved.
+// Not open source. No permission is granted to copy, fork or redistribute.
+// See LICENSE at the root of this repository.
 
 using System.Security.Cryptography;
 using System.Text;
@@ -29,7 +26,7 @@ public sealed record CertifiedSpan(string Label, long StartLba, long EndLba, boo
 /// The signing follows <see cref="Recovery.MergeCertificate"/>'s house pattern:
 /// ECDSA P-256 over a canonical newline-joined content string, public key
 /// embedded, verification self-contained. Poetic justice note: this signer is
-/// the licensing code's ECDSA, reborn under GPL with an honest job.
+/// the licensing code's ECDSA, put to a second, honest job.
 /// </summary>
 public sealed record DumpCertificate
 {
