@@ -11,6 +11,9 @@ on:
 jobs:
   analyze:
     name: Analyze (C#)
+    # Code scanning on a PRIVATE repository needs GitHub Advanced Security (a paid add-on); without
+    # it the upload step fails. Skip the job for private repos instead of failing every push.
+    if: ${{ !github.event.repository.private }}
     runs-on: windows-latest
     permissions:
       security-events: write

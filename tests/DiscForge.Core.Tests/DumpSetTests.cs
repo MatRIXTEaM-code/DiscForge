@@ -33,7 +33,7 @@ public class DumpSetTests : IDisposable
         Touch("unrelated.txt");
 
         var set = DumpSet.Resolve(cue);
-        var names = set.Files.Select(Path.GetFileName).ToList();
+        var names = set.Files.Select(Path.GetFileName).ToArray();
         Assert.Equal(new[] { "game.cue", "game (Track 1).bin", "game (Track 2).bin", "game.log", "game.sbi" }, names);
         Assert.Empty(set.Missing);
         Assert.Equal("game.log", Path.GetFileName(set.Log));
