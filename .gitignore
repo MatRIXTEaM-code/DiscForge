@@ -68,3 +68,4 @@ cdextra.dfp.json
 # bigtest.cdi's sidecars need an explicit entry since *.cdi alone doesn't match a compound
 # extension like bigtest.cdi.pass1.log or bigtest.cdi.ripstate.json.)
 bigtest.cdi*
+build-logs/
