@@ -66,6 +66,8 @@ internal sealed class CdrwinLauncher : Form
                 () => new Views.InteropView(), "Read / write CloneCD .ccd"),
            new("recovery","Recovery",      C(0x50,0xB0,0x90), C(0x1E,0x6E,0x55), "🩹",
                 () => new Views.RecoveryView(), "Recover damaged sectors using C2"),
+            new("rescue",  "Rescue Disc",   C(0xD0,0x70,0x50), C(0x8A,0x30,0x1E), "🛟",
+                () => new Views.RescueView(), "Copy a damaged disc: good parts first, resumable"),
             new("merge",   "Merge Rips",    C(0x50,0xB0,0x70), C(0x1E,0x6E,0x40), "🧩",
                 () => new Views.MergeView(), "Merge several rips of the same disc into one verified image"),
             new("mergecert","Merge + Certify", C(0x50,0xB0,0x50), C(0x1E,0x6E,0x1E), "🔏",

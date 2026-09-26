@@ -405,6 +405,8 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  drives                  List optical recorders + capabilities (Windows via device stack; macOS via system_profiler)");
     Console.WriteLine("  burn <image.iso> [drive] [--verify] [--speed N]  Burn a data ISO to a blank CD/DVD/BD (Windows IMAPI2, or macOS hdiutil)");
     Console.WriteLine("  read-disc <drive> <out.iso> [--continue-on-error] [--retries N]  Image a data DVD/BD/data-CD to a flat ISO");
+    Console.WriteLine("  rescue <drive|file> <out.iso> [map] [--retries N] [--no-trim] [--no-scrape] [--no-skip] [--cluster N] [--timeout S] [--start LBA] [--count N]  Copy a damaged disc ddrescue-style: good areas first, then narrow and retry the bad ones; resumable, and continue with another drive using the same map");
+    Console.WriteLine("  rescue-status <map> [--json]  Summarise a rescue map (DiscForge or GNU ddrescue format): rescued, bad areas, what's left");
     Console.WriteLine("  read-cdi <drive> <out.cdi> [--raw] [--continue-on-error] [--retries N] [--jitter] [--adaptive-reread]  Rip a CD (audio/mixed/data) track-by-track to a CDI image");
     Console.WriteLine("  writeinfo <drive>       Read-only: disc status + the drive's next-writable-address (for raw-DAO write setup)");
     Console.WriteLine("  drive-profile <drive>   Consolidated per-drive profile: read/write reach, write modes, read fidelity [--out profile.json]");
@@ -822,6 +824,8 @@ return args[0].ToLowerInvariant() switch
     "disc-scan" => DiscScanCmd(args),
     "read-benchmark" => ReadBenchmarkCmd(args),
     "read-disc" => ReadDiscCmd(args),
+    "rescue" => RescueCmd(args),
+    "rescue-status" => RescueStatusCmd(args),
     "read-cdi" => ReadCdiCmd(args),
     "read-raw" => ReadRawCmd(args),
     "subchannel-dump" => SubchannelDumpCmd(args),
@@ -18961,6 +18965,164 @@ static int UnpackImage(string[] args)
         return items.All(i => i.Ok) ? 0 : 2;
     }
     catch (Exception ex) { return Fail(ex.Message); }
+}
+
+static string HumanBytes(long b)
+{
+    string[] u = { "B", "kB", "MB", "GB", "TB" };
+    double v = b; int i = 0;
+    while (v >= 1000 && i < u.Length - 1) { v /= 1000; i++; }
+    return i == 0 ? $"{b} B" : $"{v:0.##} {u[i]}";
+}
+
+static int RescueCmd(string[] args)
+{
+    if (args.Length < 3)
+        return Fail("usage: dforge rescue <drive|file> <out.iso> [<mapfile>] [options]\n" +
+                    "  Copies a scratched or failing data disc the way GNU ddrescue does: the readable areas first in\n" +
+                    "  big reads, jumping away from errors; then it narrows each failed area from its edges, goes over\n" +
+                    "  what's left one sector at a time, and (with --retries) retries the bad sectors. Everything is\n" +
+                    "  recorded in a map (default <out.iso>.map, GNU ddrescue's format), so you can stop with Ctrl+C\n" +
+                    "  and run the same command again to carry on — or put the disc in a DIFFERENT drive and run it\n" +
+                    "  again with the same image and map: only the parts still missing are read.\n" +
+                    "  <drive> is a drive letter (D:). A file or device path also works (e.g. an image on a failing disk).\n" +
+                    "  Options:\n" +
+                    "    --retries N    extra passes over the bad sectors at the end (default 0)\n" +
+                    "    --no-trim, --no-scrape   stop after the fast passes (quickest way to get most of the data)\n" +
+                    "    --no-skip      don't jump away from errors while copying\n" +
+                    "    --cluster N    sectors per read while copying (default 32 = 64 KiB)\n" +
+                    "    --timeout S    seconds before one read counts as failed (default 20)\n" +
+                    "    --start LBA --count N   rescue only part of the disc\n" +
+                    "  Unencrypted discs only: a disc that declares CSS/CPRM/AACS is refused. Exit code 0 = complete,\n" +
+                    "  2 = finished with sectors still missing (listed in <out.iso>.badsectors.json).");
+
+    string src = args[1], outPath = args[2];
+    string mapPath = args.Length > 3 && !args[3].StartsWith("--") ? args[3] : outPath + ".map";
+    var opt = new DiscForge.Core.Rescue.RescueOptions
+    {
+        RetryPasses = int.TryParse(OptVal(args, "--retries"), out var rp) && rp >= 0 ? rp : 0,
+        Trim = !args.Contains("--no-trim"),
+        Scrape = !args.Contains("--no-scrape") && !args.Contains("--no-trim"),
+        SkipInitialSectors = args.Contains("--no-skip") ? 0 : null,
+        ClusterSectors = int.TryParse(OptVal(args, "--cluster"), out var cl) && cl is >= 1 and <= 1024 ? cl : 32,
+        StartSector = long.TryParse(OptVal(args, "--start"), out var st) ? st : null,
+        SectorLimit = long.TryParse(OptVal(args, "--count"), out var ct) ? ct : null,
+    };
+    uint timeout = uint.TryParse(OptVal(args, "--timeout"), out var to) && to >= 2 ? to : 20;
+
+    DiscForge.Core.Rescue.IRescueSource source;
+    IDisposable? owned = null;
+    string spec = src.TrimEnd('\\', '/');
+    bool isDrive = spec.Length == 2 && spec[1] == ':' && char.IsLetter(spec[0]) || spec.Length == 1 && char.IsLetter(spec[0]);
+    try
+    {
+        if (isDrive)
+        {
+#if WINDOWS
+            var d = new DiscForge.Devices.Reading.DataDiscRescueSource(spec[0], timeout);
+            source = d; owned = d;
+#else
+            return Fail("Rescuing from a drive letter needs Windows. On Linux/macOS pass the device path instead (for example /dev/sr0).");
+#endif
+        }
+        else
+        {
+            if (!File.Exists(src) && !src.StartsWith("/dev/")) return Fail($"Not found: {src}");
+            var f = new DiscForge.Core.Rescue.FileRescueSource(src);
+            source = f; owned = f;
+        }
+    }
+    catch (Exception ex) { return Fail(ex.Message); }
+
+    using var _owned = owned;
+    long size = source is DiscForge.Core.Rescue.FileRescueSource fileSrc ? fileSrc.ByteLength : source.SectorCount * source.SectorSize;
+    DiscForge.Core.Rescue.RescueMap map;
+    if (File.Exists(mapPath))
+    {
+        try { map = DiscForge.Core.Rescue.RescueMap.Load(mapPath); }
+        catch (FormatException ex) { return Fail($"{mapPath}: {ex.Message}"); }
+        if (map.Size != size)
+            return Fail($"The map {Path.GetFileName(mapPath)} is for a {HumanBytes(map.Size)} disc, but this one is {HumanBytes(size)} — a different disc? Use a new image and map name.");
+        if (!File.Exists(outPath)) return Fail($"The map exists but the image {outPath} doesn't. Put the image back, or delete the map to start again.");
+        Console.WriteLine($"Continuing a rescue: {HumanBytes(map.Rescued)} of {HumanBytes(size)} already rescued, {map.BadAreas} bad area(s).");
+    }
+    else
+    {
+        map = DiscForge.Core.Rescue.RescueMap.CreateNew(size);
+        Console.WriteLine($"New rescue: {source.SectorCount:N0} sectors ({HumanBytes(size)}). Map: {mapPath}");
+    }
+
+    using var outFs = new FileStream(outPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
+    if (outFs.Length < size) outFs.SetLength(size);
+
+    using var cts = new CancellationTokenSource();
+    ConsoleCancelEventHandler onCancel = (_, e) => { e.Cancel = true; cts.Cancel(); Console.WriteLine(); Console.WriteLine("Stopping — saving the map…"); };
+    Console.CancelKeyPress += onCancel;
+    var started = DateTime.Now;
+    string cmdLine = "dforge " + string.Join(' ', args);
+    var progress = new SyncProgress<DiscForge.Core.Rescue.RescueProgress>(p =>
+    {
+        if (Console.IsOutputRedirected) return;
+        Console.Write($"\r  {p.Phase,-20} rescued {HumanBytes(p.Rescued),9} ({p.PercentRescued:0.00}%)  bad {HumanBytes(p.BadSector),8} in {p.BadAreas} area(s)  left {HumanBytes(p.NonTried + p.NonTrimmed + p.NonScraped),9}  errors {p.ReadErrors:N0}   ");
+    });
+    DiscForge.Core.Rescue.RescueResult result;
+    try
+    {
+        var engine = new DiscForge.Core.Rescue.RescueEngine(source, outFs, map, opt, progress,
+            (m, msg) => { outFs.Flush(); m.Save(mapPath, cmdLine, msg, started); }, cts.Token);
+        result = engine.Run();
+    }
+    catch (DiscForge.Core.Rescue.RescueAbortException ex) { Console.WriteLine(); return Fail(ex.Message + $" (map saved: {mapPath})"); }
+    finally { Console.CancelKeyPress -= onCancel; }
+    Console.WriteLine();
+
+    // A file that isn't a whole number of sectors: keep the image exactly its size.
+    if (source is DiscForge.Core.Rescue.FileRescueSource fsrc && fsrc.ByteLength < outFs.Length) outFs.SetLength(fsrc.ByteLength);
+
+    // A DiscForge bad-sector sidecar, so bad-sectors / redump-diff / dump-merge know about the holes.
+    var missing = map.UnfinishedSectors(source.SectorSize).ToList();
+    string sidecar = DiscForge.Core.Preservation.BadSectorMap.SidecarPath(outPath);
+    if (missing.Count > 0)
+        new DiscForge.Core.Preservation.BadSectorMap
+        {
+            Image = Path.GetFileName(outPath),
+            TotalSectors = (int)source.SectorCount,
+            UnreadableLba = missing,
+            Note = $"From rescue map {Path.GetFileName(mapPath)}",
+        }.Save(sidecar);
+    else if (File.Exists(sidecar)) File.Delete(sidecar);
+
+    Console.WriteLine($"Rescued {HumanBytes(map.Rescued)} of {HumanBytes(size)} ({100.0 * map.Rescued / size:0.000}%) in {result.Elapsed:hh\\:mm\\:ss}; {result.ReadErrors:N0} read error(s).");
+    if (result.Cancelled) { Console.WriteLine($"Stopped. Run the same command again to continue (map: {mapPath})."); return 2; }
+    if (map.IsComplete) { Console.WriteLine("Every sector was rescued — the image is complete."); return 0; }
+    Console.WriteLine($"{missing.Count:N0} sector(s) still missing in {map.BadAreas + map.Count(DiscForge.Core.Rescue.RescueStatus.NonScraped) + map.Count(DiscForge.Core.Rescue.RescueStatus.NonTrimmed)} area(s) — listed in {Path.GetFileName(sidecar)}.");
+    Console.WriteLine("  To get more: run again with --retries 3, clean the disc, or try it in another drive with the same image and map.");
+    return 2;
+}
+
+static int RescueStatusCmd(string[] args)
+{
+    if (args.Length < 2) return Fail("usage: dforge rescue-status <mapfile> [--json]");
+    try
+    {
+        var m = DiscForge.Core.Rescue.RescueMap.Load(args[1]);
+        long nt = m.Total(DiscForge.Core.Rescue.RescueStatus.NonTried), ntr = m.Total(DiscForge.Core.Rescue.RescueStatus.NonTrimmed),
+             ns = m.Total(DiscForge.Core.Rescue.RescueStatus.NonScraped), bad = m.Total(DiscForge.Core.Rescue.RescueStatus.BadSector);
+        if (args.Contains("--json"))
+        {
+            EmitJson(new { m.Size, m.Rescued, NonTried = nt, NonTrimmed = ntr, NonScraped = ns, BadSector = bad, m.BadAreas, m.IsComplete, CurrentStatus = m.CurrentStatus.ToString(), m.CurrentPass });
+            return 0;
+        }
+        Console.WriteLine($"Disc size   : {HumanBytes(m.Size)} ({m.Size / 2048:N0} sectors of 2048 bytes)");
+        Console.WriteLine($"Rescued     : {HumanBytes(m.Rescued)} ({100.0 * m.Rescued / m.Size:0.000}%)");
+        Console.WriteLine($"Not tried   : {HumanBytes(nt)}");
+        Console.WriteLine($"Not trimmed : {HumanBytes(ntr)}");
+        Console.WriteLine($"Not scraped : {HumanBytes(ns)}");
+        Console.WriteLine($"Bad sectors : {HumanBytes(bad)} in {m.BadAreas} area(s)");
+        Console.WriteLine(m.IsComplete ? "Status      : complete" : $"Status      : {(m.CurrentStatus switch { '?' => "copying", '*' => "trimming", '/' => "scraping", '-' => "retrying", '+' => "finished (with sectors missing)", _ => m.CurrentStatus.ToString() })}, pass {m.CurrentPass}");
+        return 0;
+    }
+    catch (Exception ex) when (ex is FormatException or IOException) { return Fail(ex.Message); }
 }
 
 static int Fail(string message)

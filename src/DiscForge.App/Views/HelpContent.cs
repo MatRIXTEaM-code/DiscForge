@@ -82,6 +82,15 @@ internal static class HelpContent
             "Reads and writes the CloneCD triplet (.ccd control file, .img data, .sub sub-channel), so " +
             "images move between DiscForge and CloneCD-based workflows without losing sub-channel data."),
 
+        new("rescue", "🛟", "Rescue Disc", "Copy a damaged disc, good parts first",
+            "Copies a scratched or failing data disc (CD-ROM, DVD, Blu-ray) to an image the way GNU ddrescue does: " +
+            "the readable areas first in big reads, jumping away from errors, then narrowing each damaged area " +
+            "from its edges, going over what's left one sector at a time, and retrying the bad sectors. Progress " +
+            "is kept in a map next to the image (GNU ddrescue's format), so you can stop and carry on later, or " +
+            "move the disc to another drive and start again with the same image — only what's still missing is " +
+            "read. The bar shows the whole disc: green rescued, grey not tried, amber still to narrow down, red " +
+            "bad. Unencrypted discs only."),
+
         new("recovery", "🩹", "Recovery", "Recover damaged sectors",
             "Re-reads a scratched or failing disc, using the drive's C2 error pointers to find and retry the " +
             "bad sectors until they read cleanly or a retry cap is hit. Aimed at rescuing data from marginal " +

@@ -11,6 +11,34 @@ it, and never defeats console security or decrypts protected content.
 
 ## [Unreleased]
 
+## [1.118.0] - 2026-09-26
+
+### Added
+
+- **Rescue Disc (ddrescue-style copying of damaged data discs)** — new `DiscForge.Core.Rescue`:
+  `RescueEngine` follows the phases GNU ddrescue documents (copying with exponential skipping, a
+  backwards pass and a sweep; trimming from both edges; scraping sector by sector; optional retry
+  passes in alternating directions) over an `IRescueSource` (optical drive via SPTI, or any file or
+  device). `RescueMap` reads and writes ddrescue's mapfile format (hex/decimal/octal, atomic save
+  with .bak), so rescues resume after a stop and can be continued in another drive — or in GNU
+  ddrescue, and vice versa (checked both ways with ddrescue 1.27 / ddrescuelog). A continued rescue
+  with only bad sectors left always makes one more retry pass. Unfinished sectors are written to the
+  usual `<image>.badsectors.json` sidecar.
+- **CLI** — `rescue <drive|file> <out.iso> [map] [--retries N] [--no-trim] [--no-scrape] [--no-skip]
+  [--cluster N] [--timeout S] [--start LBA] [--count N]` (Ctrl+C saves the map) and
+  `rescue-status <map> [--json]`.
+- **App** — new "Rescue Disc" tile: drive, image, retry passes, quick mode, read timeout, a live map bar of
+  the whole disc, stop/continue, and "continue in another drive" by picking the same image.
+- **Tests** — a simulated damaged disc (permanent bad areas, sectors that read on a later try,
+  whole-read failure like a real drive): exact bad-sector map, few failed reads while copying,
+  interrupted-and-resumed equals uninterrupted, second drive only reads what's missing, ddrescue
+  manual's example mapfile.
+
+### Unchanged boundary
+
+- Same clean-room gate as read-disc: a disc declaring CSS/CPRM/AACS is refused and a copy-protection
+  response stops the rescue.
+
 ## [1.117.0] - 2026-09-25
 
 ### Added
