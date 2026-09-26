@@ -47,6 +47,20 @@ it, and never defeats console security or decrypts protected content.
   listed as bad. New CLI options: `--no-slowdown`, `--no-slow-skip`, `--no-c2`, `--c2-reads N`,
   `--salvage`. Tests cover careful speed, read kinds, slow-area ordering and salvage.
 
+- **Protect Image: Reed-Solomon parity files (`.dfpar`)** — new `DiscForge.Core.Protect`: GF(2^8)
+  arithmetic with SSSE3 multiply-accumulate, systematic RS over interleaved stripes (sector i in stripe
+  i mod S; K data + P parity sectors, P = 8/16/32 for low/normal/high ≈ 3/7/14%), per-sector CRC-32 so
+  damage is repaired as erasures (any P per stripe), streaming in 64 MB batches (about 7 s per GB on a
+  laptop). Verify reports damaged image and parity sectors; Repair rewrites them in place. CLI
+  `protect create|verify|repair`. Tests: random damage, a scratch-sized burst, parity-file damage,
+  too-much-damage refusal, truncated images, and a direct any-P-erasures check at P = 2/8/16/32.
+- **Seven new tiles** (the launcher grid is now full): Protect Image; Bit-Rot Watch (baseline + re-check of a
+  collection via `LibraryWatch`, flags content changes with unchanged timestamps); Compare Images
+  (`DiscDiff` file-level and `DiscRegionDiff` byte-level); Checksum Files (make/check SFV, MD5, SHA-1;
+  check PAR2 sets); Find in Image (text or hex, with sector and the ISO file each hit is inside); Sector
+  Health (per-sector EDC map of a raw CD image, ECC repair into a copy); Best of Dumps
+  (`DumpReconstruct` over several raw dumps with per-sector provenance). Shared `ToolViewBase` layout.
+
 ### Unchanged boundary
 
 - Same clean-room gate as read-disc: a disc declaring CSS/CPRM/AACS is refused and a copy-protection

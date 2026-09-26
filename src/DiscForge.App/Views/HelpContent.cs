@@ -410,6 +410,42 @@ internal static class HelpContent
             "Shows the version, what DiscForge is, and the licence, and opens the log folder for diagnostics. " +
             "The first place to look for the version number when reporting anything."),
 
+        new("parity", "🔰", "Protect Image", "Parity file that can repair an image later",
+            "Makes a small companion file (.dfpar, about 3–14% of the image's size) while an image is good. If the " +
+            "image is later damaged — bit-rot, a bad copy, or a disc that could only be rescued partly — Check image " +
+            "finds every damaged sector and Repair image rebuilds them. Sectors are grouped across the whole image, so " +
+            "a long run of damage like a scratch is spread thinly and can still be repaired. Keep a copy of the parity " +
+            "file on another drive."),
+
+        new("bitrot", "👁", "Bit-Rot Watch", "Spot files in a collection that silently changed",
+            "Records a checksum for every file in a folder, then on later checks lists what's new, missing or changed — " +
+            "and flags possible bit-rot: files whose contents changed although nothing wrote to them. Use it every month " +
+            "or so on your image collection, and before replacing a backup."),
+
+        new("compare", "⚖", "Compare Images", "What's different between two images",
+            "Compares two disc images. Compare files lists files that were added, removed, changed or moved (two " +
+            "pressings, a patched and an original, two revisions). Compare bytes finds where the raw data differs, even " +
+            "when data has shifted."),
+
+        new("checksums", "🔢", "Checksum Files", "Make / check .sfv .md5 .sha1, check PAR2",
+            "Makes checksum files for a set of files (SFV, MD5 or SHA-1) and checks existing ones against the files beside " +
+            "them. It also checks PAR2 recovery sets and says whether there's enough recovery data to repair them."),
+
+        new("find", "🔎", "Find in Image", "Search an image for text or bytes",
+            "Searches a disc image or any file for text or hex bytes. Each match shows its position, its sector, the data " +
+            "around it and, for ISO images, which file on the disc it's inside."),
+
+        new("health", "🩺", "Sector Health", "Map and repair a raw CD image's sectors",
+            "Checks every data sector of a raw CD image (2352-byte sectors) against its own checksum and draws the result " +
+            "as a map of the disc. Damaged sectors that can be rebuilt from the parity each sector carries are repaired " +
+            "into a new copy; the original is never changed."),
+
+        new("bestof", "🧪", "Best of Dumps", "Build one verified image from several dumps",
+            "Takes two or more raw dumps of the same CD and builds the best possible image: each sector comes from " +
+            "wherever it can be proved correct — all copies agreeing, a copy that passes the sector's checksum, a copy " +
+            "repaired from its own parity, or a byte-by-byte vote that then passes the checksum. Merge Rips fills holes; " +
+            "this one settles disagreements between copies."),
+
         new("help", "📖", "Help", "What each tile does and how to use it",
             "This manual: a searchable list of every tile with a description of what it does and how to use " +
             "it. Type in the search box to filter by name or text, and pick a tile to read its entry."),

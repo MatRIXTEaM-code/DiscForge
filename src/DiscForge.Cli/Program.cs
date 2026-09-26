@@ -407,6 +407,7 @@ Console.WriteLine("                          --iso 8.3 names, --joliet, --udf fo
     Console.WriteLine("  read-disc <drive> <out.iso> [--continue-on-error] [--retries N]  Image a data DVD/BD/data-CD to a flat ISO");
     Console.WriteLine("  rescue <drive|file> <out.iso> [map] [--retries N] [--no-trim] [--no-scrape] [--no-skip] [--cluster N] [--timeout S] [--start LBA] [--count N]  Copy a damaged disc ddrescue-style: good areas first, then narrow and retry the bad ones; resumable, and continue with another drive using the same map");
     Console.WriteLine("  rescue-status <map> [--json]  Summarise a rescue map (DiscForge or GNU ddrescue format): rescued, bad areas, what's left");
+    Console.WriteLine("  protect <create|verify|repair> <image> [parity.dfpar] [--level low|normal|high]  Reed-Solomon parity file for an image: made while it's good, it rebuilds sectors lost later (bit-rot, a partial rescue)");
     Console.WriteLine("  read-cdi <drive> <out.cdi> [--raw] [--continue-on-error] [--retries N] [--jitter] [--adaptive-reread]  Rip a CD (audio/mixed/data) track-by-track to a CDI image");
     Console.WriteLine("  writeinfo <drive>       Read-only: disc status + the drive's next-writable-address (for raw-DAO write setup)");
     Console.WriteLine("  drive-profile <drive>   Consolidated per-drive profile: read/write reach, write modes, read fidelity [--out profile.json]");
@@ -826,6 +827,7 @@ return args[0].ToLowerInvariant() switch
     "read-disc" => ReadDiscCmd(args),
     "rescue" => RescueCmd(args),
     "rescue-status" => RescueStatusCmd(args),
+    "protect" => ProtectCmd(args),
     "read-cdi" => ReadCdiCmd(args),
     "read-raw" => ReadRawCmd(args),
     "subchannel-dump" => SubchannelDumpCmd(args),
@@ -19119,6 +19121,70 @@ static int RescueCmd(string[] args)
     Console.WriteLine($"{missing.Count:N0} sector(s) still missing in {map.BadAreas + map.Count(DiscForge.Core.Rescue.RescueStatus.NonScraped) + map.Count(DiscForge.Core.Rescue.RescueStatus.NonTrimmed)} area(s) — listed in {Path.GetFileName(sidecar)}.");
     Console.WriteLine("  To get more: run again with --retries 3, clean the disc, or try it in another drive with the same image and map.");
     return 2;
+}
+
+static int ProtectCmd(string[] args)
+{
+    string sub = args.Length > 1 ? args[1].ToLowerInvariant() : "";
+    if (args.Length < 3 || sub is not ("create" or "verify" or "repair"))
+        return Fail("usage: dforge protect <create|verify|repair> <image> [parity.dfpar] [--level low|normal|high]\n" +
+                    "  create  makes <image>.dfpar: Reed-Solomon parity over interleaved groups of sectors (low ≈3%,\n" +
+                    "          normal ≈7%, high ≈14% of the image). Keep it with the image, ideally on another disk.\n" +
+                    "  verify  checks every sector of the image (and the parity file) against its stored CRC-32.\n" +
+                    "  repair  rebuilds damaged sectors in place. A scratch-like run of lost sectors is spread over many\n" +
+                    "          groups; each group survives losing as many sectors as it has parity sectors.\n" +
+                    "  Pairs with `rescue`: protect a disc's image while it reads, and a later partial rescue can be completed.");
+    string image = args[2];
+    string par = args.Length > 3 && !args[3].StartsWith("--") ? args[3] : DiscForge.Core.Protect.ParityFile.DefaultPath(image);
+    if (!File.Exists(image)) return Fail($"Image not found: {image}");
+    var progress = new SyncProgress<DiscForge.Core.Protect.ProtectProgress>(p =>
+    {
+        if (!Console.IsOutputRedirected) Console.Write($"\r  {p.Stage}: {p.Fraction * 100:0.0}%        ");
+    });
+    try
+    {
+        switch (sub)
+        {
+            case "create":
+            {
+                var level = (OptVal(args, "--level") ?? "normal").ToLowerInvariant() switch
+                {
+                    "low" => DiscForge.Core.Protect.ParityLevel.Low,
+                    "high" => DiscForge.Core.Protect.ParityLevel.High,
+                    _ => DiscForge.Core.Protect.ParityLevel.Normal,
+                };
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var h = DiscForge.Core.Protect.ParityFile.Create(image, par, level, progress: progress);
+                Console.WriteLine();
+                Console.WriteLine($"Wrote {Path.GetFileName(par)}: {HumanBytes(new FileInfo(par).Length)} ({h.Overhead * 100:0.0}% of the image) in {sw.Elapsed:mm\\:ss}.");
+                Console.WriteLine($"  {h.Stripes:N0} groups of {h.K} sectors + {h.P} parity; repairs up to {h.P} lost sectors per group —");
+                Console.WriteLine($"  for example a single run of up to {HumanBytes(h.Stripes * h.P * (long)h.SectorSize)} of consecutive damage.");
+                return 0;
+            }
+            case "verify":
+            {
+                if (!File.Exists(par)) return Fail($"Parity file not found: {par}");
+                var c = DiscForge.Core.Protect.ParityFile.Verify(image, par, progress);
+                Console.WriteLine();
+                Console.WriteLine(c.Summary());
+                if (c.DamagedSectors.Count > 0)
+                    Console.WriteLine("  first damaged sectors: " + string.Join(", ", c.DamagedSectors.Take(12).Select(x => x.ToString("N0"))) + (c.DamagedSectors.Count > 12 ? " …" : ""));
+                return c.Intact ? 0 : 2;
+            }
+            default:
+            {
+                if (!File.Exists(par)) return Fail($"Parity file not found: {par}");
+                var r = DiscForge.Core.Protect.ParityFile.Repair(image, par, progress);
+                Console.WriteLine();
+                Console.WriteLine(r.Before.Summary());
+                if (r.Before.Intact) { Console.WriteLine("Nothing to repair."); return 0; }
+                Console.WriteLine($"Repaired {r.SectorsRepaired:N0} image sector(s) and {r.ParityRepaired:N0} parity sector(s)." +
+                                  (r.Complete ? " The image is intact again." : $" {r.StillDamaged:N0} sector(s) had too much damage around them to repair."));
+                return r.Complete ? 0 : 2;
+            }
+        }
+    }
+    catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException) { Console.WriteLine(); return Fail(ex.Message); }
 }
 
 static int RescueStatusCmd(string[] args)

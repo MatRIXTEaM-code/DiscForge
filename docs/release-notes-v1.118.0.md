@@ -38,6 +38,25 @@ drive, pick the same image, and press Start. DiscForge only reads the parts that
 **Works with ddrescue.** The map file uses GNU ddrescue's format, so you can start a rescue in
 DiscForge and finish it with ddrescue (or the other way round).
 
+**Protect Image.** Makes a small repair file for a disc image while it's good (about 3 to 14% of the
+image's size, your choice). If the image is damaged later, by a failing hard drive, a bad copy, or a
+disc that could only be partly rescued, DiscForge finds every damaged sector and rebuilds it. Keep a
+copy of the repair file on another drive.
+
+**Six more new screens:**
+
+- **Bit-Rot Watch** remembers every file in a folder and later tells you what's changed. It especially
+  flags files whose contents changed although nothing saved to them, which is how silent corruption
+  looks.
+- **Compare Images** shows what's different between two images, file by file or byte by byte.
+- **Checksum Files** makes and checks .sfv, .md5 and .sha1 files, and checks PAR2 sets.
+- **Find in Image** searches an image for text or bytes and tells you which file on the disc each match
+  is in.
+- **Sector Health** draws a map of a raw CD image showing good, repairable and damaged sectors, and
+  saves a repaired copy.
+- **Best of Dumps** builds one verified image from several dumps of the same CD. Each sector is taken
+  from whichever copy can be proved correct.
+
 **New commands:** `dforge rescue` and `dforge rescue-status`.
 
 When a rescue ends with sectors still missing, DiscForge writes the list next to the image, so the
