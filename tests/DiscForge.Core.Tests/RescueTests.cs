@@ -15,10 +15,16 @@ public class RescueTests
 {
     private const int SS = 2048;
 
-    private sealed class FakeDisc : IRescueSource
+    private sealed class FakeDisc : IRescueSource, IRescueSpeedControl, IRescueSalvage
     {
+        public bool TrySalvage(long lba, Span<byte> buffer) { buffer.Fill(0xEE); return true; }
+
         public readonly HashSet<long> Bad = new();
         public readonly Dictionary<long, int> Flaky = new();   // sector -> failures before it reads
+        public readonly HashSet<long> Slow = new();             // sectors that read, but very slowly
+        public readonly List<(RescueReadKind Kind, bool Careful, long Lba, int Count)> Log = new();
+        public bool Careful;
+        public TimeSpan Now;                                     // simulated clock
         public int Reads, BadReads;
         public int? CancelAfterReads;
         public CancellationTokenSource? Cts;
@@ -29,9 +35,14 @@ public class RescueTests
 
         public static byte ByteAt(long sector, int i) => (byte)((sector * 31 + i * 7 + 1) & 0xFF);
 
-        public bool TryRead(long lba, int count, Span<byte> buffer)
+        public void SetCareful(bool careful) => Careful = careful;
+
+        public bool TryRead(long lba, int count, Span<byte> buffer, RescueReadKind kind)
         {
             Reads++;
+            Log.Add((kind, Careful, lba, count));
+            Now += TimeSpan.FromMilliseconds(count * 0.5);                 // ~4 MB/s normally
+            for (long s = lba; s < lba + count; s++) if (Slow.Contains(s)) Now += TimeSpan.FromSeconds(1);
             if (CancelAfterReads is int c && Reads >= c) Cts!.Cancel();
             bool ok = true;
             for (long s = lba; s < lba + count; s++)
@@ -158,6 +169,65 @@ public class RescueTests
         Assert.True(second.Reads < 2000, $"{second.Reads} reads — it should only read what was missing");
         Assert.True(map.UnfinishedSectors(SS).ToHashSet().SetEquals(second.Bad));
         CheckImage(second, img.ToArray(), map);
+    }
+
+    [Fact]
+    public void Damaged_areas_are_read_slowly_and_carefully()
+    {
+        var d = Damaged();
+        var map = RescueMap.CreateNew(d.SectorCount * SS);
+        new RescueEngine(d, new MemoryStream(new byte[d.SectorCount * SS]), map, new RescueOptions { RetryPasses = 2, Clock = () => d.Now }).Run();
+        // Copying at full speed, everything after that slowed down, and full speed restored at the end.
+        Assert.All(d.Log.Where(l => l.Kind == RescueReadKind.Bulk), l => Assert.False(l.Careful));
+        Assert.All(d.Log.Where(l => l.Kind != RescueReadKind.Bulk), l => Assert.True(l.Careful));
+        Assert.Contains(d.Log, l => l.Kind == RescueReadKind.Edge);
+        Assert.Contains(d.Log, l => l.Kind == RescueReadKind.Single);
+        Assert.Contains(d.Log, l => l.Kind == RescueReadKind.Retry);
+        Assert.False(d.Careful);
+    }
+
+    [Fact]
+    public void Slow_areas_are_skipped_first_and_still_rescued()
+    {
+        var d = new FakeDisc(40_000);
+        for (long s = 20_000; s < 20_400; s++) d.Slow.Add(s);   // a worn patch that reads, slowly
+        var map = RescueMap.CreateNew(d.SectorCount * SS);
+        var r = new RescueEngine(d, new MemoryStream(new byte[d.SectorCount * SS]), map,
+            new RescueOptions { Clock = () => d.Now }).Run();
+        Assert.True(map.IsComplete);
+        Assert.Equal(0L, r.ReadErrors);
+        // The good area after the worn patch is read before the middle of the patch: the copy jumped
+        // past the slow reads and came back for them in a later pass.
+        int IndexOf(long sector) => d.Log.FindIndex(l => l.Lba <= sector && sector < l.Lba + l.Count);
+        Assert.True(IndexOf(30_000) < IndexOf(20_200), $"{IndexOf(30_000)} vs {IndexOf(20_200)}");
+    }
+
+    [Fact]
+    public void Salvage_fills_bad_sectors_but_keeps_them_marked_bad()
+    {
+        var d = Damaged();
+        var map = RescueMap.CreateNew(d.SectorCount * SS);
+        var img = new MemoryStream(new byte[d.SectorCount * SS]);
+        var r = new RescueEngine(d, img, map, new RescueOptions { RetryPasses = 3, SalvageUnverified = true }).Run();
+        Assert.Equal(d.Bad.Count, r.Salvaged.Count);
+        Assert.True(map.UnfinishedSectors(SS).ToHashSet().SetEquals(d.Bad));   // still bad in the map
+        Assert.Equal(0xEE, img.ToArray()[5000 * SS]);
+        // Off by default.
+        var d2 = Damaged();
+        var r2 = new RescueEngine(d2, new MemoryStream(new byte[d2.SectorCount * SS]), RescueMap.CreateNew(d2.SectorCount * SS)).Run();
+        Assert.Empty(r2.Salvaged);
+    }
+
+    [Fact]
+    public void Slow_read_detection_can_be_turned_off()
+    {
+        var d = new FakeDisc(40_000);
+        for (long s = 20_000; s < 20_400; s++) d.Slow.Add(s);
+        var map = RescueMap.CreateNew(d.SectorCount * SS);
+        new RescueEngine(d, new MemoryStream(new byte[d.SectorCount * SS]), map,
+            new RescueOptions { Clock = () => d.Now, SlowReadFactor = 0 }).Run();
+        Assert.True(map.IsComplete);
+        Assert.Equal((40_000 + 31) / 32, d.Log.Count(l => l.Kind == RescueReadKind.Bulk));   // straight through
     }
 
     [Fact]

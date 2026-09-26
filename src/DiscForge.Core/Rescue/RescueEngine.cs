@@ -9,6 +9,19 @@ using System.Diagnostics;
 
 namespace DiscForge.Core.Rescue;
 
+/// <summary>What a read is for, so a source can try harder where it matters.</summary>
+public enum RescueReadKind
+{
+    /// <summary>A large read while copying: fast, no special effort.</summary>
+    Bulk,
+    /// <summary>One sector at the edge of a failed area (trimming).</summary>
+    Edge,
+    /// <summary>One sector inside a failed area (scraping).</summary>
+    Single,
+    /// <summary>Another try at a sector that has already failed (retrying).</summary>
+    Retry,
+}
+
 /// <summary>Something sectors can be read from: a drive, a device or a file.</summary>
 public interface IRescueSource
 {
@@ -18,7 +31,21 @@ public interface IRescueSource
     /// <summary>Read <paramref name="count"/> sectors into <paramref name="buffer"/>. Return false on a
     /// read error. Throw <see cref="RescueAbortException"/> for anything that must stop the whole
     /// rescue (for example a copy-protection response, or the disc being removed).</summary>
-    bool TryRead(long lba, int count, Span<byte> buffer);
+    bool TryRead(long lba, int count, Span<byte> buffer, RescueReadKind kind);
+}
+
+/// <summary>A source that can return its best guess for a sector it can't read correctly (the drive's
+/// uncorrected data). Used only when asked for, and never counted as rescued.</summary>
+public interface IRescueSalvage
+{
+    bool TrySalvage(long lba, Span<byte> buffer);
+}
+
+/// <summary>A source whose read speed can be changed (an optical drive).</summary>
+public interface IRescueSpeedControl
+{
+    /// <summary>true = read slowly and carefully (damaged areas); false = full speed.</summary>
+    void SetCareful(bool careful);
 }
 
 /// <summary>Stops the rescue (the map is still saved).</summary>
@@ -43,6 +70,21 @@ public sealed record RescueOptions
     public long? SectorLimit { get; init; }
     /// <summary>How often the map is checkpointed while running.</summary>
     public TimeSpan SaveInterval { get; init; } = TimeSpan.FromSeconds(30);
+    /// <summary>Slow the drive down for trimming, scraping and retrying (sources that support it).</summary>
+    public bool SlowDownForDamage { get; init; } = true;
+    /// <summary>While copying, treat a successful read as "slow" when it runs at less than
+    /// 1/<c>SlowReadFactor</c> of the average rate so far (and takes at least
+    /// <see cref="SlowReadMinimum"/>): the data is kept, but the area after it is skipped for later,
+    /// as a worn area usually slows down before it fails. 0 = off.</summary>
+    public double SlowReadFactor { get; init; } = 10;
+    public TimeSpan SlowReadMinimum { get; init; } = TimeSpan.FromMilliseconds(500);
+    /// <summary>Last resort, after all retries: fill still-bad sectors with the drive's uncorrected data
+    /// instead of zeros (sources that support it). They stay marked bad in the map and the sidecar —
+    /// the data may be wrong — but a partly right sector can be better than nothing for video, audio
+    /// or a file that's otherwise intact.</summary>
+    public bool SalvageUnverified { get; init; }
+    /// <summary>Time source (tests use a simulated one).</summary>
+    public Func<TimeSpan>? Clock { get; init; }
 }
 
 public sealed record RescueProgress(
@@ -58,13 +100,17 @@ public sealed record RescueProgress(
     long ReadErrors,
     long TotalBytes,
     TimeSpan Elapsed,
-    IReadOnlyList<RescueBlock> Blocks)
+    IReadOnlyList<RescueBlock> Blocks,
+    long SlowReads = 0,
+    bool Careful = false)
 {
     public double PercentRescued => TotalBytes == 0 ? 0 : 100.0 * Rescued / TotalBytes;
 }
 
 public sealed record RescueResult(RescueMap Map, long ReadErrors, TimeSpan Elapsed, bool Cancelled)
 {
+    /// <summary>Bad sectors filled with unverified best-effort data (<see cref="RescueOptions.SalvageUnverified"/>).</summary>
+    public IReadOnlyList<long> Salvaged { get; init; } = Array.Empty<long>();
     public bool Complete => Map.IsComplete;
 }
 
@@ -89,6 +135,12 @@ public sealed class RescueEngine
     private readonly Stopwatch _sinceSave = new();
     private readonly Stopwatch _sinceReport = new();
     private long _errors;
+    private long _slowReads;
+    private bool _careful;
+    private double _avgRate;        // bytes per second over good bulk reads
+    private long _rateBytes;        // bytes that went into _avgRate
+    private bool _lastSlow;
+    private readonly List<long> _salvaged = new();
     private string _phase = "Copying";
     private int _pass = 1;
     private long _domainStart, _domainEnd;   // bytes
@@ -137,6 +189,7 @@ public sealed class RescueEngine
             if (_opt.Trim) TrimPhase();
             if (_opt.Scrape) ScrapePhase();
             for (int p = 1; p <= retries; p++) RetryPass(p, forward: p % 2 == 1);
+            if (_opt.SalvageUnverified && _src is IRescueSalvage salvage) SalvagePhase(salvage);
             _map.CurrentStatus = '+';
             _map.CurrentPass = 1;
             _phase = "Finished";
@@ -147,10 +200,11 @@ public sealed class RescueEngine
         }
         finally
         {
+            try { SetCareful(false); } catch (Exception) { /* restoring speed is best effort */ }
             Report(force: true);
             _save?.Invoke(_map, StatusMessage(cancelled));
         }
-        return new RescueResult(_map, _errors, _clock.Elapsed, cancelled);
+        return new RescueResult(_map, _errors, _clock.Elapsed, cancelled) { Salvaged = _salvaged };
     }
 
     private string StatusMessage(bool cancelled) =>
@@ -159,18 +213,48 @@ public sealed class RescueEngine
 
     // ------------------------------------------------------------------ plumbing
 
-    private bool Read(long sector, int count)
+    private TimeSpan Now() => _opt.Clock?.Invoke() ?? _clock.Elapsed;
+
+    private bool Read(long sector, int count, RescueReadKind kind)
     {
         _ct.ThrowIfCancellationRequested();
         var span = _buf.AsSpan(0, count * _ss);
-        bool ok = _src.TryRead(sector, count, span);
+        var t0 = Now();
+        bool ok = _src.TryRead(sector, count, span, kind);
+        var took = Now() - t0;
+        _lastSlow = false;
         if (ok)
         {
             _out.Position = sector * _ss;
             _out.Write(span);
+            if (kind == RescueReadKind.Bulk) TrackRate(span.Length, took);
         }
         else _errors++;
         return ok;
+    }
+
+    /// <summary>Keep a running read rate for bulk reads and flag reads far below it as slow.</summary>
+    private void TrackRate(int bytes, TimeSpan took)
+    {
+        double secs = Math.Max(took.TotalSeconds, 1e-6);
+        double rate = bytes / secs;
+        // Only judge once there is a fair baseline (a few MB read).
+        if (_opt.SlowReadFactor > 0 && _rateBytes >= 4 << 20 && took >= _opt.SlowReadMinimum && rate < _avgRate / _opt.SlowReadFactor)
+        {
+            _lastSlow = true;
+            _slowReads++;
+            return;   // don't let a slow patch drag the baseline down
+        }
+        _rateBytes += bytes;
+        double w = Math.Min(1.0, bytes / (double)(16 << 20));   // ~16 MB moving average
+        _avgRate = _avgRate == 0 ? rate : _avgRate * (1 - w) + rate * w;
+    }
+
+    private void SetCareful(bool careful)
+    {
+        if (!_opt.SlowDownForDamage || _src is not IRescueSpeedControl sc || careful == _careful) return;
+        sc.SetCareful(careful);
+        _careful = careful;
     }
 
     private void Mark(long sector, long count, RescueStatus s)
@@ -200,7 +284,7 @@ public sealed class RescueEngine
         _sinceReport.Restart();
         _progress.Report(new RescueProgress(_phase, _pass, _map.CurrentPos, _map.Rescued,
             _map.Total(RescueStatus.NonTried), _map.Total(RescueStatus.NonTrimmed), _map.Total(RescueStatus.NonScraped),
-            _map.Total(RescueStatus.BadSector), _map.BadAreas, _errors, _map.Size, _clock.Elapsed, _map.Blocks.ToArray()));
+            _map.Total(RescueStatus.BadSector), _map.BadAreas, _errors, _map.Size, _clock.Elapsed, _map.Blocks.ToArray(), _slowReads, _careful));
     }
 
     /// <summary>Blocks with status <paramref name="s"/>, clipped to the rescue domain, as sector ranges.</summary>
@@ -224,6 +308,7 @@ public sealed class RescueEngine
     {
         _phase = pass == 3 ? "Copying (sweep)" : forward ? "Copying" : "Copying (backwards)";
         _pass = pass;
+        SetCareful(false);
         long total = _src.SectorCount;
         long skipInit = _opt.SkipInitialSectors ?? Math.Max(32, total / 100_000);
         long skipMax = Math.Max(skipInit, _opt.SkipMaxSectors ?? Math.Max(skipInit, total / 100));
@@ -242,10 +327,10 @@ public sealed class RescueEngine
                 {
                     int n = (int)Math.Min(cluster, end - pos);
                     if (!IsStatus(pos, RescueStatus.NonTried)) { pos++; continue; }
-                    bool ok = Read(pos, n);
+                    bool ok = Read(pos, n, RescueReadKind.Bulk);
                     Mark(pos, n, ok ? RescueStatus.Finished : RescueStatus.NonTrimmed);
                     pos += n;
-                    if (ok) skipSize = skipInit;
+                    if (ok && !_lastSlow) skipSize = skipInit;
                     else if (skipInit > 0)
                     {
                         pos = Math.Min(end, pos + skipSize);   // leave the skipped part non-tried
@@ -261,12 +346,12 @@ public sealed class RescueEngine
                 {
                     int n = (int)Math.Min(cluster, pos - start);
                     long at = pos - n;
-                    bool ok = Read(at, n);
+                    bool ok = Read(at, n, RescueReadKind.Bulk);
                     Mark(at, n, ok ? RescueStatus.Finished : RescueStatus.NonTrimmed);
                     pos = at;
-                    // Pass 2 delimits each skipped area from the other end; after the first error in a
-                    // block it leaves the rest of that block for the sweep.
-                    if (!ok && skipInit > 0) break;
+                    // Pass 2 delimits each skipped area from the other end; after the first error (or
+                    // slow read) in a block it leaves the rest of that block for the sweep.
+                    if ((!ok || _lastSlow) && skipInit > 0) break;
                     Tick(pos * _ss, '?');
                 }
             }
@@ -282,6 +367,7 @@ public sealed class RescueEngine
     {
         _phase = "Trimming";
         _pass = 1;
+        if (_map.Total(RescueStatus.NonTrimmed) > 0) SetCareful(true);
         foreach (var (start, end) in Ranges(RescueStatus.NonTrimmed))
         {
             long lo = start, hi = end;   // [lo, hi) still non-trimmed
@@ -290,7 +376,7 @@ public sealed class RescueEngine
             {
                 while (lo < hi)
                 {
-                    bool ok = Read(lo, 1);
+                    bool ok = Read(lo, 1, RescueReadKind.Edge);
                     Mark(lo, 1, ok ? RescueStatus.Finished : RescueStatus.BadSector);
                     lo++;
                     Tick(lo * _ss, '*');
@@ -303,7 +389,7 @@ public sealed class RescueEngine
                 while (hi > lo)
                 {
                     hi--;
-                    bool ok = Read(hi, 1);
+                    bool ok = Read(hi, 1, RescueReadKind.Edge);
                     Mark(hi, 1, ok ? RescueStatus.Finished : RescueStatus.BadSector);
                     Tick(hi * _ss, '*');
                     if (!ok) break;
@@ -321,15 +407,35 @@ public sealed class RescueEngine
     {
         _phase = "Scraping";
         _pass = 1;
+        if (_map.Total(RescueStatus.NonScraped) > 0) SetCareful(true);
         foreach (var (start, end) in Ranges(RescueStatus.NonScraped))
             for (long s = start; s < end; s++)
             {
-                bool ok = Read(s, 1);
+                bool ok = Read(s, 1, RescueReadKind.Single);
                 Mark(s, 1, ok ? RescueStatus.Finished : RescueStatus.BadSector);
                 Tick((s + 1) * _ss, '/');
             }
         _save?.Invoke(_map, StatusMessage(false));
         _sinceSave.Restart();
+    }
+
+    // ------------------------------------------------------------------ last resort: salvage
+
+    private void SalvagePhase(IRescueSalvage salvage)
+    {
+        _phase = "Salvaging (unverified)";
+        _pass = 1;
+        var one = new byte[_ss];
+        foreach (var (start, end) in Ranges(RescueStatus.BadSector))
+            for (long s = start; s < end; s++)
+            {
+                _ct.ThrowIfCancellationRequested();
+                if (!salvage.TrySalvage(s, one)) continue;
+                _out.Position = s * _ss;
+                _out.Write(one);
+                _salvaged.Add(s);
+                Tick(s * _ss, '-');
+            }
     }
 
     // ------------------------------------------------------------------ phase 4: retrying
@@ -338,13 +444,14 @@ public sealed class RescueEngine
     {
         _phase = forward ? "Retrying" : "Retrying (backwards)";
         _pass = pass;
+        if (_map.Total(RescueStatus.BadSector) > 0) SetCareful(true);
         var sectors = new List<long>();
         foreach (var (start, end) in Ranges(RescueStatus.BadSector))
             for (long s = start; s < end; s++) sectors.Add(s);
         if (!forward) sectors.Reverse();
         foreach (var s in sectors)
         {
-            if (Read(s, 1)) Mark(s, 1, RescueStatus.Finished);
+            if (Read(s, 1, RescueReadKind.Retry)) Mark(s, 1, RescueStatus.Finished);
             Tick(s * _ss, '-');
         }
         _save?.Invoke(_map, StatusMessage(false));
@@ -371,7 +478,7 @@ public sealed class FileRescueSource : IRescueSource, IDisposable
     public long SectorCount { get; }
     public int SectorSize { get; }
 
-    public bool TryRead(long lba, int count, Span<byte> buffer)
+    public bool TryRead(long lba, int count, Span<byte> buffer, RescueReadKind kind)
     {
         try
         {

@@ -18993,6 +18993,14 @@ static int RescueCmd(string[] args)
                     "    --cluster N    sectors per read while copying (default 32 = 64 KiB)\n" +
                     "    --timeout S    seconds before one read counts as failed (default 20)\n" +
                     "    --start LBA --count N   rescue only part of the disc\n" +
+                    "    --no-slowdown  keep the drive at full speed in damaged areas (default: slow it down)\n" +
+                    "    --no-slow-skip don't skip ahead after very slow reads while copying\n" +
+                    "    --no-c2        on a CD, don't rebuild failing sectors from C2-guided raw reads\n" +
+                    "    --c2-reads N   raw reads per sector when combining with C2 (default 8)\n" +
+                    "    --salvage      last resort: fill sectors that never read with the drive's uncorrected data\n" +
+                    "                   instead of zeros (they stay listed as bad; the data may be wrong)\n" +
+                    "  Damaged areas are read with Force Unit Access and retries first move the drive's cache\n" +
+                    "  elsewhere, so every retry really reads the disc again.\n" +
                     "  Unencrypted discs only: a disc that declares CSS/CPRM/AACS is refused. Exit code 0 = complete,\n" +
                     "  2 = finished with sectors still missing (listed in <out.iso>.badsectors.json).");
 
@@ -19007,7 +19015,12 @@ static int RescueCmd(string[] args)
         ClusterSectors = int.TryParse(OptVal(args, "--cluster"), out var cl) && cl is >= 1 and <= 1024 ? cl : 32,
         StartSector = long.TryParse(OptVal(args, "--start"), out var st) ? st : null,
         SectorLimit = long.TryParse(OptVal(args, "--count"), out var ct) ? ct : null,
+        SlowDownForDamage = !args.Contains("--no-slowdown"),
+        SlowReadFactor = args.Contains("--no-slow-skip") ? 0 : 10,
+        SalvageUnverified = args.Contains("--salvage"),
     };
+    bool useC2 = !args.Contains("--no-c2");
+    int c2Reads = int.TryParse(OptVal(args, "--c2-reads"), out var c2r) && c2r is >= 1 and <= 64 ? c2r : 8;
     uint timeout = uint.TryParse(OptVal(args, "--timeout"), out var to) && to >= 2 ? to : 20;
 
     DiscForge.Core.Rescue.IRescueSource source;
@@ -19019,8 +19032,9 @@ static int RescueCmd(string[] args)
         if (isDrive)
         {
 #if WINDOWS
-            var d = new DiscForge.Devices.Reading.DataDiscRescueSource(spec[0], timeout);
+            var d = new DiscForge.Devices.Reading.DataDiscRescueSource(spec[0], timeout, useC2, c2Reads);
             source = d; owned = d;
+            Console.WriteLine($"Drive {d.DriveLetter}: {d.MediaKind}" + (d.IsCd ? (d.C2Available ? ", C2 error pointers available — failing sectors will be rebuilt from raw reads" : ", C2 not used") : "") + ".");
 #else
             return Fail("Rescuing from a drive letter needs Windows. On Linux/macOS pass the device path instead (for example /dev/sr0).");
 #endif
@@ -19063,7 +19077,7 @@ static int RescueCmd(string[] args)
     var progress = new SyncProgress<DiscForge.Core.Rescue.RescueProgress>(p =>
     {
         if (Console.IsOutputRedirected) return;
-        Console.Write($"\r  {p.Phase,-20} rescued {HumanBytes(p.Rescued),9} ({p.PercentRescued:0.00}%)  bad {HumanBytes(p.BadSector),8} in {p.BadAreas} area(s)  left {HumanBytes(p.NonTried + p.NonTrimmed + p.NonScraped),9}  errors {p.ReadErrors:N0}   ");
+        Console.Write($"\r  {p.Phase + (p.Careful ? " (slow)" : ""),-27} rescued {HumanBytes(p.Rescued),9} ({p.PercentRescued:0.00}%)  bad {HumanBytes(p.BadSector),8} in {p.BadAreas} area(s)  left {HumanBytes(p.NonTried + p.NonTrimmed + p.NonScraped),9}  errors {p.ReadErrors:N0}  slow {p.SlowReads:N0}   ");
     });
     DiscForge.Core.Rescue.RescueResult result;
     try
@@ -19088,11 +19102,18 @@ static int RescueCmd(string[] args)
             Image = Path.GetFileName(outPath),
             TotalSectors = (int)source.SectorCount,
             UnreadableLba = missing,
-            Note = $"From rescue map {Path.GetFileName(mapPath)}",
+            Note = $"From rescue map {Path.GetFileName(mapPath)}" +
+                   (result.Salvaged.Count > 0 ? $". {result.Salvaged.Count} of these sectors hold the drive's uncorrected best guess instead of zeros (may be wrong)." : ""),
         }.Save(sidecar);
     else if (File.Exists(sidecar)) File.Delete(sidecar);
 
     Console.WriteLine($"Rescued {HumanBytes(map.Rescued)} of {HumanBytes(size)} ({100.0 * map.Rescued / size:0.000}%) in {result.Elapsed:hh\\:mm\\:ss}; {result.ReadErrors:N0} read error(s).");
+#if WINDOWS
+    if (source is DiscForge.Devices.Reading.DataDiscRescueSource dsrc && dsrc.C2Recovered > 0)
+        Console.WriteLine($"  {dsrc.C2Recovered:N0} sector(s) were rebuilt from C2-guided raw reads and checked against their EDC/ECC.");
+#endif
+    if (result.Salvaged.Count > 0)
+        Console.WriteLine($"  {result.Salvaged.Count:N0} bad sector(s) were filled with the drive's uncorrected data (unverified — they stay listed as bad).");
     if (result.Cancelled) { Console.WriteLine($"Stopped. Run the same command again to continue (map: {mapPath})."); return 2; }
     if (map.IsComplete) { Console.WriteLine("Every sector was rescued — the image is complete."); return 0; }
     Console.WriteLine($"{missing.Count:N0} sector(s) still missing in {map.BadAreas + map.Count(DiscForge.Core.Rescue.RescueStatus.NonScraped) + map.Count(DiscForge.Core.Rescue.RescueStatus.NonTrimmed)} area(s) — listed in {Path.GetFileName(sidecar)}.");

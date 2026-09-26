@@ -17,6 +17,18 @@ It works the way the well-known GNU ddrescue tool does:
 A bar shows the whole disc as it goes: green for rescued, grey for not tried yet, amber for areas
 still being worked on, and red for bad sectors.
 
+**Tries harder where it matters.** In the damaged areas DiscForge slows the drive down, which often
+gets a disc to read when it won't at full speed. It also makes sure every retry really reads the disc
+again rather than getting the same answer from the drive's memory. On CDs, a sector that still won't
+read is read several more times in raw form. The good parts of each attempt are pieced together, and
+the disc's own error-correction data repairs the rest. The result is only kept if its checksum proves
+it's right. Worn areas that read very slowly are left until later, so the good parts of the disc come
+off first.
+
+**Last resort.** An option can fill the sectors that never read with the drive's best guess instead of
+blanks. They stay marked as bad, because the data may be wrong, but for a video or music file a nearly
+right sector can be better than a gap. It's off unless you turn it on.
+
 **Stop and carry on later.** Progress is saved in a small map file next to the image. You can stop at
 any time and press Start again later, and it carries on where it left off.
 

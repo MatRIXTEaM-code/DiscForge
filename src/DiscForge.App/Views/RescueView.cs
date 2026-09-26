@@ -28,17 +28,20 @@ internal sealed class RescueView : UserControl
     private readonly Label _mapInfo = new() { AutoSize = false, Location = new Point(90, 70), Size = new Size(634, 18), Font = Theme.Small, ForeColor = Theme.TextMuted };
     private readonly NumericUpDown _retries = new() { Minimum = 0, Maximum = 20, Value = 1, Width = 50, Location = new Point(150, 96), Font = Theme.Ui };
     private readonly CheckBox _quick = new() { Text = "Quick: skip the slow sector-by-sector phases", AutoSize = true, Location = new Point(220, 98), Font = Theme.Ui };
+    private readonly CheckBox _slowDown = new() { Text = "Slow down in damaged areas", AutoSize = true, Checked = true, Location = new Point(12, 124), Font = Theme.Ui };
+    private readonly CheckBox _c2 = new() { Text = "CDs: use C2 raw reads", AutoSize = true, Checked = true, Location = new Point(220, 124), Font = Theme.Ui };
+    private readonly CheckBox _salvage = new() { Text = "Last resort: fill bad sectors with the drive's best guess", AutoSize = true, Location = new Point(400, 124), Font = Theme.Ui };
     private readonly NumericUpDown _timeout = new() { Minimum = 3, Maximum = 120, Value = 20, Width = 50, Location = new Point(608, 96), Font = Theme.Ui };
-    private readonly Button _start = new() { Text = "Start rescue", Location = new Point(12, 130), Width = 110, Height = 28, FlatStyle = FlatStyle.System };
-    private readonly Button _stop = new() { Text = "Stop", Location = new Point(130, 130), Width = 80, Height = 28, FlatStyle = FlatStyle.System, Enabled = false };
-    private readonly Label _phase = new() { AutoSize = false, Location = new Point(222, 136), Size = new Size(502, 18), Font = Theme.UiBold };
-    private readonly MapBar _bar = new() { Location = new Point(12, 168), Size = new Size(712, 40), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-    private readonly Label _legend = new() { AutoSize = false, Location = new Point(12, 212), Size = new Size(712, 18), Font = Theme.Small, ForeColor = Theme.TextMuted,
+    private readonly Button _start = new() { Text = "Start rescue", Location = new Point(12, 154), Width = 110, Height = 28, FlatStyle = FlatStyle.System };
+    private readonly Button _stop = new() { Text = "Stop", Location = new Point(130, 154), Width = 80, Height = 28, FlatStyle = FlatStyle.System, Enabled = false };
+    private readonly Label _phase = new() { AutoSize = false, Location = new Point(222, 160), Size = new Size(502, 18), Font = Theme.UiBold };
+    private readonly MapBar _bar = new() { Location = new Point(12, 190), Size = new Size(712, 40), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+    private readonly Label _legend = new() { AutoSize = false, Location = new Point(12, 234), Size = new Size(712, 18), Font = Theme.Small, ForeColor = Theme.TextMuted,
         Text = "■ green rescued   ■ grey not tried yet   ■ amber failed, still to narrow down   ■ red bad sectors" };
     private readonly TextBox _log = new()
     {
         Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Font = Theme.Mono, BackColor = Color.White,
-        Location = new Point(12, 236), Size = new Size(712, 170),
+        Location = new Point(12, 256), Size = new Size(712, 150),
         Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
     };
 
@@ -53,7 +56,7 @@ internal sealed class RescueView : UserControl
         Controls.Add(new Label { Text = "Save as:", AutoSize = true, Location = new Point(12, 48), Font = Theme.Ui });
         Controls.Add(new Label { Text = "Retry passes:", AutoSize = true, Location = new Point(12, 99), Font = Theme.Ui });
         Controls.Add(new Label { Text = "Read timeout (s):", AutoSize = true, Location = new Point(500, 99), Font = Theme.Ui });
-        Controls.AddRange(new Control[] { _drives, _refresh, _image, _browse, _mapInfo, _retries, _quick, _timeout, _start, _stop, _phase, _bar, _legend, _log });
+        Controls.AddRange(new Control[] { _drives, _refresh, _image, _browse, _mapInfo, _retries, _quick, _slowDown, _c2, _salvage, _timeout, _start, _stop, _phase, _bar, _legend, _log });
 
         _refresh.Click += async (_, _) => await DetectAsync();
         _browse.Click += (_, _) => Browse();
@@ -138,7 +141,10 @@ internal sealed class RescueView : UserControl
             RetryPasses = (int)_retries.Value,
             Trim = !_quick.Checked,
             Scrape = !_quick.Checked,
+            SlowDownForDamage = _slowDown.Checked,
+            SalvageUnverified = _salvage.Checked,
         };
+        bool useC2 = _c2.Checked;
         uint timeout = (uint)_timeout.Value;
 
         _cts = new CancellationTokenSource();
@@ -146,12 +152,13 @@ internal sealed class RescueView : UserControl
         _log.Text = "";
         var progress = new Progress<RescueProgress>(p =>
         {
-            _phase.Text = $"{p.Phase}: {p.PercentRescued:0.00}% rescued";
+            _phase.Text = $"{p.Phase}{(p.Careful ? " (drive slowed down)" : "")}: {p.PercentRescued:0.00}% rescued";
             _log.Text = $"Rescued      {Human(p.Rescued)} of {Human(p.TotalBytes)}\r\n" +
                         $"Not tried    {Human(p.NonTried)}\r\n" +
                         $"To narrow    {Human(p.NonTrimmed + p.NonScraped)}\r\n" +
                         $"Bad sectors  {Human(p.BadSector)} in {p.BadAreas} area(s)\r\n" +
                         $"Read errors  {p.ReadErrors:N0}\r\n" +
+                        $"Slow reads   {p.SlowReads:N0} (areas after them are left for a later pass)\r\n" +
                         $"Time         {p.Elapsed:hh\\:mm\\:ss}";
             _bar.Show(p.Blocks, p.TotalBytes);
         });
@@ -161,7 +168,7 @@ internal sealed class RescueView : UserControl
         {
             summary = await Task.Run(() =>
             {
-                using var source = new DataDiscRescueSource(letter.Value, timeout);
+                using var source = new DataDiscRescueSource(letter.Value, timeout, useC2);
                 long size = source.SectorCount * source.SectorSize;
                 RescueMap map;
                 if (File.Exists(mapPath))
@@ -186,13 +193,15 @@ internal sealed class RescueView : UserControl
                 var missing = map.UnfinishedSectors(source.SectorSize).ToList();
                 string sidecar = BadSectorMap.SidecarPath(image);
                 if (missing.Count > 0)
-                    new BadSectorMap { Image = Path.GetFileName(image), TotalSectors = (int)source.SectorCount, UnreadableLba = missing, Note = $"From rescue map {Path.GetFileName(mapPath)}" }.Save(sidecar);
+                    new BadSectorMap { Image = Path.GetFileName(image), TotalSectors = (int)source.SectorCount, UnreadableLba = missing, Note = $"From rescue map {Path.GetFileName(mapPath)}" + (r.Salvaged.Count > 0 ? $". {r.Salvaged.Count} of these hold the drive's uncorrected best guess instead of zeros (may be wrong)." : "") }.Save(sidecar);
                 else if (File.Exists(sidecar)) File.Delete(sidecar);
 
+                string c2Note = (source.C2Recovered > 0 ? $" {source.C2Recovered:N0} sector(s) were rebuilt from C2 raw reads." : "") +
+                                (r.Salvaged.Count > 0 ? $" {r.Salvaged.Count:N0} bad sector(s) hold the drive's unverified best guess instead of zeros." : "");
                 if (r.Cancelled) return $"Stopped with {100.0 * map.Rescued / size:0.00}% rescued. Press Start again to carry on.";
-                if (map.IsComplete) return "Every sector was rescued — the image is complete.";
+                if (map.IsComplete) return "Every sector was rescued — the image is complete." + c2Note;
                 return $"Finished: {100.0 * map.Rescued / size:0.000}% rescued; {missing.Count:N0} sector(s) couldn't be read. " +
-                       "To get more, clean the disc and start again with more retry passes, or try another drive with the same image.";
+                       "To get more, clean the disc and start again with more retry passes, or try another drive with the same image." + c2Note;
             });
         }
         catch (Exception ex) when (ex is DiscReadException or RescueAbortException or IOException or UnauthorizedAccessException or FormatException)

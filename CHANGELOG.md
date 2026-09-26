@@ -34,6 +34,19 @@ it, and never defeats console security or decrypts protected content.
   interrupted-and-resumed equals uninterrupted, second drive only reads what's missing, ddrescue
   manual's example mapfile.
 
+- **Rescue: optical-drive techniques on top of ddrescue's method** — reads are tagged by purpose
+  (bulk / edge / single / retry) so the drive source can try harder where it matters: single-sector
+  reads in damaged areas use Force Unit Access; retries first read a far-away sector to push the
+  area out of the drive's read-ahead cache; on CDs, a sector READ(10) can't deliver is rebuilt from
+  several C2-guided raw reads plus the sector's own Reed-Solomon parity and accepted only if EDC and
+  ECC check out. The drive is slowed down for trimming/scraping/retrying (SET CD SPEED: 4x CD, 2x DVD,
+  1x BD) and restored afterwards. While copying, reads far slower than the running average count as
+  "slow": the data is kept but the area after them is left for a later pass (ddrescue's slow-area
+  skipping). Opt-in last resort `--salvage` / "fill bad sectors with the drive's best guess":
+  streaming READ(12) on DVD/BD or the best C2 vote on CD, written instead of zeros but still
+  listed as bad. New CLI options: `--no-slowdown`, `--no-slow-skip`, `--no-c2`, `--c2-reads N`,
+  `--salvage`. Tests cover careful speed, read kinds, slow-area ordering and salvage.
+
 ### Unchanged boundary
 
 - Same clean-room gate as read-disc: a disc declaring CSS/CPRM/AACS is refused and a copy-protection
